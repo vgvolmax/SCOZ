@@ -8,7 +8,9 @@ SCOZ is an internal local Windows tool for a small group of trusted company user
 
 Canonical user flow:
 
-> ZIP → extract → `start.bat` → first run prepares the project-local runtime → later runs use the same `start.bat` from the same folder.
+> repository ZIP → extract → `start.bat` → first run prepares the project-local runtime → later runs use the same `start.bat` from the same folder.
+
+The supported repository ZIP must be runnable without a local frontend build. The end user must not need Node/npm.
 
 Do not turn SCOZ into a SaaS, enterprise desktop platform or multi-user network service unless a future approved design explicitly changes this context.
 
@@ -29,6 +31,8 @@ Read the relevant parts of these documents first:
 
 If requirements conflict, stop and surface the conflict before implementation.
 
+For **PR sequencing, timing of entity/table introduction and exact PR scope**, the latest canonical PR Development Plan controls. Earlier documents describe the target model and analytical contracts, not a requirement to create future feature tables early.
+
 ## YAGNI rule
 
 Prefer the simplest implementation that satisfies the approved internal-use workflow and preserves analytical correctness.
@@ -42,25 +46,28 @@ Do not introduce without a real requirement:
 - event bus/message queue;
 - generic scheduler platform;
 - source capability registry;
+- generic source-resolution framework before a real multi-source conflict exists;
 - auto-updater;
 - telemetry service;
 - central SCOZ backend;
 - LAN access;
-- Docker/PostgreSQL.
+- Docker/PostgreSQL;
+- future feature tables/entities before the PR that first uses them.
 
 Do not remove data-integrity safeguards merely to reduce code size.
 
 ## Non-negotiable architecture invariants
 
-- Local portable Windows app: ZIP → extract → `start.bat` → browser UI.
+- Local portable Windows app: repository ZIP → extract → `start.bat` → browser UI.
 - No dependency on system Python, Node/npm, Docker or PostgreSQL for the end user.
+- Production frontend static assets are already present in the distributable ZIP; no user-side frontend build.
 - Backend binds only to `127.0.0.1`; frontend and API are same-origin in production.
 - Source Adapter → Ingestion → Normalized Domain Model → Persistence/History → Analytics → Application Services → FastAPI → React UI.
 - No business logic in React or FastAPI route handlers.
 - No SQL outside the persistence/repository layer.
 - DataFrame is not an inter-module domain contract.
 - Historical observations are immutable and source corrections are stored as explicit lightweight revisions rather than overwriting history.
-- Benchmark composition is versioned through `BenchmarkSetRevision`.
+- Benchmark composition is versioned through `BenchmarkSetRevision` once benchmark workflow is introduced.
 - Analytics preserves period/granularity compatibility and never invents missing dimensions.
 - Ozon numerical data has priority only when it provides the required metric at compatible period/granularity.
 - MPStats is used for competitor main images and search-position history, not as the primary sales benchmark when Ozon data exists.
@@ -69,6 +76,23 @@ Do not remove data-integrity safeguards merely to reduce code size.
 - Ramp-up returns insufficient data instead of pseudo-precision.
 - Every visible wait/action provides understandable feedback, but no persistent job framework is required by default.
 - Real reports, user databases, credentials and sensitive logs never enter this public repository.
+
+## Competitor and relevant-query workflow
+
+Do not skip the query-relevance step.
+
+The intended workflow is:
+
+1. load own-product query analytics;
+2. user includes/excludes queries that are genuinely relevant for the own SKU;
+3. persist that product-specific relevant-query scope;
+4. build competitor candidates from available Ozon search-visibility observations for those selected queries;
+5. load candidate main photos through MPStats;
+6. user manually includes/excludes direct competitors;
+7. allow manual competitor add by SKU when a needed competitor is absent from the candidate pool;
+8. save the benchmark set/revision.
+
+Query Opportunity later prioritizes the saved relevant-query scope by default. Do not let irrelevant queries clutter the primary opportunity list.
 
 ## API credential model
 
@@ -119,8 +143,9 @@ There is no optional internal Search Visibility API PR in the active plan.
 
 - Work on one dependency-ordered PR at a time unless the approved plan explicitly permits parallel work.
 - Use TDD for business logic and deterministic analytics.
+- Add feature-specific schema/domain structures when the feature first needs them; migrations are expected and preferred over speculative schema design.
 - Every parser needs synthetic fixtures and malformed/duplicate/edge-case tests.
 - Every analytics module needs happy-path, missing-data, insufficient-sample and incompatible-granularity tests where applicable.
 - Every user-facing vertical needs loading/refresh, empty, partial, error and insufficient/stale states where applicable.
 - Keep modules focused; do not build generic abstractions before a second real use case requires them.
-- Before claiming completion, run the relevant verification suite and check the diff against Product, Architecture, UI/UX and Preflight invariants.
+- Before claiming completion, run the relevant verification suite and check the diff against Product, Architecture, UI/UX, Preflight and the latest PR Plan invariants.
