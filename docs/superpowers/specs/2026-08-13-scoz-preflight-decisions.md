@@ -1,781 +1,591 @@
-# SCOZ — Preflight Architecture & Data Decisions
+# SCOZ — Preflight Decisions: Internal Portable Profile
 
 **Дата:** 2026-08-13  
-**Статус:** обязательное корректирующее дополнение перед написанием PR-specific ТЗ  
+**Статус:** канонические уточнения перед PR-specific ТЗ  
 **Репозиторий:** `vgvolmax/SCOZ`
 
-## 1. Назначение документа
+## 1. Контекст, который определяет сложность решения
 
-Этот документ фиксирует решения, выявленные на итоговом pre-flight аудите до начала реализации PR1.
+SCOZ — внутреннее локальное приложение для небольшой группы доверенных пользователей компании.
 
-Он **не добавляет новые пользовательские режимы и не расширяет продуктовый scope**. Его задача — устранить архитектурные неоднозначности, которые могли бы привести к неверной аналитике, потере воспроизводимости или переделке фундамента на поздних PR.
+Пользовательский сценарий:
 
-При конфликте с более ранними формулировками этот документ имеет приоритет для следующих тем:
+> скачать ZIP → распаковать → запустить `start.bat` → при первом запуске приложение само готовит локальный runtime → при последующих запусках используется тот же `start.bat` из той же папки.
 
-- идентификация сущностей между источниками;
-- ревизии наблюдений и исправленные данные;
-- версионирование benchmark-групп;
-- совместимость периодов и гранулярностей;
-- разрешение конфликтующих источников;
-- backfill и coverage источников;
-- семантика истории позиций MPStats;
-- гранулярность режима «Разгон»;
-- confidence/availability guardrails;
-- технический Operation Feedback Contract;
-- безопасность local web-приложения и секретов;
-- жизненный цикл пользовательских данных при обновлениях;
-- допустимые способы автоматизации Ozon.
+SCOZ не является публичным SaaS, сетевым сервисом или multi-user платформой.
 
-Этот документ необходимо читать вместе с:
+В первой версии не нужны:
 
-1. `ТЗ — система диагностики и benchmark-аналитики карточек Ozon.md`;
-2. `Дополнение к ТЗ — benchmark рекламной интенсивности.md`;
-3. `Дополнение к ТЗ — Query Opportunity Benchmark.md`;
-4. `docs/superpowers/specs/2026-08-13-scoz-architecture-design.md`;
-5. `docs/superpowers/specs/2026-08-13-scoz-ui-ux-design.md`;
-6. `docs/superpowers/plans/2026-08-13-scoz-pr-development-plan.md`.
+- аккаунты и роли пользователей;
+- центральный сервер SCOZ;
+- доступ к SCOZ с других компьютеров;
+- desktop installer;
+- системные Python/Node;
+- Docker/PostgreSQL;
+- auto-updater;
+- отдельная auth/session-платформа;
+- persistent background job framework;
+- telemetry platform.
+
+Главный YAGNI-принцип:
+
+> инфраструктурная сложность добавляется только когда она нужна реальному внутреннему сценарию; строгость данных и аналитики не упрощается там, где упрощение может привести к неверному выводу.
 
 ---
 
-# 2. Каноническая идентификация товара
+## 2. Portable contract
 
-Один и тот же товар может приходить из разных источников под разными идентификаторами.
+Канонический пользовательский поток:
 
-Нельзя считать взаимозаменяемыми без явного mapping:
+```text
+start.bat
+  → проверить project-local runtime
+  → при первом запуске скачать/подготовить portable Python
+  → установить pinned Python dependencies локально в runtime
+  → выполнить preflight и DB migrations
+  → запустить FastAPI на 127.0.0.1
+  → дождаться health check
+  → открыть browser UI
+```
 
-- Ozon SKU;
-- Ozon `product_id`;
-- `offer_id` продавца;
-- идентификатор товара MPStats;
-- иные source-specific IDs.
+Повторный запуск:
 
-Каноническая модель:
+```text
+start.bat
+  → проверить готовый runtime/dependencies
+  → preflight/migrations
+  → если SCOZ уже запущен — открыть существующий UI
+  → иначе запустить backend и открыть UI после health check
+```
 
-### `Product`
+Обязательные свойства:
 
-Внутренняя стабильная сущность SCOZ.
+- пользователь не устанавливает Python/Node вручную;
+- права администратора не требуются;
+- runtime находится внутри папки приложения;
+- глобальный PATH не изменяется;
+- frontend уже собран и не требует npm на пользовательском ПК;
+- runtime download выполняется по pinned official HTTPS URL;
+- скачанный runtime проверяется по ожидаемому SHA-256;
+- публикация/замена runtime не оставляет полуустановленное состояние;
+- повторный запуск не переустанавливает валидный runtime;
+- backend открывает браузер только после успешного `/api/health`;
+- конфликт занятого порта объясняется пользователю;
+- запуск из путей с пробелами и кириллицей должен учитываться в Windows verification.
 
-### `ProductExternalIdentity`
+Не требуется строить самостоятельную систему обновления приложения. Обновление SCOZ в первой версии — отдельная пользовательская операция с новым ZIP/release.
 
-Связь `Product` с внешним идентификатором.
+---
 
-Минимальные поля:
+## 3. Startup feedback без отдельного job framework
+
+Референсная модель запуска из внутреннего portable-приложения считается подходящей для SCOZ.
+
+Launcher хранит простой локальный статус запуска, например:
+
+`data/startup_status.json`
+
+Минимальные стадии:
+
+- `preflight`;
+- `runtime_setup`;
+- `database_backup`, если нужен;
+- `migration`;
+- `server_start`;
+- `ready`;
+- `failed`.
+
+BAT/launcher показывает человеку человеческие сообщения по стадиям и путь к логу при ошибке.
+
+Для пользовательских операций внутри UI также не нужен общий persistent `Operation` domain/table.
+
+Базовое правило:
+
+- короткая операция выполняется обычным HTTP request и имеет локальный loading state;
+- длительная операция может использовать лёгкое in-memory состояние + HTTP polling;
+- после перезапуска приложения незавершённую UI-операцию восстанавливать не требуется;
+- уже committed данные при прерывании не должны повреждаться.
+
+Минимальные состояния длительной операции:
+
+`VALIDATING → RUNNING → SUCCESS / PARTIAL_SUCCESS / FAILED`.
+
+При необходимости `stage` уточняет реальный этап: `READING`, `NORMALIZING`, `SAVING`, `SYNCING` и т.п.
+
+Процент отображается только когда его можно вычислить честно.
+
+---
+
+## 4. Encrypted portable keystore — выбранное решение для API-ключей
+
+Для SCOZ используется подход из предоставленного внутреннего portable-приложения.
+
+Ключи не сохраняются в SQLite и не записываются в открытый конфигурационный файл.
+
+Пользователь может:
+
+1. ввести credentials в `Настройки → Источники`;
+2. проверить подключение;
+3. сохранить их в зашифрованный portable-файл;
+4. при следующем запуске выбрать этот файл и ввести пароль;
+5. очистить ключи из памяти кнопкой `Заблокировать ключи`.
+
+### Формат keystore
+
+Рекомендуемый контракт v1:
+
+- filename: `scoz_credentials.enc.json`;
+- cipher: `AES-256-GCM`;
+- KDF: `PBKDF2-HMAC-SHA256`;
+- iterations: `600000`;
+- случайный salt: 16 bytes;
+- случайный IV: 12 bytes;
+- versioned file format;
+- пароль в файл не записывается.
+
+Пример смысловой структуры:
+
+```json
+{
+  "format": "scoz-credentials-keystore",
+  "version": 1,
+  "createdAt": "...",
+  "crypto": {
+    "cipher": "AES-256-GCM",
+    "kdf": "PBKDF2-HMAC-SHA256",
+    "iterations": 600000,
+    "salt": "...",
+    "iv": "...",
+    "ciphertext": "..."
+  }
+}
+```
+
+Шифрование/расшифрование выполняется браузером через Web Crypto API.
+
+После ввода или расшифрования credentials живут только в памяти текущей вкладки и передаются backend только по same-origin loopback request тогда, когда backend должен обратиться к Ozon/MPStats.
+
+Backend:
+
+- не сохраняет plaintext credentials;
+- не пишет их в лог;
+- не возвращает их в response;
+- использует их только для конкретной операции источника.
+
+Reload/закрытие вкладки очищает credentials естественным образом; пользователь при необходимости снова открывает keystore.
+
+Keystore переносим между доверенными рабочими ПК вместе с паролем, который хранится отдельно от файла.
+
+`.gitignore` обязан исключать как минимум:
+
+```text
+*.enc.json
+scoz_credentials*.json
+credentials*.json
+```
+
+### Что специально НЕ строим
+
+В первой версии не нужны:
+
+- Windows DPAPI;
+- Credential Manager integration;
+- machine/user binding keystore;
+- собственная password vault система;
+- backend persistent secret store.
+
+---
+
+## 5. Local web security — минимально достаточная
+
+Поскольку SCOZ работает только на доверенном ПК и не предоставляет LAN-доступ, применяется простой контур:
+
+- backend bind только на `127.0.0.1`;
+- frontend и API работают с одного origin;
+- production CORS не открывается на произвольные origins;
+- GET endpoints не изменяют состояние;
+- credentials не попадают в URL/query string;
+- чувствительные values маскируются в логах.
+
+Не вводятся без отдельной необходимости:
+
+- login/auth layer;
+- per-launch session tokens;
+- CSRF subsystem;
+- Host/Origin security framework;
+- certificates/HTTPS для loopback.
+
+Если в будущем появится LAN-доступ или недоверенные пользователи, security profile пересматривается отдельным design change.
+
+---
+
+## 6. User-owned state
+
+Пользовательские данные находятся project-local:
+
+```text
+SCOZ/
+├─ start.bat
+├─ app/ или backend/
+├─ web/ или frontend build/
+├─ runtime/
+├─ data/
+│  ├─ scoz.db
+│  ├─ imports/
+│  ├─ cache/
+│  └─ logs/
+└─ ...
+```
+
+`data/` является пользовательским состоянием и не коммитится в Git.
+
+Release/репозиторий не содержит рабочую пользовательскую SQLite.
+
+DB migration выполняется автоматически при старте. Перед миграцией с реальным риском повреждения/необратимости создаётся локальная backup-копия БД.
+
+Сложная backup/restore platform не нужна.
+
+---
+
+# 7. Каноническая идентификация Product
+
+Один товар может приходить из Ozon XLSX, Ozon API и MPStats с разными IDs.
+
+Используется единый `Product` и минимальная связь `ProductExternalIdentity`:
 
 - `product_id` — внутренний ID SCOZ;
 - `source`;
 - `identity_type`;
 - `identity_value`;
-- `source_account_scope`, если идентификатор не является глобальным;
-- `valid_from` / `valid_to`, если источник допускает изменение mapping;
-- provenance mapping.
+- `source_account_scope`, только если он реально нужен для уникальности.
+
+На старте не нужны `valid_from/valid_to` и полноценная temporal identity model.
 
 Правила:
 
-1. Никогда не объединять товары только по названию, бренду или фото.
-2. `offer_id` всегда рассматривать в контексте аккаунта/продавца, если источник не гарантирует глобальную уникальность.
-3. Автоматический merge допустим только по проверенному source mapping или идентификатору, для которого контракт источника гарантирует нужную уникальность.
-4. Неоднозначный mapping должен приводить к явному состоянию `IDENTITY_CONFLICT`, а не к молчаливому объединению.
+- нельзя merge товаров только по названию, бренду или фото;
+- `offer_id` учитывает seller/account scope, если требуется;
+- неоднозначный mapping не объединяется молча;
+- расширенная история identity добавляется только если встретится реальный кейс смены mapping.
 
 ---
 
-# 3. Идентификация SearchQuery и Cluster
+# 8. SearchQuery и Cluster identity
 
-## 3.1. SearchQuery
+`SearchQuery` сохраняет raw text и консервативно нормализованный текст.
 
-`SearchQuery` хранит:
+Для identity допустимы trim, Unicode normalization, lowercase/casefold и схлопывание повторных пробелов.
 
-- `raw_text` — строку источника;
-- `canonical_text` — консервативно нормализованную строку;
-- source-specific query ID, если он существует.
+Не объединять запросы по stemming, semantic similarity, перестановке слов или автоматическому исправлению смысла.
 
-Допустимая нормализация для identity:
+Если источник даёт query ID, он сохраняется как external identity.
 
-- Unicode normalization;
-- trim;
-- схлопывание повторных пробелов;
-- case folding/lowercase.
+`Cluster` использует source cluster ID, если он доступен; иначе хранится нормализованное имя + source provenance.
 
-Не использовать для identity:
+---
 
-- stemming;
-- перестановку слов;
-- исправление орфографии;
-- удаление значимых токенов;
-- semantic similarity.
+# 9. Immutable snapshots и исправления источника
 
-То есть похожие по смыслу запросы остаются разными `SearchQuery`, пока продуктовая логика отдельно не объединит их в аналитическую группу.
+Историю нужно сохранять, но без отдельной сложной revision subsystem.
 
-## 3.2. Cluster
+Для каждого snapshot-type определяется logical observation key.
 
-Если источник предоставляет стабильный cluster ID, он имеет приоритет над названием.
+Правило:
 
-Если источник даёт только текстовое имя, хранить:
+```text
+тот же logical key + тот же normalized payload
+→ duplicate, новый snapshot не создаётся
 
-- raw name;
-- normalized name;
-- source;
+тот же logical key + изменённый normalized payload
+→ новая revision, предыдущая помечается superseded
+
+новый period/date/dimensions
+→ новое observation
+```
+
+Достаточные поля revision:
+
+- revision number или порядок;
+- `supersedes_snapshot_id`, если есть;
+- `imported_at`;
+- normalized payload hash;
 - provenance.
 
-Переименование кластера не должно автоматически создавать ложную новую географическую сущность, если источник позволяет доказать тот же cluster ID.
+Analytics использует последнюю актуальную revision для одного logical observation, но старые revisions остаются для проверки.
 
 ---
 
-# 4. Immutable history не означает «одна версия навсегда»
+# 10. BenchmarkSet revisions
 
-Ozon или другой источник может позднее вернуть **исправленные данные за тот же логический период**.
+Состав прямых конкурентов влияет на результат, поэтому его история должна быть воспроизводима.
 
-Поэтому различаются:
+Используются:
 
-1. **дубликат** — повторно импортированы абсолютно те же source data;
-2. **новое наблюдение** — новый период/дата/набор dimensions;
-3. **ревизия наблюдения** — источник изменил значение для того же логического observation key.
+- `BenchmarkSet` — стабильная группа собственного SKU;
+- `BenchmarkSetRevision` — сохранённая версия состава.
 
-## 4.1. Logical Observation Key
+Изменение списка конкурентов создаёт новую revision, а не переписывает старую.
 
-Каждый тип snapshot должен иметь формально определённый logical key, включающий только необходимые dimensions.
+Не нужна сложная effective-date model. Достаточно `revision_id`, `created_at` и состава участников.
 
-Примеры:
+Исторический аналитический результат при необходимости может сослаться на конкретную revision.
 
-- `ProductSnapshot`: product + metric period + source scope;
-- `ProductQuerySnapshot`: product + query + period/observation + source scope;
-- `SearchVisibilitySnapshot`: product + query + cluster + observed_at + source scope;
-- `SearchPositionSnapshot`: product + query + observation date + source scope;
-- `AdvertisingSnapshot`: product/campaign + metric period + source scope.
+---
 
-Конкретный key фиксируется в ТЗ соответствующего PR.
+# 11. Period/grain compatibility
 
-## 4.2. ObservationRevision
+Эта часть остаётся строгой, потому что напрямую влияет на достоверность выводов.
 
-Исправленные данные не обновляют старую запись in-place.
+Каждый snapshot хранит доступные временные semantics:
 
-Новая версия сохраняется отдельно и содержит как минимум:
-
-- `revision_no` или эквивалентный порядок;
-- `supersedes_snapshot_id`, если применимо;
+- `observed_at` для point observation;
+- `period_start` / `period_end` для aggregate period;
 - `imported_at`;
-- source/provenance;
-- hash нормализованного payload.
+- фактическую granularity/dimensions.
 
-Предыдущая ревизия остаётся доступна для аудита.
+Не требуется строить отдельный тяжёлый framework `AnalysisWindow`/`ObservationGrain`.
 
-Analytics по умолчанию использует **актуальную авторитетную ревизию**, а не сумму/набор всех ревизий.
+Достаточно typed metadata + одной общей функции/набора правил compatibility в analytics/application layer.
 
----
+Запрещено без явного правила:
 
-# 5. Версионирование BenchmarkSet
+- связывать дневную позицию row-by-row с CR за 28 дней;
+- искусственно размножать query-level данные по кластерам;
+- сравнивать own и benchmark за несовместимые периоды как будто они сопоставимы;
+- интерполировать отсутствующие дни незаметно для пользователя.
 
-Состав прямых конкурентов является частью воспроизводимости аналитики.
-
-`BenchmarkSet` — стабильная сущность, привязанная к собственному `Product`.
-
-Каждое сохранённое изменение состава создаёт immutable:
-
-### `BenchmarkSetRevision`
-
-Минимально:
-
-- `benchmark_set_id`;
-- `revision_id`;
-- `created_at`;
-- список `BenchmarkMember`;
-- причина/источник изменения при необходимости.
-
-Аналитический результат должен ссылаться не просто на `BenchmarkSet`, а на конкретный `BenchmarkSetRevision`.
-
-Это позволяет ответить:
-
-> какой именно состав конкурентов использовался в расчёте на конкретную дату?
-
-Изменение текущего benchmark не должно переписывать историческую интерпретацию старого анализа.
+Если данные несовместимы, результат получает `INSUFFICIENT_DATA`, `PERIOD_MISMATCH` или эквивалентное явное состояние.
 
 ---
 
-# 6. AnalysisWindow и ObservationGrain
+# 12. Source resolution — функция, не framework
 
-Нельзя соединять метрики только потому, что они относятся к одному SKU.
+Один показатель может прийти из нескольких источников.
 
-Каждый snapshot должен сохранять фактическую временную семантику:
+Не нужен универсальный registry/policy engine.
 
-- `observed_at`, если это point-in-time наблюдение;
-- `period_start` / `period_end`, если это агрегированный период;
-- `imported_at`;
-- source timezone / date semantics, если источник их задаёт;
-- grain.
+Для каждой domain metric используется детерминированный resolver с простыми правилами:
 
-Канонически вводятся понятия:
+1. сохранить все факты с provenance;
+2. не усреднять конфликтующие sources;
+3. первичные данные Ozon имеют приоритет, если дают нужную metric на совместимых period/grain;
+4. более точная granularity важнее бренда источника;
+5. MPStats используется только в утверждённых ролях: фото и история поисковых позиций.
 
-### `ObservationGrain`
-
-Например:
-
-- instant;
-- day;
-- period;
-- query-level;
-- query×cluster-level.
-
-Точный enum/typed model определяется в PR2.
-
-### `AnalysisWindow`
-
-Описывает период, в котором analytics разрешено сопоставлять наблюдения.
-
-## 6.1. Правила совместимости
-
-1. Нельзя row-by-row связывать дневную позицию с CR за 28 дней.
-2. Нельзя считать одну дневную ставку причиной результата, агрегированного за иной период, без явного aggregation rule.
-3. Для benchmark собственный товар и competitor values должны относиться к сопоставимым периодам или результат маркируется как period-mismatch/insufficient.
-4. Для longitudinal модели «Разгон» все входные ряды должны быть приведены к совместимому временному шагу явной функцией aggregation.
-5. Не выполнять скрытую интерполяцию отсутствующих дней.
-6. Date-only значения источника не переводятся через timezone как timestamp. Исходная business date сохраняется как business date.
-
-Если source timezone неизвестен и это может изменить временное сопоставление, confidence снижается или модель не строится.
+Resolver покрывается unit tests.
 
 ---
 
-# 7. SourceResolutionPolicy
+# 13. Backfill/coverage — только там, где он реально существует
 
-После подключения API один и тот же логический показатель может существовать одновременно в XLSX, Ozon API и MPStats.
+В PR2 не нужен общий `SourceCapability` framework.
 
-Нельзя:
+Когда появляется конкретный API-adapter, его ТЗ фиксирует:
 
-- молча усреднять такие значения;
-- выбирать «последнее импортированное» независимо от качества источника;
-- удалять менее приоритетный факт.
+- какой historical range он умеет получить;
+- умеет ли backfill;
+- pagination/limits;
+- какие gaps могут остаться.
 
-Все source facts сохраняются с provenance.
+Sync по возможности добирает пропущенный диапазон idempotently.
 
-Analytics использует отдельную **SourceResolutionPolicy**.
-
-Минимальные факторы resolution:
-
-- является ли источник первичным Ozon для данной метрики;
-- гранулярность;
-- совпадение периода;
-- freshness;
-- completeness;
-- наличие identity conflict;
-- source confidence/contract status.
-
-Базовое правило:
-
-> для собственной числовой аналитики Ozon source имеет приоритет над сторонней оценкой MPStats, если Ozon предоставляет нужную метрику с сопоставимой гранулярностью и периодом.
-
-Нельзя использовать более приоритетный бренд источника как оправдание более грубой гранулярности. Например, агрегированная Ozon CR не становится query-level CR только потому, что Ozon — первичный источник.
-
-Resolution должен быть воспроизводим и тестируем.
+UI показывает реальный coverage только там, где он влияет на анализ.
 
 ---
 
-# 8. SourceCapability, coverage и backfill
+# 14. MPStats position history
 
-SCOZ не должен исходить из предположения, что локальное приложение было запущено каждый день.
+MPStats используется для истории позиций own SKU и выбранных competitors по запросам.
 
-Каждый API adapter должен уметь сообщить capability metadata, если применимо:
+До реализации Share of Top PR10 обязан проверить реальный contract endpoint-а:
 
-- `supports_backfill`;
-- доступный исторический горизонт;
-- минимальный/максимальный размер окна запроса;
-- granularity;
-- timezone/date semantics;
-- pagination/limit semantics;
-- known missing-day semantics;
-- последнюю успешную синхронизацию;
-- фактически покрытый диапазон.
+- порядок массива относительно `d1/d2`;
+- пропущенные календарные дни;
+- семантику `null`;
+- business-date/timezone semantics;
+- неполные диапазоны.
 
-При sync система должна:
+До проверки `null` означает unknown observation, а не позицию `0`, `1000+` или гарантированное отсутствие товара.
 
-1. определить желаемый диапазон;
-2. обнаружить известные пробелы;
-3. сделать idempotent backfill там, где источник позволяет;
-4. оставить явный `coverage gap`, где источник историю уже не отдаёт.
-
-Data Readiness должен отличать:
-
-- «история не загружена»;
-- «источник не поддерживает backfill»;
-- «частичный historical coverage»;
-- «полное покрытие выбранного окна».
+Share of Top всегда возвращает denominator/sample size.
 
 ---
 
-# 9. MPStats Position History — обязательный adapter contract
+# 15. Ramp-up granularity
 
-Официальная документация MPStats для Ozon `items/{id}/keywords` показывает:
+Режим «Разгон» работает на **максимально детальной общей гранулярности**, которая реально присутствует одновременно у нужных входных данных.
 
-- входной диапазон `d1` / `d2`;
-- `avg_position`;
-- массив `positions`;
-- `null` внутри массива.
-
-При этом сам пример массива не содержит даты внутри каждого элемента.
-
-Следовательно, **до production-реализации Share of Top запрещено предполагать**, что индекс массива однозначно соответствует `d1 + N` или `d2 - N` без подтверждения контракта.
-
-PR10 обязан включать contract verification, которое устанавливает:
-
-- направление массива относительно `d1/d2`;
-- наличие/отсутствие пропущенных календарных дней;
-- фактическую семантику `null`;
-- timezone/business-date semantics;
-- поведение при неполном диапазоне.
-
-До подтверждения `null` трактуется как **unknown source observation**, а не автоматически как:
-
-- позиция 0;
-- позиция 1000+;
-- отсутствие товара в выдаче.
-
-Для Share of Top denominator должен использовать только те observation days, семантика которых известна и подходит для расчёта.
-
-Результат Share of Top всегда возвращает denominator/sample size.
-
----
-
-# 10. Granularity режима «Разгон»
-
-Более ранняя формулировка `SKU × query × cluster × time` была слишком жёсткой.
-
-Каноническое правило:
-
-> **Ramp-up работает на максимально детальной общей гранулярности, которая реально присутствует одновременно во всех необходимых входных данных.**
-
-Базовый допустимый уровень:
+Базовый практический уровень:
 
 > `SKU × query × time`
 
-Cluster dimension используется только когда:
+Cluster добавляется только если совместимые cluster-level данные реально есть для необходимых position/conversion/advertising inputs.
 
-- позиция;
-- conversion evidence;
-- рекламное воздействие;
-- и требуемые search factors
+Нельзя искусственно создавать cluster-level модель из query-level наблюдений.
 
-имеют совместимую cluster-level granularity.
-
-Если хотя бы ключевой вход существует только query-level, нельзя искусственно размножать его по кластерам.
-
-Каждый результат Ramp-up должен возвращать `analysis_grain`.
+Результат Ramp-up сообщает `analysis_grain` или человеческое эквивалентное пояснение в детализации.
 
 ---
 
-# 11. Availability / Out-of-stock guardrail
+# 16. Availability и confidence guardrails
 
-Продажи, трафик и часть conversion picture могут быть искажены отсутствием товара в продаже.
+OOS/ограниченная доступность может искажать продажи и трафик.
 
-Если источник позволяет, хранить наблюдаемую доступность:
+Если source даёт usable stock/availability data, Diagnostic Engine учитывает это как confounder.
 
-- stock;
-- in-stock days / availability ratio;
-- periods of zero stock;
-- FBO/FBS availability context, если он нужен для корректной интерпретации.
+При существенном OOS сильный диагноз по продажам/трафику понижается по confidence или блокируется; UI объясняет причину.
 
-Diagnostic Engine должен иметь состояние/confounder:
+Benchmark отдельно возвращает:
 
-### `AVAILABILITY_CONFOUNDED`
+- performance status;
+- sample size;
+- confidence.
 
-Если существенная часть выбранного периода недоступна и нет корректного способа нормализовать показатель на доступные дни:
+Маленькая benchmark-группа не должна выглядеть как статистически уверенный красный/зелёный вывод.
 
-- сильный диагноз по продажам/трафику должен быть понижен по confidence или заблокирован;
-- UI должен объяснить, что часть отставания может быть вызвана доступностью.
-
-Порог существенности задаётся конфигурацией analytics, а не UI.
-
-Нельзя автоматически считать stock=0 доказательством одного и того же бизнес-сценария во всех источниках; source semantics должны быть сохранены.
+Пороговые значения находятся в analytics config, не в UI.
 
 ---
 
-# 12. Benchmark sample confidence отдельно от performance status
+# 17. Currency/percent/unit semantics
 
-Нужно различать два независимых вопроса:
+Ingestion нормализует единицы явно.
 
-1. где наш показатель относительно benchmark;
-2. насколько надёжен сам benchmark.
+Минимально различать:
 
-Поэтому результат benchmark содержит отдельно:
+- money + currency;
+- ratio/percent;
+- percentage points;
+- delivery duration unit;
+- bid/CPC/CPO semantics.
 
-- `performance_status`;
-- `confidence`;
-- `sample_size`;
-- при необходимости `coverage`.
+Raw source value остаётся доступным через raw artifact/provenance.
 
-Низкий sample size не должен выглядеть как уверенный зелёный/красный вывод.
-
-При выборке ниже конфигурируемого минимума допустимо показывать числовые значения медианы и конкурентов, но:
-
-- `performance_status` становится `UNDETERMINED` или эквивалентным нейтральным состоянием;
-- `confidence = INSUFFICIENT`;
-- UI поясняет причину.
-
-P25/P75 при статистически бессмысленной выборке не должны использоваться как уверенная граница статуса.
+Не делать неявный FX conversion.
 
 ---
 
-# 13. Технический Operation Feedback Contract
+# 18. Допустимая автоматизация Ozon
 
-UI/UX уже требует, чтобы любое ожидание имело обратную связь. Для этого вводится единый технический contract, а не отдельные ad-hoc spinners.
+SCOZ использует только:
 
-Минимальная модель:
+- официально разрешённые публичные Ozon API;
+- пользовательские XLSX/другие экспортируемые файлы;
+- иные официально разрешённые integration mechanisms.
 
-### `Operation`
-
-- `operation_id`;
-- `operation_type`;
-- `status`;
-- `stage`;
-- `message`;
-- `started_at`;
-- `updated_at`;
-- `completed_at`, если завершено;
-- `progress_current`, если известно;
-- `progress_total`, если известно;
-- `progress_percent`, только если вычисляется честно;
-- `retryable`;
-- `error_code`, если есть;
-- `result_ref`, если есть результат.
-
-Статусы должны поддерживать как минимум:
-
-- `IDLE`/не создана;
-- `VALIDATING`;
-- `RUNNING`;
-- `PARTIAL_SUCCESS`;
-- `SUCCESS`;
-- `FAILED`.
-
-`STALE` и `INSUFFICIENT_DATA` являются состояниями данных/аналитики, а не успешностью фоновой операции.
-
-Для локального SCOZ базовая транспортная модель — **HTTP polling**, без обязательного WebSocket слоя.
-
-Длительная операция должна возвращать `operation_id`; UI получает её состояние через единый application/API contract.
-
----
-
-# 14. Local web security
-
-Bind на `127.0.0.1` необходим, но недостаточен.
-
-Минимальные требования:
-
-1. backend слушает только loopback;
-2. Host header проверяется по allowlist локальных hostnames/origin;
-3. production CORS не является permissive;
-4. state-changing API не должны быть доступны простым cross-site запросом без session proof;
-5. launcher создаёт криптографически случайный per-launch session token;
-6. frontend получает session token только через same-origin bootstrap flow и хранит его в памяти, не в `localStorage`;
-7. mutating API требуют этот token/custom header и JSON contract;
-8. `Origin`/`Host` validation применяется к чувствительным endpoints;
-9. GET не должен иметь скрытых state-changing side effects.
-
-Цель: сторонняя веб-страница не должна иметь возможность управлять локальным SCOZ только потому, что он открыт на loopback-порту.
-
-Dev mode может иметь отдельные правила, но production security нельзя ослаблять ради удобства разработки.
-
----
-
-# 15. Хранение секретов
-
-API credentials не хранятся plaintext в конфигурационном JSON/TOML.
-
-На Windows базовый механизм первой версии:
-
-> **Windows DPAPI, CurrentUser scope**
-
-Разрешено хранить project-local encrypted blob, но расшифровать его должен только тот Windows user, который сохранил credential.
-
-Требования:
-
-- frontend никогда не получает secret обратно;
-- logs не содержат secret;
-- support bundle не включает расшифрованные credentials;
-- backup/export данных по умолчанию не экспортирует secrets;
-- перенос приложения на другой Windows user/machine может потребовать повторного ввода credentials — это нормальное и объяснённое поведение.
-
----
-
-# 16. Жизненный цикл пользовательских данных при обновлении
-
-`data/` и пользовательская конфигурация являются **user-owned state**.
-
-Release-managed assets (`app`, `web`, launcher/runtime components) и user-owned state не должны смешиваться в одной overwrite-модели.
-
-Обязательные правила:
-
-- release package не содержит рабочую пользовательскую SQLite;
-- обновление приложения не удаляет `data/`;
-- destructive-risk migration выполняется только после локального backup;
-- migration либо завершается целиком, либо оставляет предыдущую валидную БД доступной для recovery;
-- runtime/app update не заменяет raw imports, cache policy aside, logs policy aside;
-- release manifest знает app/runtime version отдельно от DB schema version.
-
-PR15 обязан проверить upgrade path минимум с предыдущей поддерживаемой schema/release.
-
-Пользовательские данные остаются project-local в первой версии, как уже принято Architecture Design. Если позднее будет выбран `%LOCALAPPDATA%`, это отдельное архитектурное решение и миграция, а не скрытая реализация.
-
----
-
-# 17. Допустимые способы автоматизации Ozon
-
-После проверки официальной документации Ozon for Developers фиксируется более жёсткое правило.
-
-Для автоматизации SCOZ использует только:
-
-- официально доступные публичные Ozon API;
-- пользовательский импорт XLSX/других файлов, которые пользователь легально получает в интерфейсе;
-- иные явно разрешённые Ozon integration mechanisms.
-
-Не использовать как product dependency:
+Не включать в product dependency:
 
 - undocumented/internal Ozon endpoints;
-- автоматизированный парсинг внутренних сервисов Ozon;
-- Selenium/WebDriver или другой софт, имитирующий действия пользователя в личном кабинете;
-- `xapi`/internal network calls, не разрешённые как публичный API.
+- `xapi`/internal cabinet calls;
+- Selenium/WebDriver и имитацию пользователя;
+- автоматизированный парсинг внутренних сервисов Ozon.
 
-Это решение основано на официальной рекомендации Ozon for Developers «Seller API: как избежать блокировок» (07.08.2024), где для автоматизации разрешаются публичные API Ozon и отдельно запрещается неразрешённый автоматизированный парсинг внутренних сервисов и имитация действий пользователя.
-
-Следовательно:
-
-> раздел PR Development Plan про optional post-v1 internal Search Visibility API **отменяется и не является действующим планом**.
-
-Вернуться к автоматизации «Что влияет на место» можно только если Ozon выпустит/разрешит публичный контракт, который законно покрывает нужные данные.
-
-До этого XLSX остаётся каноническим automation-safe способом получения этих данных.
+«Что влияет на место» остаётся XLSX-source, пока Ozon не предоставит подходящий разрешённый public API.
 
 ---
 
-# 18. Currency, percent и unit semantics
+# 19. Что остаётся строгим, а что намеренно простое
 
-Ingestion обязан сохранять не только число, но и его нормализованную семантику.
+Строго сохраняем:
 
-Требования:
+- source adapters → normalized domain model;
+- immutable history/revisions;
+- benchmark revisions;
+- period/grain compatibility;
+- provenance;
+- sample confidence;
+- недостаточность данных вместо псевдоточного вывода;
+- корректную granularity Ramp-up;
+- честную семантику MPStats positions.
 
-- денежные значения имеют currency;
-- проценты различают ratio/percent/percentage-point semantics;
-- ставки и DRR не смешиваются только из-за одинакового `%` формата;
-- delivery duration имеет единицу;
-- raw source value сохраняется в provenance/raw artifact;
-- conversion/normalization version известна.
+Намеренно не строим заранее:
 
-Не выполнять неявный FX conversion.
-
-Если source value неоднозначен, parser должен вернуть validation error/warning, а не подобрать удобную единицу.
+- auth/session platform;
+- DPAPI integration;
+- persistent jobs;
+- event bus;
+- scheduler platform;
+- capability registry;
+- auto-updater;
+- telemetry service;
+- central cloud backend;
+- LAN mode.
 
 ---
 
-# 19. Поправки к ранее действующим документам
-
-## 19.1. Product Spec
-
-Следующие старые формулировки считаются заменёнными:
-
-- `OwnProduct` и `CompetitorProduct` как отдельные доменные типы → единый `Product` + ownership + `BenchmarkSet`;
-- `BenchmarkSnapshot` как обязательный первичный источник истины → benchmark вычисляется из snapshots + `BenchmarkSetRevision`; materialization только как воспроизводимый cache;
-- MPStats только для фото → MPStats также используется для истории позиций по запросам в Query Opportunity;
-- обязательная гранулярность Ramp-up `SKU × query × cluster × time` → максимально детальная **общая** гранулярность доступных входов;
-- внутренний API Ozon в списке допустимых источников → удалён как допустимая product dependency до появления официально разрешённого публичного API.
-
-## 19.2. Architecture Design
-
-Архитектурно добавляются/уточняются:
-
-- `ProductExternalIdentity`;
-- `ProductQuerySnapshot`;
-- `BenchmarkSetRevision`;
-- observation revisions / supersession;
-- `ObservationGrain` / `AnalysisWindow`;
-- `SourceResolutionPolicy`;
-- `SourceCapability` / coverage / backfill;
-- `Operation` contract;
-- local web security;
-- DPAPI secrets;
-- availability guardrails;
-- source-safe Ozon automation only.
-
-## 19.3. UI/UX Design
-
-UI/UX Design остаётся действующим.
-
-Дополнение:
-
-- при недостаточной benchmark-выборке цветовой performance status не должен выглядеть уверенным;
-- Data Readiness показывает coverage/backfill gaps;
-- operation states получают единый backend contract;
-- identity/source conflicts должны иметь пользовательски понятное состояние вместо молчаливого выбора.
-
-## 19.4. PR Development Plan
+# 20. Поправки к PR-плану
 
 Структура PR1–PR15 сохраняется.
 
-Меняется scope отдельных PR:
+Ключевые scope corrections:
 
-### PR1
+**PR1** — portable bootstrap, local runtime, startup status/logging, health check, same-origin loopback app, frontend shell и Windows smoke. Без auth/session/security framework.
 
-Добавить:
+**PR2** — domain/storage/history, минимальный `ProductExternalIdentity`, logical observation keys, revisions, `BenchmarkSetRevision`, period/grain metadata и простой source resolver contract. Без capability/job frameworks.
 
-- Host/Origin security baseline;
-- per-launch session token;
-- production CORS policy;
-- базовый `Operation` API/view contract;
-- разделение release-managed и user-owned paths.
+**PR3–PR5** — imports + revisions + period/unit semantics.
 
-### PR2
+**PR6** — MPStats photos + benchmark selection + encrypted portable keystore через Web Crypto. Без DPAPI.
 
-Добавить:
+**PR7** — benchmark math + advertising intensity + sample confidence + period compatibility.
 
-- `ProductExternalIdentity`;
-- query/cluster canonical identity;
-- `BenchmarkSetRevision`;
-- logical observation keys;
-- immutable revisions/supersession;
-- `ObservationGrain`/`AnalysisWindow` types;
-- `SourceResolutionPolicy` contracts;
-- `SourceCapability` contracts;
-- schema tests на revisions/identity conflicts.
+**PR8** — diagnostics + availability confounder + data readiness.
 
-### PR3
+**PR10** — обязательная contract verification MPStats position history до Share of Top.
 
-Добавить:
+**PR11–PR12** — конкретные public API adapters; backfill/coverage реализуются внутри каждого adapter-а, если источник это поддерживает.
 
-- availability/stock fields, если они присутствуют;
-- revision behavior для исправленного отчёта за тот же период;
-- money/percent/unit normalization contract.
+**PR13–PR14** — Ramp-up только на общей фактически доступной granularity.
 
-### PR4–PR5
+**PR15** — release regression, migration backup/recovery, clean-Windows portable test и end-to-end CJM. Не превращать PR15 в enterprise hardening project.
 
-Добавить:
-
-- explicit period/grain semantics;
-- revision behavior;
-- query/cluster identity conflict tests.
-
-### PR6
-
-Добавить:
-
-- DPAPI CurrentUser credential storage;
-- `BenchmarkSetRevision` вместо in-place изменения состава;
-- source identity mapping MPStats↔Product.
-
-### PR7
-
-Добавить:
-
-- benchmark `confidence` отдельно от `performance_status`;
-- запрет уверенных P25/P75 statuses при недостаточной выборке;
-- period compatibility checks.
-
-### PR8
-
-Добавить:
-
-- `AVAILABILITY_CONFOUNDED`;
-- downgrade/block strong diagnosis при существенном OOS;
-- UI identity/source/coverage warnings, если они влияют на результат.
-
-### PR10
-
-Добавить обязательный MPStats contract verification перед Share of Top:
-
-- array date order;
-- null semantics;
-- missing days;
-- denominator rules;
-- timezone/business-date semantics.
-
-Cluster не является обязательной dimension MPStats position history.
-
-### PR11
-
-Разрешены только публичные официальные Ozon API.
-
-Добавить:
-
-- `SourceCapability`;
-- backfill/coverage;
-- idempotent gap filling;
-- source resolution между XLSX/API;
-- удалить internal Ozon endpoint из возможного scope.
-
-### PR12
-
-Добавить:
-
-- historical coverage/backfill semantics Performance API;
-- period/grain compatibility для advertising facts.
-
-### PR13–PR14
-
-Добавить:
-
-- `analysis_grain` в результат;
-- построение только на максимально детальной общей гранулярности;
-- явные time-window compatibility gates;
-- никаких cluster-level сценариев при отсутствии cluster-level evidence.
-
-### PR15
-
-Добавить:
-
-- upgrade preserving `data/`;
-- DB backup/recovery before risky migrations;
-- DPAPI behavior audit;
-- local web security audit;
-- operation-state regression;
-- source coverage/backfill regression;
-- upgrade test с предыдущего release/schema.
-
-Раздел `Optional post-v1 source adapter: Ozon internal Search Visibility API` считать **удалённым из действующего плана**.
+Internal Ozon API adapter не входит ни в обязательный, ни в optional план.
 
 ---
 
-# 20. Preflight review gates для каждого PR-specific ТЗ
+# 21. Preflight checklist для PR-specific ТЗ
 
-Перед approval любого PR-specific ТЗ проверить:
+Перед реализацией PR достаточно ответить на вопросы, которые реально применимы к его scope:
 
-1. Какие external identities участвуют и как они связываются с `Product`?
-2. Каков logical observation key?
-3. Возможна ли ревизия данных за тот же период и как она хранится?
-4. Каковы grain/period/time semantics?
-5. Какие источники могут дать одну и ту же метрику и кто выбирает активный факт?
-6. Есть ли backfill и как отображается coverage gap?
-7. Может ли availability исказить вывод?
-8. Достаточен ли sample size для сильного статуса?
-9. Какая операция может занять время и как она сообщает feedback?
-10. Есть ли state-changing local API и защищён ли он session/origin contract?
-11. Где хранятся credentials и пользовательские данные?
-12. Не используется ли запрещённая/неофициальная автоматизация Ozon?
-13. Не смешиваются ли query-level, cluster-level и aggregate values?
-14. Может ли результат быть полностью воспроизведён из source + revision + benchmark revision + rule version?
+1. Какие domain entities/identities меняются?
+2. Какой logical key у нового snapshot, если snapshot появляется?
+3. Что происходит при повторе/исправлении данных за тот же period?
+4. Совместимы ли periods/granularity сравниваемых metric?
+5. Есть ли несколько sources одной metric и какой простой resolver используется?
+6. Может ли OOS/маленькая выборка исказить вывод?
+7. Как пользователь видит progress/success/error операции?
+8. Где остаются пользовательские данные/credentials?
+9. Используется ли только разрешённый source/API?
+10. Как это проверяется tests/manual QA?
 
-Если на любой из этих вопросов PR-specific ТЗ не даёт однозначного ответа, ТЗ не готово к реализации.
+Не требовать искусственно отвечать на неприменимые enterprise-вопросы.
 
 ---
 
-# 21. Итоговый архитектурный критерий
+# 22. Итоговый критерий
 
-После этих поправок любой аналитический вывод SCOZ должен быть трассируем как минимум так:
-
-```text
-External identity
-  → Source artifact / API response
-  → Logical observation
-  → Immutable revision
-  → Source resolution
-  → Analysis window/grain
-  → BenchmarkSetRevision (если нужен benchmark)
-  → Analytics rule/model version
-  → Confidence / confounders
-  → View result
-```
-
-А любое длительное пользовательское действие:
+Архитектура SCOZ должна оставаться понятной как:
 
 ```text
-User action
-  → Operation ID
-  → visible stage/status
-  → success / partial / failure
-  → persistent resulting state or actionable error
+start.bat
+  → portable Python
+  → FastAPI + built React
+  → SQLite
+  → Source adapters
+  → normalized snapshots/history
+  → analytics
+  → понятный UI
 ```
 
-Это является обязательным pre-flight фундаментом перед написанием и реализацией PR1–PR15.
+Для аналитического вывода должно быть возможно понять:
+
+```text
+откуда пришли данные
+→ за какой период
+→ на какой granularity
+→ какая benchmark revision использована
+→ какое правило/модель применены
+→ насколько вывод надёжен
+```
+
+Этого достаточно для внутреннего SCOZ. Дополнительная инфраструктура добавляется только после появления реального сценария, который без неё невозможно решить.
