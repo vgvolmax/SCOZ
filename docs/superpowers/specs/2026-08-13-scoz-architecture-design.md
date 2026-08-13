@@ -9,17 +9,19 @@ SCOZ — внутреннее локальное Windows-приложение д
 
 Пользовательский контракт:
 
-> ZIP → распаковать → `start.bat` → первый запуск сам готовит локальный runtime → последующие запуски используют тот же `start.bat` из той же папки.
+> ZIP репозитория → распаковать → `start.bat` → первый запуск сам готовит локальный runtime → последующие запуски используют тот же `start.bat` из той же папки.
+
+Репозиторий должен оставаться пользовательски запускаемым без локальной frontend-сборки: production static assets входят в распространяемое состояние ZIP. Node/npm на пользовательском ПК не нужны.
 
 SCOZ не является SaaS, LAN-сервисом или multi-user платформой. Архитектура защищает достоверность аналитики, но не создаёт enterprise-инфраструктуру без реального сценария.
 
-Детали YAGNI-профиля, portable keystore и упрощений инфраструктуры зафиксированы в `docs/superpowers/specs/2026-08-13-scoz-preflight-decisions.md`.
+Детали YAGNI-профиля и portable keystore зафиксированы в `docs/superpowers/specs/2026-08-13-scoz-preflight-decisions.md`.
 
 ## 2. Стек
 
 Backend — **Python + FastAPI**. Frontend — **React + TypeScript**, заранее собранный в static assets. Storage — **SQLite**.
 
-`openpyxl`/`pandas` допустимы внутри ingestion, но DataFrame не является межмодульным контрактом. Node/npm нужны только development/CI.
+`openpyxl`/`pandas` допустимы внутри ingestion, но DataFrame не является межмодульным контрактом. Node/npm нужны только development/CI для подготовки frontend assets.
 
 ## 3. Portable startup
 
@@ -44,7 +46,7 @@ Backend слушает только `127.0.0.1`. Frontend и API работаю�
 
 ## 5. Credentials
 
-Используется утверждённый **portable encrypted keystore** из Preflight Decisions: ключи вводятся/расшифровываются в текущей browser tab, живут только в её памяти и передаются локальному backend только для конкретной операции source API. Backend не хранит plaintext credentials.
+Используется **portable encrypted keystore** из Preflight Decisions: ключи вводятся/расшифровываются в текущей browser tab, живут только в её памяти и передаются локальному backend только для конкретной операции source API. Backend не хранит plaintext credentials.
 
 DPAPI, Credential Manager и backend secret database не используются.
 
@@ -86,7 +88,7 @@ Ingestion отвечает за report detection, schema validation, parsing, no
 
 ## 8. Canonical domain model
 
-Основные сущности:
+Целевая доменная модель по мере появления соответствующих verticals включает:
 
 - `Product`;
 - ownership flag/relation;
@@ -105,6 +107,8 @@ Ingestion отвечает за report detection, schema validation, parsing, no
 - `ImportBatch`;
 - `SourceArtifact`.
 
+Это **целевая карта сущностей, а не требование создать все таблицы в PR2**. Feature-specific entity/table появляется migration-ой в первом PR, который реально её использует.
+
 Отдельных `OwnProduct`/`CompetitorProduct` нет. Конкурент — обычный `Product`, включённый в конкретную benchmark revision.
 
 `BenchmarkSnapshot` не является source of truth: benchmark вычисляется из snapshots + `BenchmarkSetRevision`; materialized cache допустим только как оптимизация.
@@ -115,7 +119,7 @@ Ingestion отвечает за report detection, schema validation, parsing, no
 
 SQLite скрыта за repository layer. SQL не выполняется из analytics/routes. Schema меняется через migrations. `data/` — user-owned state и не коммитится.
 
-Для каждого snapshot определяется logical observation key:
+Для snapshot-типа в момент его появления определяется logical observation key:
 
 ```text
 same key + same normalized payload → duplicate
@@ -123,7 +127,7 @@ same key + changed payload → new revision, previous superseded
 new period/date/dimensions → new observation
 ```
 
-Analytics использует актуальную revision, старые остаются для provenance. Изменение состава конкурентов создаёт новую `BenchmarkSetRevision`.
+Analytics использует актуальную revision, старые остаются для provenance. Изменение состава конкурентов после появления benchmark workflow создаёт новую `BenchmarkSetRevision`.
 
 ## 10. Period/granularity и sources
 
@@ -133,11 +137,23 @@ Analytics использует актуальную revision, старые ос�
 
 Нельзя молча связывать daily position с 28-day CR row-by-row, размножать query-level data по кластерам, сравнивать несовместимые periods или интерполировать missing days как observed facts.
 
-Для конфликтующих sources используется простой deterministic resolver: факты сохраняются, автоматически не усредняются; Ozon предпочтителен только при совместимых metric/grain/period; MPStats sales estimates не подменяют Ozon benchmark.
+Source resolver не строится заранее как framework. Минимальная детерминированная функция появляется тогда, когда одна metric реально начинает приходить из нескольких источников. Факты сохраняются с provenance и автоматически не усредняются; Ozon предпочтителен только при совместимых metric/grain/period; MPStats sales estimates не подменяют Ozon benchmark.
 
 Backfill/coverage реализуются внутри конкретного API adapter-а только если source это поддерживает. Общий `SourceCapability` registry в foundation не нужен.
 
-## 11. Analytics modules
+## 11. Формирование benchmark-группы
+
+До benchmark пользователь формирует **product-specific scope релевантных поисковых запросов** из импортированной аналитики собственного SKU.
+
+Далее candidate pool строится из доступных Ozon Search Visibility observations только по выбранным релевантным queries. Для кандидатов загружаются главные фото через MPStats.
+
+Пользователь вручную include/exclude прямых конкурентов и может добавить competitor по SKU, если нужного товара нет в candidate pool.
+
+После сохранения появляется `BenchmarkSet` и immutable `BenchmarkSetRevision`.
+
+Этот workflow не является автоматическим выбором конкурентов: финальное решение всегда подтверждает пользователь.
+
+## 12. Analytics modules
 
 **Benchmark** возвращает own value, median, P25/P75 при достаточной выборке, sample size, delta, performance status и confidence. Здесь же считается рекламная интенсивность согласно отдельному Product Addendum.
 
@@ -145,27 +161,27 @@ Backfill/coverage реализуются внутри конкретного API
 
 **Search Visibility** работает в `product × query × cluster`; основные factors — position, relevance, popularity, delivery, price.
 
-**Query Opportunity** объединяет Query Demand, Query Quality, Visibility Gap и Position Stability. Без Opportunity Score 0–100. Share of Top возвращает denominator/sample size.
+**Query Opportunity** объединяет Query Demand, Query Quality, Visibility Gap и Position Stability. По умолчанию работает в сохранённом relevant-query scope. Без Opportunity Score 0–100. Share of Top возвращает denominator/sample size.
 
 **Ramp-up** строит position-normalized CR, readiness/confidence, verdict, empirical bid-position model, scenarios и organic-support trend. Он работает на максимально детальной **общей** granularity входов. Базово — `SKU × query × time`; cluster добавляется только при совместимых cluster-level inputs. При недостатке данных возвращается `INSUFFICIENT_DATA`.
 
-## 12. MPStats position history
+## 13. MPStats position history
 
 До реализации Share of Top PR10 обязан проверить реальный contract истории позиций: порядок массива относительно дат, missing days, `null` semantics и business-date semantics. До подтверждения `null` означает unknown observation.
 
-## 13. Application/API/UI
+## 14. Application/API/UI
 
 Application Services оркестрируют repositories и analytics. FastAPI routes остаются тонкими: validation → application service → DTO/error mapping.
 
-Frontend отвечает за navigation, upload, competitor selection, encrypted-keystore UX, feedback states, tables/heatmap/charts/drill-down. Business rules в frontend запрещены.
+Frontend отвечает за navigation, upload, relevant-query selection, competitor selection, encrypted-keystore UX, feedback states, tables/heatmap/charts/drill-down. Business rules в frontend запрещены.
 
-## 14. Operation feedback
+## 15. Operation feedback
 
 Persistent operation database/job platform не нужен. Короткие действия используют request-local loading state. Реально длинная операция при необходимости использует lightweight in-memory state + HTTP polling.
 
 Минимальные states: `VALIDATING → RUNNING → SUCCESS / PARTIAL_SUCCESS / FAILED`. `STALE` и `INSUFFICIENT_DATA` — состояния данных/аналитики.
 
-## 15. Testing
+## 16. Testing
 
 Каждый parser: valid synthetic fixture, malformed row, incompatible schema, duplicate, corrected same-period revision и relevant locale/date/unit edge cases.
 
@@ -173,28 +189,28 @@ Persistent operation database/job platform не нужен. Короткие д�
 
 API adapters: mocked synthetic contracts; никаких real credentials в CI.
 
-Portable Windows verification: clean machine without system Python/Node, first run, second run, health/open browser, occupied port, Cyrillic/spaces path и runtime-integrity failure.
+Portable Windows verification: clean machine without system Python/Node, repository-ZIP first run, second run, health/open browser, occupied port, Cyrillic/spaces path и runtime-integrity failure.
 
-## 16. Explicit non-goals
+## 17. Explicit non-goals
 
 В v1 не входят central server, accounts/roles, LAN mode, auto-updater, DPAPI/Credential Manager, auth/session platform, persistent job queue, event bus, telemetry SaaS, automatic bid changes, guaranteed positions, undocumented Ozon automation, competitor ad/organic reconstruction, seller-price/SPP calculations, universal card score 0–100, Opportunity Score 0–100 и отдельный advertising BI.
 
-## 17. Code-review invariants
+## 18. Code-review invariants
 
-PR требует корректировки, если он добавляет business logic во frontend/routes, даёт analytics читать XLSX/API напрямую, выполняет SQL вне persistence, перезаписывает history, теряет benchmark revision/provenance, смешивает incompatible periods/granularity, строит cluster Ramp-up без cluster evidence, сохраняет plaintext credentials, требует system Python/Node, использует internal Ozon automation или вводит generic infrastructure без реального use case.
+PR требует корректировки, если он добавляет business logic во frontend/routes, даёт analytics читать XLSX/API напрямую, выполняет SQL вне persistence, перезаписывает history, теряет benchmark revision/provenance, смешивает incompatible periods/granularity, строит cluster Ramp-up без cluster evidence, сохраняет plaintext credentials, требует system Python/Node или user-side frontend build, использует internal Ozon automation, создаёт все будущие feature tables заранее или вводит generic infrastructure без реального use case.
 
-## 18. Итог
+## 19. Итог
 
 ```text
-ZIP → start.bat → portable runtime → FastAPI + React → SQLite
-                                      ↓
-                                  adapters
-                                      ↓
-                             normalized history
-                                      ↓
-                                  analytics
-                                      ↓
-                                 clear UI
+ZIP репозитория → start.bat → portable runtime → FastAPI + React → SQLite
+                                                       ↓
+                                                   adapters
+                                                       ↓
+                                              normalized history
+                                                       ↓
+                                                   analytics
+                                                       ↓
+                                                  clear UI
 ```
 
 Сложность оправдана там, где она защищает данные, воспроизводимость или аналитический вывод. Остальное добавляется только по реальной необходимости.
