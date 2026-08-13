@@ -1,813 +1,200 @@
 # SCOZ — Architecture Design
 
 **Дата:** 2026-08-13  
-**Статус:** зафиксированный design для последующего PR-планирования  
-**Репозиторий:** `vgvolmax/SCOZ`
+**Статус:** канонический technical design
 
-## 1. Назначение документа
+## 1. Контекст
 
-Этот документ фиксирует техническую архитектуру SCOZ на основании утверждённого продуктового ТЗ и дополнений к нему. Он является промежуточным контрактом между продуктовой спецификацией и планом разработки по PR.
-
-Следующий этап после утверждения этого документа — составление упорядоченного PR-плана, а затем отдельного ТЗ для каждого PR.
-
-Документ не заменяет продуктовые ТЗ. При конфликте требований продуктовые ТЗ определяют **что** должна делать система, а этот design — **как разделить систему на устойчивые технические границы**.
-
-## 2. Исходные продуктовые документы
-
-Архитектура учитывает три действующих документа в корне репозитория:
-
-1. `ТЗ — система диагностики и benchmark-аналитики карточек Ozon.md`;
-2. `Дополнение к ТЗ — benchmark рекламной интенсивности.md`;
-3. `Дополнение к ТЗ — Query Opportunity Benchmark.md`.
-
-Ключевые продуктовые режимы:
-
-- **Диагностика** — где SKU проигрывает выбранным конкурентам и почему;
-- **Разгон** — низкая конверсия вызвана качеством карточки или низким местом, и есть ли смысл временно покупать более высокую позицию рекламой.
-
-Query Opportunity Benchmark не является отдельным пользовательским режимом: он приоритизирует поисковые запросы внутри «Диагностики» и «Разгона».
-
-Benchmark рекламной интенсивности также не является отдельным экраном: он является контекстом эффективности рекламной поддержки.
-
-## 3. Зафиксированные архитектурные решения
-
-### 3.1. Тип приложения
-
-SCOZ — **локальное portable Windows-приложение без центрального сервера и без пользовательских аккаунтов**.
+SCOZ — внутреннее локальное Windows-приложение для небольшой группы доверенных пользователей.
 
 Пользовательский контракт:
 
-> ZIP → распаковать → `start.bat` → приложение открывается в браузере.
+> ZIP → распаковать → `start.bat` → первый запуск сам готовит локальный runtime → последующие запуски используют тот же `start.bat` из той же папки.
 
-Пользователю не требуются:
+SCOZ не является SaaS, LAN-сервисом или multi-user платформой. Архитектура защищает достоверность аналитики, но не создаёт enterprise-инфраструктуру без реального сценария.
 
-- системный Python;
-- Node.js/npm;
-- Docker;
-- PostgreSQL;
-- установка приложения в Windows;
-- права администратора;
-- ручное создание виртуального окружения.
+Детали YAGNI-профиля, portable keystore и упрощений инфраструктуры зафиксированы в `docs/superpowers/specs/2026-08-13-scoz-preflight-decisions.md`.
 
-### 3.2. UI-host
+## 2. Стек
 
-Интерфейс — локальное web-приложение, открываемое в обычном браузере.
+Backend — **Python + FastAPI**. Frontend — **React + TypeScript**, заранее собранный в static assets. Storage — **SQLite**.
 
-Это решение выбрано вместо PySide/Qt, Electron и Tauri, поскольку SCOZ требует удобной работы с:
+`openpyxl`/`pandas` допустимы внутри ingestion, но DataFrame не является межмодульным контрактом. Node/npm нужны только development/CI.
 
-- heatmap;
-- таблицами benchmark;
-- графиками позиции и конверсии;
-- фотографиями конкурентов;
-- drill-down аналитикой;
-- фильтрами по SKU, запросам, кластерам и периодам.
-
-Отдельный desktop shell в первой версии не нужен.
-
-### 3.3. Backend
-
-Backend: **Python + FastAPI**.
-
-Причины:
-
-- удобный импорт и нормализация XLSX;
-- развитая экосистема для статистики и аналитики;
-- удобная работа с API Ozon/MPStats;
-- типизированные HTTP-контракты;
-- возможность развивать модели режима «Разгон» без смены технологического стека.
-
-### 3.4. Frontend
-
-Frontend: **React + TypeScript**, собираемый в статические файлы.
-
-Node/npm используются только при разработке и сборке frontend. В пользовательском portable-релизе Node отсутствует: backend раздаёт уже собранную статику.
-
-### 3.5. Локальное хранилище
-
-Основное хранилище: **SQLite**.
-
-SQLite скрывается за repository-слоем. Аналитические модули и HTTP endpoints не выполняют SQL напрямую.
-
-Для изменений схемы используется версионируемый механизм миграций. База создаётся и обновляется приложением автоматически.
-
-### 3.6. Сетевой контур
-
-Backend слушает только loopback-интерфейс (`127.0.0.1`), а не `0.0.0.0`.
-
-Приложение не предоставляет входящий сетевой сервис для других устройств.
-
-Внешние соединения инициируются только backend-адаптерами к явно поддерживаемым источникам данных.
-
-Секреты никогда не передаются frontend и не хранятся в browser localStorage.
-
-## 4. Portable Windows contract
-
-Portable-механика должна следовать уже принятому для приложений пользователя стандарту.
-
-Цепочка запуска:
+## 3. Portable startup
 
 ```text
 start.bat
-  → тонкий PowerShell bootstrap
-  → проверка/подготовка project-local runtime
-  → dependency-free Python launcher
-  → проверка lock/health
-  → запуск FastAPI
-  → открытие локального UI в браузере
+  → project-local runtime check/setup
+  → preflight + DB migrations
+  → FastAPI @ 127.0.0.1
+  → health check
+  → browser UI
 ```
 
-Обязательные свойства:
+Первый запуск скачивает portable Python с pinned official HTTPS URL, проверяет SHA-256 и локально готовит runtime/pinned dependencies. Frontend уже собран.
 
-- runtime хранится внутри каталога проекта;
-- системный Python/Node не используются как неявная зависимость;
-- публикация runtime выполняется атомарно;
-- загружаемые runtime-артефакты проверяются по SHA-256/allowlist;
-- параллельные старты защищены OS-backed locking;
-- повторный запуск не переустанавливает уже валидный runtime;
-- процессы приложения не загрязняют глобальный `PATH`;
-- закрытие/остановка не требует отдельного обязательного `Stop.bat`;
-- запуск работает из распакованного ZIP без инсталлятора.
+Повторный запуск не переустанавливает валидный runtime. Launcher показывает понятные стадии и локальные логи. Пользователь не устанавливает Python/Node, не меняет PATH и не использует права администратора.
 
-Portable-слой не должен содержать бизнес-логику SCOZ.
+## 4. Local web profile
 
-## 5. Высокоуровневая архитектура
+Backend слушает только `127.0.0.1`. Frontend и API работают same-origin. Production CORS не открывается произвольным origins.
+
+Для trusted-local сценария не нужны login/auth, per-launch session token, CSRF framework, TLS для loopback и LAN security layer.
+
+## 5. Credentials
+
+Используется утверждённый **portable encrypted keystore** из Preflight Decisions: ключи вводятся/расшифровываются в текущей browser tab, живут только в её памяти и передаются локальному backend только для конкретной операции source API. Backend не хранит plaintext credentials.
+
+DPAPI, Credential Manager и backend secret database не используются.
+
+## 6. Высокоуровневая архитектура
 
 ```text
 External Sources
-      │
-      ▼
-Source Adapters
-      │
-      ▼
-Ingestion / Normalization
-      │
-      ▼
-Normalized Domain Model
-      │
-      ▼
-Persistence + Immutable History
-      │
-      ├───────────────┬────────────────┬─────────────────┐
-      ▼               ▼                ▼                 ▼
-Benchmark        Diagnostics     Search Visibility   Query Opportunity
-      │               │                │                 │
-      └───────────────┴────────────────┴────────┬────────┘
-                                               ▼
-                                            Ramp-up
-                                               │
-                                               ▼
-                                      Application Services
-                                               │
-                                               ▼
-                                          FastAPI / DTO
-                                               │
-                                               ▼
-                                         React Web UI
+  → Source Adapters
+  → Ingestion / Normalization
+  → Normalized Domain Model
+  → Persistence + History
+  → Benchmark / Diagnostics / Search Visibility / Query Opportunity
+  → Ramp-up
+  → Application Services
+  → FastAPI
+  → React UI
 ```
 
-Главный архитектурный инвариант:
+Главный инвариант:
 
-> **Source Adapter → Normalized Domain Model → Analytics Engines → Application Services → API → UI**
+> **Source Adapter → Normalized Domain Model → Analytics → Application Services → API → UI**
 
-Ни UI, ни аналитические движки не должны зависеть от структуры конкретного XLSX или ответа внешнего API.
+UI и analytics не зависят от структуры конкретного XLSX/API response.
 
-## 6. Границы модулей
+## 7. Sources и ingestion
 
-### 6.1. `sources/`
-
-Отвечает только за получение исходных данных из конкретных источников.
-
-Планируемые адаптеры:
+Поддерживаемые источники:
 
 - Ozon XLSX «Товары на Ozon»;
-- Ozon XLSX «Что влияет на место в поиске»;
-- Ozon XLSX/официальный API аналитики собственных поисковых запросов;
-- Ozon Seller API;
+- Ozon XLSX «Что влияет на место»;
+- Ozon XLSX/официальный public API поисковой аналитики;
+- Ozon Seller API — только официальные public endpoints;
 - Ozon Performance API;
-- внутренний Ozon API, если он будет использован;
-- MPStats — главные фото и история позиций по запросам.
+- MPStats — главные фото и история поисковых позиций.
 
-Адаптер источника не считает benchmark, не выдаёт диагноз и не формирует UI-модели.
+Не использовать undocumented/internal Ozon API, `xapi`, Selenium/WebDriver или автоматический парсинг кабинета.
 
-### 6.2. `ingestion/`
+Ingestion отвечает за report detection, schema validation, parsing, normalization IDs/types/units, row errors, hashes, duplicate/revision detection и normalized snapshots.
 
-Отвечает за переход от сырого источника к нормализованным данным.
+## 8. Canonical domain model
 
-Функции:
+Основные сущности:
 
-- определение типа отчёта;
-- проверка схемы;
-- parsing;
-- нормализация типов, единиц и идентификаторов;
-- фиксация ошибок отдельных строк;
-- deduplication;
-- fingerprint/hash исходного артефакта;
-- формирование immutable snapshots;
-- формирование отчёта об импорте.
-
-`pandas`/`openpyxl` допустимы внутри ingestion, но DataFrame не является внутренним контрактом приложения.
-
-На выходе ingestion создаёт типизированные доменные DTO/объекты.
-
-### 6.3. `domain/`
-
-Каноническая модель SCOZ не зависит от источника данных.
-
-Базовые сущности:
-
-- `Product` — товар Ozon;
-- `SearchQuery` — нормализованный поисковый запрос;
-- `Cluster` — кластер Ozon;
-- `BenchmarkSet` — сохранённая benchmark-группа собственного товара;
-- `BenchmarkMember` — связь benchmark-группы с выбранным `Product`;
-- `ProductSnapshot` — агрегированные товарные показатели на дату/период;
-- `SearchVisibilitySnapshot` — `product × query × cluster × observation`;
-- `SearchPositionSnapshot` — история позиции `product × query × date`, в том числе из MPStats;
-- `QueryMetricSnapshot` — рыночные метрики самого поискового запроса;
-- `AdvertisingSnapshot` — рекламные показатели собственного товара;
-- `ImportBatch` — одна операция импорта;
-- `SourceArtifact` — исходный файл/API-ответ с provenance.
-
-Отдельной сущности `CompetitorProduct` нет. Конкурент — это обычный `Product`, включённый пользователем в `BenchmarkSet`.
-
-Собственный товар также остаётся `Product`; его роль фиксируется явным признаком/отношением ownership, а не отдельной несовместимой иерархией.
-
-### 6.4. `persistence/`
-
-Repository-слой инкапсулирует SQLite.
-
-Минимальные интерфейсы:
-
-- `ProductRepository`;
-- `SnapshotRepository`;
-- `SearchQueryRepository`;
-- `BenchmarkSetRepository`;
-- `ImportRepository`;
-- `SourceArtifactRepository`.
-
-Repository возвращает доменные структуры, а не SQL rows.
-
-### 6.5. `analytics/benchmark/`
-
-Чистый математический engine общего benchmark.
-
-Вход:
-
-- собственный SKU;
+- `Product`;
+- ownership flag/relation;
+- `ProductExternalIdentity`;
+- `SearchQuery`;
+- `Cluster`;
 - `BenchmarkSet`;
-- дата/период;
-- выбранные метрики.
+- `BenchmarkSetRevision`;
+- `BenchmarkMember`;
+- `ProductSnapshot`;
+- `ProductQuerySnapshot`;
+- `SearchVisibilitySnapshot`;
+- `SearchPositionSnapshot`;
+- `QueryMetricSnapshot`;
+- `AdvertisingSnapshot`;
+- `ImportBatch`;
+- `SourceArtifact`.
 
-Выход по каждой метрике:
+Отдельных `OwnProduct`/`CompetitorProduct` нет. Конкурент — обычный `Product`, включённый в конкретную benchmark revision.
 
-- собственное значение;
-- median;
-- P25/P75;
-- sample size;
-- delta;
-- статус.
+`BenchmarkSnapshot` не является source of truth: benchmark вычисляется из snapshots + `BenchmarkSetRevision`; materialized cache допустим только как оптимизация.
 
-Здесь же рассчитывается рекламная интенсивность:
+Минимальный `ProductExternalIdentity` хранит internal product ID, source, identity type/value и account scope только когда он реально нужен. Не merge по названию/фото. Temporal identity history заранее не строится.
+
+## 9. Persistence, history и revisions
+
+SQLite скрыта за repository layer. SQL не выполняется из analytics/routes. Schema меняется через migrations. `data/` — user-owned state и не коммитится.
+
+Для каждого snapshot определяется logical observation key:
 
 ```text
-promotion_spend = turnover × total_DRR
-promotion_intensity = promotion_spend / units_ordered
+same key + same normalized payload → duplicate
+same key + changed payload → new revision, previous superseded
+new period/date/dimensions → new observation
 ```
 
-Рекламная интенсивность интерпретируется только совместно с результатом, позицией, популярностью и трафиком.
+Analytics использует актуальную revision, старые остаются для provenance. Изменение состава конкурентов создаёт новую `BenchmarkSetRevision`.
 
-Benchmark Engine не формирует текстовые диагнозы.
+## 10. Period/granularity и sources
 
-### 6.6. `analytics/diagnostics/`
+Каждый snapshot хранит доступные `observed_at`, `period_start`, `period_end`, `imported_at` и фактические dimensions/granularity.
 
-Diagnostic Engine получает готовые benchmark-результаты и формализованно классифицирует причины отклонения.
+Не нужен тяжёлый temporal framework: достаточно typed metadata и reusable compatibility rules.
 
-Минимальные диагнозы:
+Нельзя молча связывать daily position с 28-day CR row-by-row, размножать query-level data по кластерам, сравнивать несовместимые periods или интерполировать missing days как observed facts.
 
-- `TRAFFIC_DEFICIT`;
-- `WEAK_CONVERSION`;
-- `CARD_CONVERSION_PROBLEM`;
-- `SEARCH_RESULT_PROBLEM`;
-- `OFFER_PROBLEM`;
-- `COMBINED_GAP`;
-- `HIGH_AD_SUPPORT_LOW_RESULT`.
+Для конфликтующих sources используется простой deterministic resolver: факты сохраняются, автоматически не усредняются; Ozon предпочтителен только при совместимых metric/grain/period; MPStats sales estimates не подменяют Ozon benchmark.
 
-Правила являются конфигурируемыми и тестируемыми. Они не находятся в React-компонентах или FastAPI endpoints.
+Backfill/coverage реализуются внутри конкретного API adapter-а только если source это поддерживает. Общий `SourceCapability` registry в foundation не нужен.
 
-На основной экран возвращаются максимум 2–3 наиболее существенных вывода.
+## 11. Analytics modules
 
-### 6.7. `analytics/search_visibility/`
+**Benchmark** возвращает own value, median, P25/P75 при достаточной выборке, sample size, delta, performance status и confidence. Здесь же считается рекламная интенсивность согласно отдельному Product Addendum.
 
-Работает в гранулярности:
+**Diagnostics** формирует максимум 2–3 главные причины. OOS может выступать как `AVAILABILITY_CONFOUNDED`.
 
-> `SKU × query × cluster`
+**Search Visibility** работает в `product × query × cluster`; основные factors — position, relevance, popularity, delivery, price.
 
-Рассчитывает benchmark и статусы для:
+**Query Opportunity** объединяет Query Demand, Query Quality, Visibility Gap и Position Stability. Без Opportunity Score 0–100. Share of Top возвращает denominator/sample size.
 
-- позиции;
-- релевантности;
-- популярности;
-- доставки;
-- цены.
+**Ramp-up** строит position-normalized CR, readiness/confidence, verdict, empirical bid-position model, scenarios и organic-support trend. Он работает на максимально детальной **общей** granularity входов. Базово — `SKU × query × time`; cluster добавляется только при совместимых cluster-level inputs. При недостатке данных возвращается `INSUFFICIENT_DATA`.
 
-Дополнительные поля Ozon (сводная оценка, CPC, CPO, рейтинг, отзывы, индекс цены и т.п.) сохраняются и доступны в детализации, но не обязаны находиться в основной heatmap.
+## 12. MPStats position history
 
-### 6.8. `analytics/query_opportunity/`
+До реализации Share of Top PR10 обязан проверить реальный contract истории позиций: порядок массива относительно дат, missing days, `null` semantics и business-date semantics. До подтверждения `null` означает unknown observation.
 
-Не создаёт отдельный пользовательский режим.
+## 13. Application/API/UI
 
-Формирует приоритет поисковых запросов по четырём блокам:
+Application Services оркестрируют repositories и analytics. FastAPI routes остаются тонкими: validation → application service → DTO/error mapping.
 
-1. `Query Demand` — спрос;
-2. `Query Quality` — качество коммерческого интента;
-3. `Visibility Gap` — разрыв с выбранными конкурентами;
-4. `Position Stability` — устойчивость присутствия в TOP-N.
+Frontend отвечает за navigation, upload, competitor selection, encrypted-keystore UX, feedback states, tables/heatmap/charts/drill-down. Business rules в frontend запрещены.
 
-Основные производные показатели:
+## 14. Operation feedback
 
-- медианная позиция за период;
-- Share of TOP-10;
-- Share of TOP-20;
-- при необходимости TOP-3/TOP-50;
-- разрыв собственной позиции с benchmark;
-- объяснимый класс приоритета запроса.
+Persistent operation database/job platform не нужен. Короткие действия используют request-local loading state. Реально длинная операция при необходимости использует lightweight in-memory state + HTTP polling.
 
-В первой версии не создаётся непрозрачный Opportunity Score 0–100.
+Минимальные states: `VALIDATING → RUNNING → SUCCESS / PARTIAL_SUCCESS / FAILED`. `STALE` и `INSUFFICIENT_DATA` — состояния данных/аналитики.
 
-CR самого поискового запроса не интерпретируется как CR конкретного competitor SKU.
+## 15. Testing
 
-### 6.9. `analytics/ramp_up/`
+Каждый parser: valid synthetic fixture, malformed row, incompatible schema, duplicate, corrected same-period revision и relevant locale/date/unit edge cases.
 
-Отдельный аналитический модуль режима «Разгон».
+Каждый analytics module: deterministic happy path, missing data, small sample, incompatible period/granularity и insufficient-data cases.
 
-Внутренние ответственности:
+API adapters: mocked synthetic contracts; никаких real credentials в CI.
 
-- `PositionConversionModel`;
-- `BidPositionModel`;
-- `RampUpVerdict`;
-- `ScenarioEstimator`;
-- `OrganicSupportTrend`;
-- оценка достаточности данных/confidence.
+Portable Windows verification: clean machine without system Python/Node, first run, second run, health/open browser, occupied port, Cyrillic/spaces path и runtime-integrity failure.
 
-Главная гранулярность:
+## 16. Explicit non-goals
 
-> `SKU × query × cluster × time`
+В v1 не входят central server, accounts/roles, LAN mode, auto-updater, DPAPI/Credential Manager, auth/session platform, persistent job queue, event bus, telemetry SaaS, automatic bid changes, guaranteed positions, undocumented Ozon automation, competitor ad/organic reconstruction, seller-price/SPP calculations, universal card score 0–100, Opportunity Score 0–100 и отдельный advertising BI.
 
-Модуль должен различать:
+## 17. Code-review invariants
 
-- cross-sectional данные конкурентов;
-- longitudinal историю одного SKU.
+PR требует корректировки, если он добавляет business logic во frontend/routes, даёт analytics читать XLSX/API напрямую, выполняет SQL вне persistence, перезаписывает history, теряет benchmark revision/provenance, смешивает incompatible periods/granularity, строит cluster Ramp-up без cluster evidence, сохраняет plaintext credentials, требует system Python/Node, использует internal Ozon automation или вводит generic infrastructure без реального use case.
 
-Собственная longitudinal-история имеет больший вес при появлении достаточного числа наблюдений.
-
-При недостатке данных engine возвращает `INSUFFICIENT_DATA`, а не псевдоточный прогноз.
-
-Система не утверждает внутреннюю формулу ранжирования Ozon и не гарантирует позицию по ставке.
-
-### 6.10. `application/`
-
-Application Services оркестрируют use cases и являются границей между domain/analytics и HTTP.
-
-Базовые use cases:
-
-- `ImportReport`;
-- `ListOwnProducts`;
-- `BuildCompetitorCandidates`;
-- `SaveBenchmarkSet`;
-- `GetProductDiagnosis`;
-- `GetQueryOpportunities`;
-- `GetSearchVisibility`;
-- `GetRampUpAnalysis`;
-- `GetImportHistory`.
-
-### 6.11. `api/`
-
-FastAPI endpoints остаются тонкими.
-
-Они отвечают за:
-
-- validation HTTP input;
-- вызов application service;
-- сериализацию DTO/view model;
-- HTTP error mapping.
-
-Бизнес-расчёты в endpoints запрещены.
-
-### 6.12. `web/`
-
-Frontend получает уже подготовленные view models и не реализует методологию benchmark.
-
-Основные представления:
-
-- выбор собственного SKU;
-- управление benchmark-группой и просмотр главных фото;
-- главный экран «Диагностика»;
-- список «Поисковые возможности»;
-- heatmap по кластерам;
-- drill-down исходных показателей конкурентов;
-- режим «Разгон»;
-- импорт и состояние источников.
-
-Рекламная интенсивность показывается компактно внутри диагностики/разгона. Отдельного рекламного BI-экрана нет.
-
-## 7. Источники данных и приоритеты
-
-### 7.1. Ozon как источник числовой аналитики
-
-При наличии данных Ozon они имеют приоритет над сторонними расчётными оценками.
-
-Основные назначения:
-
-- «Товары на Ozon» — товарные и конкурентные показатели;
-- «Что влияет на место» — факторы ранжирования по запросу и кластеру;
-- аналитика собственных запросов — позиции, показы, конверсии, заказы собственного SKU;
-- метрики поисковых запросов — Demand/Quality;
-- Performance API — собственная рекламная история.
-
-### 7.2. MPStats
-
-MPStats используется ограниченно:
-
-- главные фото кандидатов для ручного отбора прямых конкурентов;
-- история позиций товаров по запросам для Query Opportunity/Position Stability.
-
-Продажи и иные расчётные оценки MPStats не подменяют данные Ozon при наличии первичного источника Ozon.
-
-### 7.3. Замена XLSX на API
-
-Первая реализация может начинаться с XLSX-адаптеров.
-
-Переход на Seller API, Performance API или другой источник не должен требовать изменений Analytics Engine и UI. Новый источник обязан нормализовать данные в существующие domain contracts.
-
-## 8. Temporal model и история
-
-История является фундаментом архитектуры с первого этапа разработки.
-
-Новые данные не перезаписывают старые snapshots.
-
-Каждое наблюдение должно различать как минимум:
-
-- `observed_at` — момент/дата наблюдения, если источник его предоставляет;
-- `period_start` / `period_end` — период агрегации, если показатель периодный;
-- `imported_at` — момент поступления данных в SCOZ;
-- source/provenance.
-
-Нельзя без явного правила смешивать дневную позицию и конверсию, агрегированную за другой период.
-
-Это особенно критично для режима «Разгон» и Query Opportunity.
-
-`BenchmarkSnapshot` не является первичным источником истины. Benchmark рассчитывается из состава `BenchmarkSet` и исторических snapshots. Кеш/материализация допустимы как оптимизация и должны быть воспроизводимы.
-
-## 9. Data lineage и raw artifacts
-
-Для каждого импортируемого источника сохраняются:
-
-- тип источника;
-- дата/период;
-- имя/идентификатор исходного артефакта;
-- SHA-256;
-- время импорта;
-- версия parser/adapter;
-- количество валидных и отклонённых записей.
-
-Исходный XLSX сохраняется локально в неизменяемом виде или сохраняется эквивалентный raw snapshot, достаточный для воспроизведения нормализации.
-
-Для рассчитанной метрики должно быть возможно восстановить:
-
-> source → normalized snapshot → benchmark set → analytics rule → view result.
-
-## 10. Файловая структура portable-инсталляции
-
-Целевая структура релиза:
+## 18. Итог
 
 ```text
-SCOZ/
-├─ start.bat
-├─ app/                  # backend и launcher
-├─ web/                  # собранный frontend
-├─ runtime/              # project-local runtime
-├─ config/               # локальная конфигурация
-└─ data/
-   ├─ scoz.db
-   ├─ imports/           # raw source artifacts
-   ├─ cache/             # фото/временный cache
-   └─ logs/
+ZIP → start.bat → portable runtime → FastAPI + React → SQLite
+                                      ↓
+                                  adapters
+                                      ↓
+                             normalized history
+                                      ↓
+                                  analytics
+                                      ↓
+                                 clear UI
 ```
 
-`data/`, runtime-generated config и секреты не коммитятся в Git.
-
-## 11. Секреты и безопасность
-
-Репозиторий публичный. В GitHub запрещено хранить:
-
-- реальные Ozon API keys;
-- Performance API credentials;
-- MPStats credentials;
-- реальные коммерческие отчёты компании;
-- локальную SQLite;
-- логи с чувствительными данными.
-
-Для автоматических тестов используются только синтетические fixtures, повторяющие структуру источников, но не реальные коммерческие значения.
-
-Секреты хранятся только локально и читаются backend-адаптерами. Frontend получает только статус подключения/ошибку, но не значение секрета.
-
-Логи должны маскировать authorization headers, tokens и ключи.
-
-## 12. Import/error handling
-
-Импорт не является «всё или ничего», если источник допускает безопасную частичную обработку.
-
-Результат импорта должен содержать:
-
-- принятые записи;
-- пропущенные записи;
-- ошибки с понятной причиной;
-- предупреждения;
-- признак дубля;
-- идентификатор `ImportBatch`.
-
-Ошибка одной строки не должна блокировать весь валидный отчёт.
-
-Ошибки структуры файла, делающие нормализацию неоднозначной, должны блокировать импорт до исправления источника/parser.
-
-Внешние API-ошибки не должны повреждать уже сохранённые snapshots.
-
-## 13. Confidence и честность аналитики
-
-Каждый аналитический engine, где вывод зависит от объёма наблюдений, должен возвращать метаданные достаточности данных.
-
-Минимальные состояния:
-
-- `HIGH`;
-- `MEDIUM`;
-- `INSUFFICIENT`.
-
-Пороговые значения конфигурируются в analytics/config, а не в UI.
-
-Система обязана различать:
-
-- наблюдаемый факт;
-- вычисляемый показатель;
-- оценочную модель.
-
-Запрещается выдавать агрегированную CR конкурента за CR конкретного запроса/позиции без соответствующей гранулярности данных.
-
-## 14. UI architecture и информационная иерархия
-
-Принцип UI:
-
-> **диагноз → показатель → детализация**
-
-### 14.1. Диагностика
-
-Главный экран не является BI-панелью.
-
-Он показывает:
-
-- итоговый результат относительно benchmark;
-- трафик;
-- конверсию;
-- краткий контекст оффера;
-- компактную рекламную интенсивность;
-- максимум 2–3 главных диагноза.
-
-### 14.2. Поисковые возможности
-
-Перед кластерной heatmap показывается компактный приоритизированный список запросов:
-
-- спрос;
-- рыночное качество интента;
-- наша позиция;
-- benchmark позиции;
-- краткий вердикт.
-
-Клик по запросу открывает кластерную детализацию.
-
-### 14.3. Heatmap
-
-Основные колонки:
-
-- позиция;
-- релевантность;
-- популярность;
-- доставка;
-- цена.
-
-Дополнительные поля доступны по раскрытию.
-
-### 14.4. Разгон
-
-Экран ограничен четырьмя смысловыми областями:
-
-1. вердикт;
-2. график `position → conversion`;
-3. сценарии `Сейчас / TOP-20 / TOP-10 / TOP-3`;
-4. динамика требуемой ставки для удержания TOP-N при достаточной истории.
-
-## 15. API contracts
-
-HTTP API строится вокруг use cases, а не вокруг таблиц SQLite.
-
-Ориентировочные namespaces:
-
-```text
-/api/imports
-/api/products
-/api/products/{id}/diagnosis
-/api/products/{id}/query-opportunities
-/api/products/{id}/search-visibility
-/api/products/{id}/ramp-up
-/api/benchmark-sets
-/api/settings/sources
-```
-
-Конкретные payload schemas фиксируются в ТЗ соответствующего PR.
-
-API должен возвращать стабильные типизированные DTO, чтобы изменения внутренних вычислений не ломали UI без необходимости.
-
-## 16. Testing strategy
-
-Тестирование является частью каждого PR, а не финальной стадией.
-
-### 16.1. Parser/ingestion tests
-
-- синтетические XLSX fixtures;
-- корректные файлы;
-- частично некорректные строки;
-- несовместимая структура;
-- повторный импорт;
-- locale/percent/currency/date edge cases.
-
-### 16.2. Domain/analytics unit tests
-
-Каждое правило benchmark/diagnostics/query opportunity/ramp-up проверяется детерминированными наборами данных.
-
-Особое внимание:
-
-- median/P25/P75;
-- направление метрик «меньше лучше»;
-- малые выборки;
-- отсутствующие значения;
-- смешение разных периодов;
-- Share of Top;
-- advertising intensity;
-- `INSUFFICIENT_DATA`.
-
-### 16.3. Persistence integration tests
-
-Используется временная SQLite.
-
-Проверяются:
-
-- migrations;
-- immutable history;
-- deduplication;
-- repository contracts;
-- восстановление данных по дате/периоду.
-
-### 16.4. API tests
-
-FastAPI application services тестируются через HTTP test client без запуска браузера.
-
-### 16.5. Frontend tests
-
-Минимально:
-
-- component tests критичных view states;
-- loading/error/empty/insufficient-data states;
-- smoke test основных пользовательских маршрутов.
-
-### 16.6. Portable/Windows verification
-
-На Windows CI или эквивалентной проверке должны тестироваться:
-
-- bootstrap с чистого состояния;
-- повторный запуск;
-- lock от двойного запуска;
-- отсутствие зависимости от системного Python/Node;
-- запуск backend и health endpoint;
-- доступность собранного frontend.
-
-## 17. Нефункциональные требования
-
-### 17.1. Воспроизводимость
-
-Один и тот же набор snapshots + BenchmarkSet + версия правил должен давать один и тот же аналитический результат.
-
-### 17.2. Объяснимость
-
-Никакой критически важный статус не должен зависеть от скрытого score без возможности показать исходные факторы.
-
-### 17.3. Изоляция изменений
-
-Замена parser/API adapter не должна требовать изменения analytics.
-
-Изменение формулы benchmark не должно требовать изменения storage schema, если не появляется новая исходная гранулярность.
-
-Изменение UI не должно менять business rules.
-
-### 17.4. Локальность
-
-Все пользовательские данные и секреты хранятся локально. Центральная SCOZ-инфраструктура в первой версии отсутствует.
-
-## 18. Явные non-goals первой версии
-
-Не входят в архитектуру первой версии:
-
-- центральный multi-user server;
-- аккаунты и синхронизация между компьютерами;
-- автоматическое изменение рекламных ставок;
-- автоматический запуск/остановка рекламных кампаний;
-- гарантирование позиции;
-- reverse engineering внутренней формулы Ozon как продуктовая зависимость;
-- автоматический выбор конкурентов без подтверждения пользователя;
-- восстановление рекламных/органических продаж конкурента;
-- расчёт «цены продавца», СПП или ценового разрыва;
-- единый рейтинг карточки 0–100;
-- отдельный рекламный BI-модуль;
-- использование MPStats-продаж как основного benchmark при наличии данных Ozon.
-
-## 19. Предлагаемая структура исходного кода
-
-```text
-SCOZ/
-├─ backend/
-│  └─ scoz/
-│     ├─ sources/
-│     ├─ ingestion/
-│     ├─ domain/
-│     ├─ persistence/
-│     ├─ analytics/
-│     │  ├─ benchmark/
-│     │  ├─ diagnostics/
-│     │  ├─ search_visibility/
-│     │  ├─ query_opportunity/
-│     │  └─ ramp_up/
-│     ├─ application/
-│     └─ api/
-├─ frontend/
-├─ launcher/
-├─ tests/
-├─ fixtures/
-├─ docs/
-└─ start.bat
-```
-
-Это логические границы. PR не обязан создавать пустые директории заранее; структура появляется по мере появления работающих вертикалей.
-
-## 20. Принципы будущего PR-плана
-
-PR-план должен строиться по зависимостям и проверяемым возможностям, а не по экранам.
-
-Обязательные правила:
-
-1. фундамент storage/history создаётся до аналитики «Разгона»;
-2. source adapters зависят от domain contracts, но analytics не зависит от конкретных adapters;
-3. каждый parser поставляется с fixtures/tests;
-4. каждый analytics module поставляется с детерминированными unit tests;
-5. UI подключается к стабильным application/API contracts;
-6. API-интеграции добавляются после того, как соответствующий domain flow уже работает на fixtures/XLSX, если это снижает риск;
-7. portable productionization не должна откладываться до момента, когда архитектура уже зависит от системных runtime;
-8. размер PR должен позволять независимо проверить его acceptance criteria и не требовать одновременного понимания всей системы.
-
-## 21. Архитектурные инварианты для code review
-
-Любой будущий PR должен отклоняться или корректироваться, если он нарушает хотя бы один из следующих принципов без отдельного согласованного изменения design:
-
-- бизнес-логика попадает в frontend;
-- SQL начинает выполняться непосредственно из analytics/API;
-- DataFrame становится межмодульным domain contract;
-- новый источник диктует структуру analytics;
-- исторический импорт перезаписывает прошлые наблюдения;
-- реальные секреты/отчёты попадают в публичный репозиторий;
-- MPStats-оценки подменяют доступные первичные данные Ozon;
-- режим «Разгон» строит сильный вывод без достаточных данных;
-- Query Opportunity превращается в отдельный перегруженный BI-раздел;
-- рекламная интенсивность превращается в отдельный рекламный продукт;
-- portable-релиз начинает зависеть от системного Python/Node.
-
-## 22. Definition of Done архитектурного фундамента
-
-Архитектура считается реализованной корректно, когда по мере выполнения PR-плана достигаются следующие свойства:
-
-- приложение запускается из portable Windows-пакета через `start.bat`;
-- все источники входят через adapters/ingestion;
-- данные нормализуются в устойчивую domain model;
-- история snapshots неразрушающая;
-- SQLite изолирована repositories;
-- benchmark/diagnostics/search visibility/query opportunity/ramp-up имеют независимые тестируемые границы;
-- frontend работает через application/API contracts;
-- замена XLSX на API не требует переписывания аналитического ядра;
-- система сохраняет provenance каждого исходного наблюдения;
-- пользовательские секреты и коммерческие данные не покидают локальный контур SCOZ без явной внешней операции адаптера.
-
-## 23. Следующий этап
-
-После утверждения этого architecture design необходимо создать отдельный документ **PR Development Plan**, который:
-
-1. разобьёт разработку на разумное число последовательных PR;
-2. определит зависимости между PR;
-3. задаст цель и acceptance criteria каждого PR;
-4. отметит, какие PR дают пользовательски проверяемую вертикаль;
-5. отделит обязательный MVP от последующего подключения API и накопительной аналитики;
-6. станет индексом для последующего написания отдельного подробного ТЗ на каждый PR.
+Сложность оправдана там, где она защищает данные, воспроизводимость или аналитический вывод. Остальное добавляется только по реальной необходимости.
