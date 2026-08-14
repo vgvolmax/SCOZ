@@ -163,11 +163,11 @@ Semantic background должен быть очень светлым. Основ�
 ### 3.4. Радиусы
 
 ```text
---radius-sm:     6px
---radius-control:8px
---radius-card:   10px
---radius-large:  12px
---radius-pill:   999px
+--radius-sm:      6px
+--radius-control: 8px
+--radius-card:    10px
+--radius-large:   12px
+--radius-pill:    999px
 ```
 
 Cards по умолчанию 10 px.  
@@ -220,6 +220,19 @@ Compact KPI:      18px / 24px / 600
 - muted text не должен становиться слишком светлым и терять читаемость;
 - line-height важнее декоративной компактности.
 
+### 4.1. Iconography
+
+Использовать одну согласованную bundled SVG icon family или один единый SVG-набор внутри frontend.
+
+Правила:
+
+- основной размер: 16 px для compact controls, 20 px для navigation/primary controls;
+- единый stroke/fill style и визуальный вес внутри приложения;
+- не смешивать несколько icon libraries без реальной необходимости;
+- emoji не использовать как UI icon, статус или замену системной пиктограмме;
+- icon-only control всегда имеет accessible label/tooltip;
+- декоративная icon не должна визуально конкурировать с текстом или KPI.
+
 ---
 
 ## 5. App shell
@@ -233,6 +246,7 @@ SCOZ оптимизируется для обычного Windows desktop/laptop
 - оптимально: 1440–1600 px width;
 - основной интерфейс должен оставаться usable от 1280 px width;
 - при Windows scaling 125–150% не должно быть overlap/clipping;
+- при browser/text zoom 200% функциональность и содержимое не должны теряться; detail/data tables при необходимости используют внутренний horizontal scroll;
 - main analytical screens при >=1280 CSS px не требуют page-level horizontal scroll;
 - raw/detail tables могут иметь свой horizontal scroll.
 
@@ -399,6 +413,8 @@ Recommended focus treatment:
 2px primary focus ring + 2px offset
 ```
 
+Focus indicator должен иметь contrast не ниже 3:1 относительно соседнего background/surface и не должен полностью скрываться sticky header, drawer или другим overlay.
+
 Hover не является единственным способом показать доступность действия.
 
 ### Disabled
@@ -533,7 +549,7 @@ Search Visibility heatmap является таблицей с semantic cell bac
 
 1. Product Context Header.
 2. Один главный diagnosis/verdict banner.
-3. 3–5 supporting metrics: результат, traffic, conversion, card/search-to-cart по доступности.
+3. 3–5 supporting metrics, начиная с outcome: **`Продажи, шт. относительно benchmark`**, затем traffic, conversion, card/search-to-cart по доступности.
 4. Compact offer + advertising-intensity context.
 5. Benchmark evidence / competitor details.
 6. Source/details по progressive disclosure.
@@ -585,8 +601,10 @@ Right panel:
 
 - selected count;
 - compact selected competitor rows;
-- remove/reorder только если это реально нужно interaction model;
+- remove action;
 - одна primary action `Сохранить ревизию` / эквивалент.
+
+В v1 порядок competitors **не влияет на benchmark calculation**, поэтому drag-to-reorder/reorder UI не нужен.
 
 Настройки API/ключей не смешиваются с competitor selection screen.
 
@@ -643,6 +661,8 @@ Button-local spinner / inline loading достаточно.
 - `Обновляем аналитику`.
 
 Процент — только если он честно вычисляется.
+
+Status/loading semantics должны быть доступны assistive technology: loading region при необходимости использует `aria-busy`, а значимые переходы `успех / partial success / ошибка / готово` сообщаются через подходящий status/live-region механизм. Не озвучивать каждый progress tick и не создавать шум из частых announcements.
 
 ### Refresh with previous data
 
@@ -739,7 +759,10 @@ Popover/dropdown — единственные surfaces, где допустим�
 - icon-only buttons имеют accessible label/tooltip;
 - hover не является единственным способом раскрыть critical information;
 - status color дублируется текстом/icon;
-- contrast основных текстов и controls достаточен для долгой desktop-работы.
+- обычный текст имеет contrast не ниже 4.5:1;
+- крупный текст имеет contrast не ниже 3:1;
+- значимые UI boundaries, icons и focus indicators имеют contrast не ниже 3:1 относительно соседнего background, кроме явно disabled/inactive элементов;
+- focused control не должен полностью скрываться sticky/fixed элементами интерфейса.
 
 Не создавать tiny controls <32 px для основных действий.
 
@@ -762,6 +785,8 @@ Motion минимален.
 - decorative chart entrance animation, мешающую сравнению;
 - large page transitions.
 
+При `prefers-reduced-motion: reduce` несущественные transitions/animations отключаются или существенно сокращаются; loading/status остаётся понятным без движения.
+
 Пользователь должен ощущать интерфейс быстрым, а не «анимированным».
 
 ---
@@ -777,6 +802,8 @@ SCOZ — desktop-first, не mobile-first.
 3. detail tables получают внутренний horizontal scroll;
 4. primary decision blocks остаются полностью видимыми;
 5. sidebar не должна автоматически превращаться в mobile hamburger без отдельного v1 requirement.
+
+При 200% browser/text zoom нельзя терять content, controls или возможность выполнить основной workflow; horizontal scroll допустим внутри genuinely two-dimensional data tables, но не как обязательный режим всей analytical page.
 
 Нельзя скрывать критичные метрики только ради responsive layout.
 
@@ -797,11 +824,12 @@ PR требует корректировки, если UI:
 - использует category-wide benchmark там, где продукт требует selected competitors;
 - делает MPStats/Ozon source concepts частью визуального языка без необходимости;
 - использует color-only status;
+- смешивает emoji и несогласованные icon styles как часть UI;
 - прячет freshness/period/active query;
 - заменяет insufficient-data красивым пустым chart;
 - показывает spinner без понятного состояния длительной операции;
 - требует remote font/CDN для нормального внешнего вида;
-- ломается при 125–150% Windows scaling;
+- ломается при 125–150% Windows scaling или 200% browser/text zoom;
 - требует page-level horizontal scroll на основном analytical screen при нормальном desktop viewport.
 
 ---
@@ -848,9 +876,11 @@ Visual foundation считается соответствующим SCOZ, ког
 - карточки используются осмысленно и не создают tile-wall;
 - semantic colors спокойные и не являются единственным носителем состояния;
 - charts минималистичны и честно отражают analytical model;
-- loading/empty/error/stale/insufficient states выглядят как часть продукта;
+- loading/empty/error/stale/insufficient states выглядят как часть продукта и имеют понятную semantic/status обратную связь;
 - offline внешний вид не зависит от remote fonts/CDN;
-- Windows scaling 125–150% не разрушает layout;
+- используется единая согласованная iconography;
+- базовый contrast соответствует указанным минимумам;
+- Windows scaling 125–150% и browser/text zoom 200% не приводят к потере функций или content;
 - интерфейс соответствует UX North Star: пользователь понимает контекст, действие, результат и ограничение данных.
 
 ---
