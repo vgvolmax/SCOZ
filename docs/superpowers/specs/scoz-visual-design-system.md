@@ -80,18 +80,22 @@ SCOZ — аналитический инструмент, поэтому таб�
 #### Base
 
 ```text
---color-app-bg:          #F6F8FB
---color-surface:         #FFFFFF
---color-surface-muted:   #F8FAFC
---color-surface-hover:   #F1F5F9
---color-border:          #E2E8F0
---color-border-strong:   #CBD5E1
+--color-app-bg:              #F6F8FB
+--color-surface:             #FFFFFF
+--color-surface-muted:       #F8FAFC
+--color-surface-hover:       #F1F5F9
+--color-border:              #E2E8F0
+--color-border-strong:       #CBD5E1
+--color-control-border:      #64748B
+--color-control-border-hover:#475569
 
---color-text:            #0F172A
---color-text-secondary:  #475569
---color-text-muted:      #64748B
---color-text-disabled:   #94A3B8
+--color-text:                #0F172A
+--color-text-secondary:      #475569
+--color-text-muted:          #64748B
+--color-text-disabled:       #94A3B8
 ```
+
+`--color-border` и `--color-border-strong` предназначены прежде всего для разделения surfaces и декоративных separators. Их нельзя использовать как **единственный** визуальный способ определить границу interactive control. Input/select/button с border-defined boundary использует `--color-control-border` или другой token, обеспечивающий требуемый non-text contrast.
 
 #### Primary
 
@@ -105,25 +109,36 @@ SCOZ — аналитический инструмент, поэтому таб�
 
 #### Semantic
 
+Accent и readable text разделяются. Светлый semantic background не означает, что тот же accent color подходит для мелкого текста.
+
 ```text
 --color-success:         #16A34A
+--color-success-text:    #166534
 --color-success-soft:    #F0FDF4
 --color-success-border:  #BBF7D0
 
 --color-warning:         #D97706
+--color-warning-text:    #92400E
 --color-warning-soft:    #FFFBEB
 --color-warning-border:  #FDE68A
 
 --color-danger:          #DC2626
+--color-danger-text:     #991B1B
 --color-danger-soft:     #FEF2F2
 --color-danger-border:   #FECACA
 
 --color-info:            #0284C7
+--color-info-text:       #075985
 --color-info-soft:       #F0F9FF
 --color-info-border:     #BAE6FD
 ```
 
-Semantic background должен быть очень светлым. Основной текст внутри banner/card остаётся тёмным; яркий цвет используется в icon, status label, delta или border accent.
+Правила:
+
+- `*-text` используется для обычного readable semantic text/chip label на соответствующем soft background;
+- более яркий accent допустим для icon, marker, delta accent или другой non-text графики при достаточном contrast;
+- semantic border может быть мягким декоративным accent, но не должен быть единственным носителем состояния;
+- основной текст внутри большого banner/card по умолчанию остаётся `--color-text`.
 
 ### 3.2. Chart palette
 
@@ -431,7 +446,8 @@ Input/select/filter визуально компактные, высота око
 - placeholder не заменяет label для критичных fields;
 - filter chips показывают выбранное состояние;
 - active filter не должен выглядеть как primary CTA;
-- search box не занимает половину экрана без необходимости.
+- search box не занимает половину экрана без необходимости;
+- interactive control с boundary, заданной border, использует контрастную границу (`--color-control-border` или эквивалент), а не декоративный separator token.
 
 Errors показываются рядом с соответствующим control человеческим текстом.
 
@@ -443,15 +459,33 @@ Chip/status — компактный semantic indicator, не самостоят
 
 Recommended statuses:
 
-- success: green text + soft green background;
-- warning: amber text + soft amber background;
-- danger: red text + soft red background;
+- success: `--color-success-text` + soft green background;
+- warning: `--color-warning-text` + soft amber background;
+- danger: `--color-danger-text` + soft red background;
 - neutral: slate text + muted background;
-- info/current: blue text + primary-soft background.
+- info/current: `--color-info-text` + primary/info soft background.
 
 Цвет всегда дублируется текстом или symbol/icon.
 
 Не делать красный/зелёный единственным носителем смысла.
+
+### 10.1. Fact / calculation / model estimate
+
+Тип происхождения показателя не должен смешиваться со статусом `хорошо / плохо`.
+
+Когда на одном экране рядом присутствуют факты, вычисленные значения и модельные оценки, использовать компактный metadata treatment:
+
+- `Факт` — neutral micro-label/chip;
+- `Расчёт` — neutral/info micro-label/chip;
+- `Оценка модели` — отдельный легко различимый label; рядом показываются confidence/limitations, когда они существенны для решения.
+
+Правила:
+
+- обычный source fact не обязан получать label в каждом месте, если контекст однозначен;
+- модельная оценка не должна выглядеть как наблюдаемый факт;
+- confidence не заменяет explanation/limitations;
+- не использовать semantic success/danger цвет только для обозначения происхождения данных;
+- внутренние rule ID/model ID не показываются на основном уровне.
 
 ---
 
@@ -481,6 +515,13 @@ Recommended statuses:
 
 Sort state должен быть видимым, но не перегружать header icons.
 
+Если column sortable:
+
+- header sort control доступен с клавиатуры и реализован как semantic interactive element;
+- направление сортировки видно текстово/иконкой и отражается через `aria-sort` на соответствующем header;
+- сортировка не должна требовать pointer-only interaction;
+- один только цвет/положение маленькой стрелки не является достаточным обозначением состояния.
+
 ### Missing data
 
 Missing/unknown показывается как `—`, `Нет данных`, `Не наблюдалось` или другой точный domain state.
@@ -505,6 +546,15 @@ Missing/unknown показывается как `—`, `Нет данных`, `�
 - our/current point — primary или semantic highlight;
 - confidence band — 8–12% opacity;
 - tooltip — compact popover, без огромной таблицы.
+
+Ключевой бизнес-вывод графика не должен существовать **только** визуально. Основное значение/verdict/range дублируется текстом или числом рядом с chart.
+
+Interaction/accessibility:
+
+- tooltip/detail, доступный по hover, должен быть доступен и через keyboard focus или эквивалентный не-pointer interaction;
+- interactive series/legend controls должны быть keyboard-accessible;
+- для dense scatter/time-series не превращать сотни data points в сотни tab stops: вместо этого давать доступный summary, selected-point interaction или tabular/detail alternative;
+- цвет, форма линии и положение точки не должны быть единственными носителями критичного вывода.
 
 ### Запрещено
 
@@ -584,7 +634,17 @@ Query Opportunity не становится отдельным dashboard.
 
 ### 14.4. Конкуренты
 
-Desktop two-column pattern:
+Перед candidate pool пользователь должен видеть текущий **scope релевантных запросов**, из которого кандидаты были сформированы.
+
+Compact scope block показывает как минимум:
+
+- `Релевантные запросы — N выбрано`;
+- несколько выбранных query или компактное summary;
+- действие `Изменить запросы` / эквивалент, возвращающее к утверждённому include/exclude workflow.
+
+Candidate pool строится только из сохранённого product-specific relevant-query scope. Этот блок не превращается в отдельный wizard или новый глобальный раздел.
+
+После query scope используется desktop two-column pattern:
 
 - left 65–70%: candidate list;
 - right 30–35%: selected benchmark revision.
@@ -824,8 +884,12 @@ PR требует корректировки, если UI:
 - использует category-wide benchmark там, где продукт требует selected competitors;
 - делает MPStats/Ozon source concepts частью визуального языка без необходимости;
 - использует color-only status;
+- использует декоративный low-contrast separator как единственную границу interactive control;
+- смешивает Fact / Расчёт / Оценку модели так, что estimate выглядит как наблюдаемый факт;
 - смешивает emoji и несогласованные icon styles как часть UI;
 - прячет freshness/period/active query;
+- скрывает или обходит product-specific relevant-query scope при формировании competitors;
+- оставляет критичный бизнес-вывод доступным только визуально внутри chart;
 - заменяет insufficient-data красивым пустым chart;
 - показывает spinner без понятного состояния длительной операции;
 - требует remote font/CDN для нормального внешнего вида;
@@ -873,9 +937,13 @@ Visual foundation считается соответствующим SCOZ, ког
 - page hierarchy считывается за несколько секунд;
 - primary action визуально одна на смысловой block;
 - таблицы читаемы и плотны без ощущения Excel/BI-конструктора;
+- sortable tables имеют keyboard-accessible sorting и корректное sort state;
 - карточки используются осмысленно и не создают tile-wall;
-- semantic colors спокойные и не являются единственным носителем состояния;
-- charts минималистичны и честно отражают analytical model;
+- semantic colors спокойные, readable и не являются единственным носителем состояния;
+- interactive control boundaries соответствуют указанному non-text contrast;
+- Fact / Расчёт / Оценка модели различимы там, где они смешиваются в одном decision context;
+- charts минималистичны, честно отражают analytical model и не оставляют ключевой вывод только в визуальной форме;
+- competitor workflow визуально сохраняет релевантные queries как явный scope перед candidate selection;
 - loading/empty/error/stale/insufficient states выглядят как часть продукта и имеют понятную semantic/status обратную связь;
 - offline внешний вид не зависит от remote fonts/CDN;
 - используется единая согласованная iconography;
