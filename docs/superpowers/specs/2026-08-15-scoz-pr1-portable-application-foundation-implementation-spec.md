@@ -23,6 +23,7 @@ Portable runtime не проектируется заново: SCOZ адапти
 - Host `127.0.0.1`, port `17842`; no LAN и no dynamic fallback.
 - App/version: `SCOZ` / `0.1.0` из `VERSION.txt`.
 - Runtime direct requirements: `fastapi==0.139.2`, `uvicorn==0.51.0` в одном `requirements.txt`.
+- Frontend direct versions: `react==19.2.8`, `react-dom==19.2.8`, `vite==8.1.5`, `@vitejs/plugin-react==6.0.4`, `typescript==7.0.2`, `@types/react==19.2.18`, `@types/react-dom==19.2.4`.
 - Frontend production assets committed в `frontend/dist/`; end user не использует Node/npm.
 - `runtime/` disposable; `data/` separate persistent user state.
 
@@ -132,7 +133,7 @@ Small server-process wrapper following the reference model:
 
 ```text
 runtime\python.exe launcher.py --serve
-→ record PID
+→ obtain the started server-process PID and write data/server.pid
 → append server console log
 → expose exit-code diagnostic
 ```
@@ -147,7 +148,7 @@ Owns application lifecycle after runtime is ready:
 - already-running/port check;
 - backend import;
 - server start through `RUN_SERVER.cmd`;
-- PID and server console log coordination;
+- server console log coordination, without independently writing a competing PID;
 - startup status;
 - health polling;
 - browser open after health.
@@ -168,7 +169,7 @@ Uvicorn serves only `127.0.0.1:17842`. Do not bind `0.0.0.0`, expose LAN access 
 }
 ```
 
-Health response is enough to identify a ready SCOZ process; no separate identity subsystem is introduced. Production FastAPI also serves committed `frontend/dist/index.html` and `/assets/*` same-origin. Unknown `/api/*` paths remain API 404 rather than frontend fallback.
+Health response is enough to identify a ready SCOZ process; no separate identity subsystem is introduced. Production FastAPI maps `/` to committed `frontend/dist/index.html` and `/assets/*` to committed production assets, same-origin. Unknown `/api/*` paths return 404, and unknown frontend paths also return 404. PR1 has no catch-all SPA fallback.
 
 ## 7. Already-running and port conflict
 
@@ -196,26 +197,33 @@ SQLite schema, migrations, repositories and domain entities are explicit PR1 non
 React + TypeScript + Vite stays as already approved:
 
 ```text
-frontend/package.json
-frontend/package-lock.json
-frontend/src/**
-frontend/dist/**
+frontend/
+├─ package.json
+├─ package-lock.json
+├─ tsconfig.json
+├─ vite.config.ts
+├─ index.html
+├─ src/
+│  ├─ main.tsx
+│  ├─ App.tsx
+│  └─ styles.css
+└─ dist/
 ```
 
-`package-lock.json` must be genuinely npm-generated and `frontend/dist` genuinely Vite-generated. Source and committed production build must stay consistent in CI. User startup never invokes npm, Node or Vite.
+`package.json` uses the exact direct versions `react==19.2.8`, `react-dom==19.2.8`, `vite==8.1.5`, `@vitejs/plugin-react==6.0.4`, `typescript==7.0.2`, `@types/react==19.2.18`, and `@types/react-dom==19.2.4`. `package-lock.json` must be genuinely npm-generated and `frontend/dist` genuinely Vite-generated. Source and committed production build must stay consistent in CI. User startup never invokes npm, Node or Vite.
 
 ## 11. PR1 UI shell and visual contract
 
 PR1 renders only the frozen foundation shell from the canonical UI/UX and Visual Design System:
 
 - navigation: `Товары`, `Данные`, `Настройки`;
-- one clearly selected section;
+- default active global section: `Товары`;
 - page title/description area;
 - neutral empty content state;
 - Russian user-facing copy;
 - no invented scores, charts, marketplace data or PR2+ workflows.
 
-Use canonical colors, typography, spacing, radii, focus behavior and reusable primitives. No React Router is required before a real routing need.
+Use canonical colors, typography, spacing, radii, focus behavior and reusable primitives. React Router is not added in PR1.
 
 ## 12. Startup feedback
 
@@ -229,6 +237,8 @@ data/server.pid
 ```
 
 Understandable stages cover runtime setup, preflight, server start, ready and failed. Logs must not contain credentials/sensitive data. No general operations database or persistent background-job framework is introduced.
+
+Every update of `data/startup_status.json` is atomic: write the complete document to a temporary sibling such as `data/startup_status.json.tmp`, then publish it with `os.replace` or an equivalent atomic replace. This safeguard applies only to the status file and does not introduce runtime staging or atomic runtime publication.
 
 ## 13. Browser contract
 
@@ -268,7 +278,7 @@ Never commit real reports, databases, credentials, generated user state or logs.
 
 - exact health payload;
 - static root and assets;
-- missing assets and unknown API behavior;
+- missing assets, unknown API behavior and unknown frontend path returning 404 without SPA fallback;
 - fixed host/port configuration;
 - no database creation.
 
@@ -278,7 +288,7 @@ Never commit real reports, databases, credentials, generated user state or logs.
 - already-running behavior;
 - foreign occupied port fails without killing process;
 - backend import/start failure diagnostics;
-- status/log/PID behavior;
+- atomic startup-status write, log behavior, and sole `RUN_SERVER.cmd` ownership of the server PID;
 - `SCOZ_NO_BROWSER` behavior.
 
 ### Runtime contract
@@ -301,12 +311,13 @@ Static/unit checks cover:
 Authoritative `windows-latest` smoke exercises the actual user flow in an isolated copy:
 
 1. clean first run creates runtime and reaches health;
-2. second run reuses a valid runtime;
-3. mismatched/damaged dependency triggers pip repair and reaches health;
-4. failed repair or damaged Python triggers runtime rebuild;
-5. occupied foreign port fails understandably and the foreign process survives;
-6. path with spaces and Cyrillic succeeds;
-7. a sentinel in `data/` survives repair and rebuild.
+2. with the first server stopped, second run reuses a valid runtime without reinstall/rebuild and reaches health;
+3. already-running SCOZ: start and reach valid current-SCOZ health, read `data/server.pid`, run `start.bat` again without stopping the server, and assert successful exit, no second backend process, the same PID, and the existing healthy process still running;
+4. mismatched/damaged dependency triggers pip repair and reaches health;
+5. failed repair or damaged Python triggers runtime rebuild;
+6. occupied foreign port fails understandably and the foreign process survives;
+7. path with spaces and Cyrillic succeeds;
+8. a sentinel in `data/` survives repair and rebuild.
 
 The harness suppresses browser UI only through `SCOZ_NO_BROWSER=1`, never uses real marketplace credentials and does not mutate developer user state.
 
@@ -333,6 +344,9 @@ backend/
 frontend/
   package.json
   package-lock.json
+  tsconfig.json
+  vite.config.ts
+  index.html
   src/
   dist/
 launcher.py
@@ -361,7 +375,8 @@ No SQLite/domain foundation, migrations, imports, credentials UI/keystore implem
 - server binds only `127.0.0.1:17842` and health identifies SCOZ 0.1.0;
 - browser opens only after health;
 - occupied foreign port is not killed;
+- `RUN_SERVER.cmd` is the only writer of `data/server.pid`, including already-running same-PID behavior;
 - committed Vite production assets match frontend source and need no user-side build;
-- startup has understandable console/status/log feedback;
-- seven Windows smoke scenarios pass in authoritative CI;
+- startup has understandable console/status/log feedback and atomic `startup_status.json` publication;
+- eight Windows smoke scenarios pass in authoritative CI;
 - no PR2+ product/application scope is present.
