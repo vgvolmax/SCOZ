@@ -212,7 +212,7 @@ Do not ignore `frontend/dist/`.
 
 - [ ] **Step 5: Generate and verify the authoritative Windows runtime lock**
 
-In a Windows x64 + Python 3.13 environment, from repository root, use a clean environment that contains no test packages:
+Codex should generate the authoritative Windows x64 + Python 3.13 runtime lock directly when its current execution environment can perform trustworthy Windows-target dependency resolution. The following PowerShell commands are the reference procedure for such a Windows execution environment; they are not instructions for the user to run on a desktop. From the repository root, use a clean environment that contains no test packages:
 
 ```powershell
 py -3.13 -m venv .lock-venv
@@ -224,7 +224,11 @@ Remove-Item -Recurse -Force .lock-venv
 
 Then inspect `requirements.lock.txt`: every package line must be `name==version`; no editable/VCS/local-path dependencies.
 
-The resulting lock must be fully resolved, exact-pinned, authoritative for the Windows x64 + Python 3.13 user runtime, and include runtime dependencies actually required on Windows. A Linux-generated dependency graph is not automatically authoritative for Windows. Verify the authoritative lock through GitHub Actions `windows-latest` after the user pushes the implementation.
+The resulting lock must be fully resolved, exact-pinned, authoritative for the Windows x64 + Python 3.13 user runtime, include all runtime dependencies actually required on Windows, and contain no Linux-only assumptions. Production runtime installation remains locked to `--only-binary=:all:` and `--no-deps`.
+
+If the current Codex Cloud environment cannot perform trustworthy Windows-target dependency resolution, Codex must not substitute a Linux-generated `pip freeze` and call it authoritative, and it must not ask the user to run the process on a desktop. Codex may commit `requirements.lock.txt` only when it can justify the lock's Windows-target correctness; otherwise it must explicitly identify Windows runtime-lock verification as pending post-push verification.
+
+After the user pushes the implementation, GitHub Actions `windows-latest` is the authoritative verification environment for the committed runtime lock. Any missing Windows dependency, incorrect pin, Linux-only assumption, or runtime-lock validation failure discovered there means the Pull Request is not merge-ready and requires a corrective implementation cycle; desktop fallback is not used. Windows runtime-lock verification, runtime validation, and the full Windows smoke must pass in the post-push merge gate.
 
 - [ ] **Step 6: Install dev requirements and run tests green**
 
