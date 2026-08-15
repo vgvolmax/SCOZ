@@ -1,0 +1,20 @@
+:root { font-family: "Segoe UI", Arial, sans-serif; color: #182230; background: #f4f6f8; --color-app-bg:#f4f6f8; --color-surface:#fff; --color-border:#dfe4ea; --color-text:#182230; --color-muted:#667085; --color-primary:#3157c8; --color-primary-soft:#eef2ff; --color-primary-border:#6685dd; }
+* { box-sizing: border-box; }
+body { margin:0; min-width: 320px; min-height:100vh; background:var(--color-app-bg); }
+button { font:inherit; }
+:focus-visible { outline:3px solid var(--color-primary-border); outline-offset:2px; }
+.app-shell { display:grid; grid-template-columns:224px minmax(0,1fr); min-height:100vh; }
+.sidebar { padding:24px 16px; background:var(--color-surface); border-right:1px solid var(--color-border); }
+.brand { display:flex; align-items:center; gap:10px; padding:0 8px 28px; font-weight:700; letter-spacing:.04em; }
+.brand-mark { display:grid; place-items:center; width:32px; height:32px; border-radius:8px; color:#fff; background:var(--color-primary); }
+.navigation { display:grid; gap:6px; }
+.nav-item { border:1px solid transparent; border-radius:8px; padding:10px 12px; text-align:left; color:var(--color-text); background:transparent; cursor:pointer; }
+.nav-item:hover { background:#f7f8fa; }
+.nav-item.is-active { color:var(--color-primary); background:var(--color-primary-soft); border-color:#dbe3ff; font-weight:600; }
+.main-content { min-width:0; padding:32px; }
+.eyebrow { margin:0 0 6px; color:var(--color-muted); font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; }
+h1 { margin:0; font-size:28px; line-height:1.25; }
+.empty-state { margin-top:24px; padding:48px 32px; max-width:760px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:12px; box-shadow:0 1px 2px rgba(16,24,40,.04); }
+.empty-state h2 { margin:0 0 8px; font-size:18px; }
+.empty-state p { margin:0; color:var(--color-muted); line-height:1.5; }
+@media (max-width:720px) { .app-shell{grid-template-columns:1fr}.sidebar{border-right:0;border-bottom:1px solid var(--color-border)}.navigation{grid-template-columns:repeat(3,1fr)}.main-content{padding:24px 16px} }

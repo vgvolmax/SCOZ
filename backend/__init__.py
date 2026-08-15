@@ -1,0 +1,1 @@
+"""SCOZ application foundation."""
