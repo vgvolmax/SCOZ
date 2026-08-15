@@ -1,0 +1,12 @@
+runtime/
+data/
+.venv/
+frontend/node_modules/
+__pycache__/
+*.py[cod]
+*.enc.json
+*credentials*.json
+*credential*.json
+*.log
+*.pid
+.pytest_cache/
