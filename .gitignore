@@ -1,0 +1,12 @@
+runtime/
+runtime.__staging*/
+runtime.__old*/
+data/
+.venv/
+.lock-venv/
+frontend/node_modules/
+__pycache__/
+*.pyc
+*.enc.json
+scoz_credentials*.json
+credentials*.json

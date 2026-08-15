@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "pythonVersion": "3.13.14",
+  "architecture": "amd64",
+  "python": {
+    "url": "https://www.python.org/ftp/python/3.13.14/python-3.13.14-embed-amd64.zip",
+    "sha256": "90b4e5b9898b72d744650524bff92377c367f44bd5fbd09e3148656c080ad907"
+  },
+  "pipBootstrap": {
+    "url": "https://bootstrap.pypa.io/get-pip.py",
+    "sha256": "dfe9fd5c28dc98b5ac17979a953ea550cec37ae1b47a5116007395bfacff2ab9"
+  }
+}
