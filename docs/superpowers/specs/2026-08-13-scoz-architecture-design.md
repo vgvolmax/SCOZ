@@ -27,16 +27,18 @@ Backend — **Python + FastAPI**. Frontend — **React + TypeScript**, зара�
 
 ```text
 start.bat
-  → project-local runtime check/setup
+  → verify or prepare project-local Windows embeddable Python in runtime/
+  → bootstrap pip with official get-pip.py
+  → python -m pip install -r requirements.txt when setup/repair is needed
   → preflight + DB migrations
-  → FastAPI @ 127.0.0.1
-  → health check
+  → RUN_SERVER.cmd → launcher.py → FastAPI @ 127.0.0.1
+  → GET /api/health
   → browser UI
 ```
 
-Первый запуск скачивает portable Python с pinned official HTTPS URL, проверяет SHA-256 и локально готовит runtime/pinned dependencies. Frontend уже собран.
+Portable-механика следует proven startup model проекта `WB_OZON_Yandex`. Первый запуск скачивает Python 3.13.14 Windows embeddable x64 с официального HTTPS URL во временный `.part`, проверяет, что файл имеет разумный размер и является непустым открываемым ZIP, затем распаковывает его прямо в disposable `runtime/`. Embedded `_pth` включает `python313.zip`, `.`, `Lib\site-packages`, `..` и `import site`. Официальный `get-pip.py` также скачивается через `.part`, проходит базовую size/sanity-проверку и запускается runtime Python; exact direct dependencies устанавливаются обычной командой `python -m pip install -r requirements.txt`. Frontend уже собран.
 
-Повторный запуск не переустанавливает валидный runtime. Launcher показывает понятные стадии и локальные логи. Пользователь не устанавливает Python/Node, не меняет PATH и не использует права администратора.
+Повторный запуск проверяет `runtime\python.exe`, запуск Python, imports и exact direct versions реально используемых packages. Валидный runtime reuse-ится. При mismatch сначала повторяется тот же pip install; если repair или сам runtime неработоспособен, удаляется и с нуля готовится только `runtime/`. Прерванная подготовка повторяется на следующем старте. Отдельный user state в `data/` не затрагивается. Launcher показывает понятные стадии и локальные логи, а browser открывается только после успешного health. Пользователь не устанавливает Python/Node, не меняет PATH и не использует права администратора.
 
 ## 4. Local web profile
 

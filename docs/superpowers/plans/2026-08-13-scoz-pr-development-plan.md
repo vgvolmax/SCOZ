@@ -51,7 +51,7 @@ PR1 → PR2 → PR3 → PR4 → PR5 → PR6 → PR7 → PR8
 
 Result: ZIP текущего поддерживаемого состояния репозитория распаковывается на clean Windows и `start.bat` запускает SCOZ; первый run готовит project-local runtime, later runs reuse it.
 
-Scope: portable Python bootstrap, pinned runtime/dependencies, SHA-256 verification, runtime marker/repair, FastAPI health, React shell + production static assets already present in distributable ZIP, loopback only, same-origin, startup status/logs, port/already-running handling, browser after health, base navigation, Windows smoke.
+Scope: portable Python bootstrap based on the proven `WB_OZON_Yandex` flow, project-local Windows embeddable Python, exact direct dependencies in `requirements.txt`, runtime validation/repair/rebuild, FastAPI health, React shell + production static assets already present in distributable ZIP, loopback only, same-origin, startup status/logs, port/already-running handling, browser after health, base navigation and Windows smoke of the real user flow.
 
 Non-goals: business DB schema, credentials, auth/session framework, DPAPI, persistent jobs, auto-updater, npm/frontend build on user machine.
 

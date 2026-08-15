@@ -40,8 +40,9 @@ SCOZ не является публичным SaaS, сетевым сервис�
 ```text
 start.bat
   → проверить project-local runtime
-  → при первом запуске скачать/подготовить portable Python
-  → установить pinned Python dependencies локально в runtime
+  → при первом запуске скачать/подготовить Windows embeddable Python
+  → включить site-packages в embedded _pth и bootstrap pip через официальный get-pip.py
+  → установить exact direct dependencies командой python -m pip install -r requirements.txt
   → выполнить preflight и DB migrations
   → запустить FastAPI на 127.0.0.1
   → дождаться health check
@@ -52,7 +53,9 @@ start.bat
 
 ```text
 start.bat
-  → проверить готовый runtime/dependencies
+  → проверить Python, direct package versions и imports
+  → при mismatch выполнить pip install -r requirements.txt
+  → при failed repair удалить только runtime/ и подготовить его заново
   → preflight/migrations
   → если SCOZ уже запущен — открыть существующий UI
   → иначе запустить backend и открыть UI после health check
@@ -63,11 +66,12 @@ start.bat
 - пользователь не устанавливает Python/Node вручную;
 - права администратора не требуются;
 - runtime находится внутри папки приложения;
+- portable startup/runtime lifecycle следует proven `WB_OZON_Yandex` model;
 - глобальный PATH не изменяется;
 - frontend уже собран и не требует npm на пользовательском ПК;
-- runtime download выполняется по pinned official HTTPS URL;
-- скачанный runtime проверяется по ожидаемому SHA-256;
-- публикация/замена runtime не оставляет полуустановленное состояние;
+- Python и `get-pip.py` скачиваются из official HTTPS sources через временный `.part` и проходят basic size/sanity validation; Python ZIP должен открываться и содержать entries;
+- `runtime/` disposable: если setup/rebuild прерван, следующий запуск готовит runtime заново;
+- `data/` является отдельным user state и переживает repair/rebuild runtime;
 - повторный запуск не переустанавливает валидный runtime;
 - backend открывает браузер только после успешного `/api/health`;
 - конфликт занятого порта объясняется пользователю;
