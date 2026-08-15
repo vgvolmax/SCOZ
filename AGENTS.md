@@ -126,12 +126,14 @@ Do not add login, per-launch session token, CSRF framework, certificates or LAN 
 
 ## Portable/startup behavior
 
-- Runtime is project-local and uses pinned dependencies.
-- Runtime downloads use pinned official HTTPS sources and SHA-256 verification.
+- Portable startup follows the proven `WB_OZON_Yandex` model: a project-local Windows embeddable Python is prepared in disposable `runtime/` without installation, PATH changes or administrator rights.
+- Python and `get-pip.py` come from their official HTTPS sources and receive basic download/archive sanity validation before use.
+- Exact direct runtime dependencies live in `requirements.txt`; startup uses ordinary `python -m pip install -r requirements.txt` for initial installation and repair.
+- A valid runtime is reused. Failed validation first triggers pip repair; failed repair deletes and rebuilds only `runtime/`.
 - First-run setup and later runs show understandable stages.
 - Browser opens only after a successful health check.
 - Use simple startup status/log files such as `data/startup_status.json` and `data/launcher.log`; do not create a general operations database for startup.
-- `data/` is user-owned state and is never committed.
+- `data/` is separate user-owned state, is never deleted by runtime repair/rebuild and is never committed.
 - DB migrations run automatically; a risky migration requires a local backup first.
 
 ## Ozon automation rule

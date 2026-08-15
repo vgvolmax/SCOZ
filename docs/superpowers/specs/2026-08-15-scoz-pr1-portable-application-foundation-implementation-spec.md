@@ -1,313 +1,165 @@
 # SCOZ — PR1 Implementation Spec: Portable Application Foundation
 
 **Дата:** 2026-08-15  
-**Статус:** approved  
-**Репозиторий:** `vgvolmax/SCOZ`  
-**PR:** `PR1 — Portable Application Foundation`
+**Статус:** approved corrective implementation spec
+**PR:** PR1 из canonical PR Development Plan
 
 ## 1. Цель PR
 
-Создать первый исполняемый каркас SCOZ.
+Создать минимальный, реально запускаемый foundation локального Windows-приложения SCOZ:
 
-Канонический пользовательский flow после PR1:
+> repository ZIP → extract → `start.bat` → browser UI.
 
-```text
-скачать ZIP репозитория
-→ полностью распаковать
-→ запустить start.bat
-→ при первом запуске автоматически подготовить project-local Python runtime
-→ запустить SCOZ на loopback
-→ дождаться успешного health check
-→ автоматически открыть browser UI
-```
+PR1 обеспечивает portable runtime, FastAPI health/static foundation, React/TypeScript shell с committed production assets, понятный startup lifecycle и Windows smoke. Он не реализует imports, credentials, SQLite schema, marketplace adapters, analytics или другие PR2+ features.
 
-На пользовательском ПК не требуются установленный Python, Node/npm, Docker, PostgreSQL, права администратора, изменение PATH, ручная установка зависимостей или frontend build.
-
-PR1 создаёт только application foundation. SQLite domain model, imports, credentials, benchmark и analytics относятся к последующим PR.
+Portable runtime не проектируется заново: SCOZ адаптирует proven startup/runtime/server lifecycle текущего main проекта `bimjim225-ship-it/WB_OZON_Yandex`, меняя только SCOZ-specific имя, порт, dependencies, backend и frontend.
 
 ## 2. Frozen contracts
 
-PR1 обязан следовать frozen Product Spec, Architecture, UI/UX, Visual Design System, Preflight Decisions и canonical PR Development Plan.
+- Windows 10/11 x64.
+- Python 3.13.14 Windows embeddable x64 в project-local `runtime/`.
+- Python URL: `https://www.python.org/ftp/python/3.13.14/python-3.13.14-embed-amd64.zip`.
+- pip bootstrap URL: `https://bootstrap.pypa.io/get-pip.py`.
+- Host `127.0.0.1`, port `17842`; no LAN и no dynamic fallback.
+- App/version: `SCOZ` / `0.1.0` из `VERSION.txt`.
+- Runtime direct requirements: `fastapi==0.139.2`, `uvicorn==0.51.0` в одном `requirements.txt`.
+- Frontend direct versions: `react==19.2.8`, `react-dom==19.2.8`, `vite==8.1.5`, `@vitejs/plugin-react==6.0.4`, `typescript==7.0.2`, `@types/react==19.2.18`, `@types/react-dom==19.2.4`.
+- Frontend production assets committed в `frontend/dist/`; end user не использует Node/npm.
+- `runtime/` disposable; `data/` separate persistent user state.
 
-Portable-модель повторяет проверенный принцип `WB_OZON_Yandex`: thin Windows entry point → project-local runtime bootstrap/repair → launcher preflight → FastAPI → health → browser.
+## 3. Target platform and user contract
 
-Отличие SCOZ: скачиваемые bootstrap/runtime artifacts проверяются по pinned SHA-256 до использования.
+Поддерживается repository ZIP, распакованный в writable local folder, включая path с spaces и Cyrillic. End user не устанавливает system Python или Node, не меняет PATH и не получает administrator rights. Runtime не регистрируется и не устанавливается в Windows.
 
-## 3. Target platform
+Первый setup требует internet access к двум official HTTPS sources и package index, используемому pip. Не добавлять installer, Docker, PostgreSQL, updater, service registration или system-wide configuration.
 
-Поддерживаемая платформа PR1:
+## 4. Portable runtime
 
-- Windows 10 x64;
-- Windows 11 x64.
+### 4.1 First-run preparation
 
-ARM64 и 32-bit Windows не входят в PR1.
-
-Поддерживаются writable-пути с пробелами и кириллицей, например:
-
-```text
-C:\SCOZ
-C:\My Apps\SCOZ
-C:\Работа\SCOZ Аналитика
-```
-
-Запуск непосредственно из ZIP не поддерживается.
-
-## 4. Python runtime
-
-### 4.1. Pinned Python
-
-Использовать **Python 3.13.14 Windows embeddable package x64**.
-
-Official artifact:
+`start.bat` является SCOZ-аналогом reference `START_DASHBOARD.cmd` и выполняет простой последовательный flow:
 
 ```text
-https://www.python.org/ftp/python/3.13.14/python-3.13.14-embed-amd64.zip
+change directory to repository root
+→ create/use project-local runtime/
+→ download Python ZIP to temporary .part
+→ verify download exists and has a reasonable minimum size
+→ verify ZIP opens and contains entries
+→ publish downloaded archive
+→ extract directly into runtime/
+→ configure python313._pth
+→ download get-pip.py to temporary .part
+→ verify basic size/content sanity
+→ publish temporary file
+→ runtime\python.exe get-pip.py
+→ runtime\python.exe -m pip install -r requirements.txt
+→ validate Python and required direct packages/imports
+→ launcher
 ```
 
-Expected SHA-256:
+`python313._pth` must contain active lines equivalent to:
 
 ```text
-90b4e5b9898b72d744650524bff92377c367f44bd5fbd09e3148656c080ad907
+python313.zip
+.
+Lib\site-packages
+..
+import site
 ```
 
-Runtime существует только внутри:
+`Lib\site-packages` создаётся при необходимости. Download helpers используют bounded failure handling and understandable logs, но PR1 не создаёт отдельную artifact/integrity subsystem.
 
-```text
-runtime/
-```
+### 4.2 Dependencies
 
-Он не регистрируется в Windows и не добавляется в PATH.
-
-### 4.2. Runtime manifest
-
-Создать `runtime_manifest.json` с versioned contract.
-
-Обязательные поля:
-
-- `schemaVersion = 1`;
-- `pythonVersion = 3.13.14`;
-- `architecture = amd64`;
-- `python.url` — exact official Python URL из §4.1;
-- `python.sha256` — exact SHA-256 из §4.1;
-- `pipBootstrap.url = https://bootstrap.pypa.io/get-pip.py`;
-- `pipBootstrap.sha256` — exact lowercase 64-hex SHA-256 официального `get-pip.py`, вычисленный и зафиксированный в PR1 до merge.
-
-PR1 обязан один раз скачать официальный `get-pip.py`, вычислить SHA-256, записать его в manifest и затем проверять этот hash при каждом first-run/rebuild. Никакие placeholder/TBD значения в committed manifest не допускаются.
-
-### 4.3. Dependency lock
-
-Создать:
-
-```text
-requirements.in
-requirements.lock.txt
-```
-
-Direct runtime pins:
+`requirements.txt` is the only user-runtime dependency input:
 
 ```text
 fastapi==0.139.2
 uvicorn==0.51.0
 ```
 
-`requirements.lock.txt` является fully resolved, exact-pinned и authoritative lock для user runtime. Он содержит каждую direct и transitive runtime dependency с exact version и является единственным файлом, из которого устанавливается user runtime.
-
-Lock должен быть сформирован и проверен для целевой платформы **Windows x64 + Python 3.13** и содержать platform-specific runtime dependencies, реально требуемые на Windows. Dependency graph, сформированный на Linux, нельзя автоматически считать authoritative для Windows.
-
-Production runtime install должен использовать wheels без локальной компиляции и без разрешения дополнительных незапиненных dependencies на пользовательском ПК:
+Installation and repair use ordinary pip resolution:
 
 ```text
---only-binary=:all:
---no-deps
+runtime\python.exe -m pip install -r requirements.txt
 ```
 
-Оба флага обязательны и для fresh runtime build, и для dependency repair. `scripts/validate_runtime.py` обязан проверить каждый package/version из `requirements.lock.txt`.
+Pip resolves transitive dependencies. Development/CI packages may live separately in `requirements-dev.txt` when needed by pytest/httpx/frontend consistency work; that file is not the user runtime source.
 
-Не добавлять в runtime заранее pandas, openpyxl, SQLAlchemy, Alembic, cryptography, HTTP clients для будущих adapters или analytics libraries.
+### 4.3 Validation, reuse, repair and rebuild
 
-### 4.4. Atomic runtime publication
+Before reuse startup checks:
 
-Если валидного `runtime/python.exe` нет:
+1. `runtime\python.exe` exists;
+2. Python starts and reports 3.13.14 on Windows x64;
+3. installed direct versions equal the two exact requirements;
+4. `import fastapi` and `import uvicorn` succeed.
 
-1. скачать Python archive во временный `.part`;
-2. проверить SHA-256;
-3. распаковать во staging directory;
-4. настроить embedded `_pth` для `Lib/site-packages` и `import site`;
-5. скачать и проверить pinned `get-pip.py`;
-6. установить pip локально;
-7. установить `requirements.lock.txt`;
-8. проверить Python/version/imports/dependency versions;
-9. записать runtime marker;
-10. только после полного успеха атомарно опубликовать staging как `runtime/`.
+A valid runtime is reused without reinstall.
 
-Полуготовый runtime не становится рабочим runtime.
-
-При rebuild существующий рабочий runtime сохраняется до успешной валидации нового staging runtime.
-
-### 4.5. Runtime marker
-
-После успешной подготовки создать:
+If validation fails while runtime Python remains usable:
 
 ```text
-runtime/.scoz_runtime.json
+runtime\python.exe -m pip install -r requirements.txt
+→ repeat direct version/import validation
+→ success: launch
 ```
 
-Минимально хранить:
-
-- schema version;
-- Python version;
-- architecture;
-- hash `runtime_manifest.json`;
-- hash `requirements.lock.txt`;
-- createdAt.
-
-### 4.6. Reuse / repair / rebuild
-
-При повторном запуске runtime переиспользуется, если:
-
-- `python.exe` существует;
-- Python version совпадает;
-- marker соответствует manifest/requirements lock;
-- обязательные imports проходят;
-- pinned package versions совпадают.
-
-Если Python цел, но зависимости расходятся — выполнить dependency repair.
-
-Если repair не удался или Python/runtime повреждён — выполнить rebuild через staging.
-
-`data/` при repair/rebuild не удаляется.
-
-## 5. Launcher boundaries
-
-Создать:
+If repair fails, or runtime Python is damaged:
 
 ```text
-start.bat
-scripts/bootstrap.ps1
-launcher.py
+delete runtime/ only
+→ repeat full first-run preparation
+→ validate
+→ launch
 ```
+
+If preparation is interrupted, the next `start.bat` invocation removes/reprepares the incomplete disposable runtime. Runtime repair/rebuild never deletes or resets `data/`.
+
+## 5. Startup file responsibilities
 
 ### `start.bat`
 
-Только:
+- changes directory safely with `%~dp0`;
+- owns runtime bootstrap, validation, repair and rebuild using CMD-compatible Windows tooling, as in the reference;
+- writes understandable runtime stages/errors to console and `data/launcher.log`;
+- invokes project-local Python only;
+- after validation invokes `launcher.py` startup flow;
+- returns a meaningful nonzero exit code on failure.
 
-- `cd /d "%~dp0"`;
-- UTF-8 console;
-- вызов `scripts/bootstrap.ps1`;
-- propagation exit code;
-- при ошибке понятное сообщение и путь к логу.
+### `RUN_SERVER.cmd`
 
-Большой bootstrap-код в BAT не помещать.
+Small server-process wrapper following the reference model:
 
-### `scripts/bootstrap.ps1`
+```text
+runtime\python.exe launcher.py --serve
+→ obtain the started server-process PID and write data/server.pid
+→ append server console log
+→ expose exit-code diagnostic
+```
 
-Отвечает только за runtime lifecycle:
-
-- manifest validation;
-- download/retry;
-- SHA-256 verification;
-- staging;
-- pip bootstrap;
-- dependency install;
-- runtime validation;
-- repair/rebuild;
-- запуск `runtime\python.exe launcher.py --start`.
+It contains no business logic and uses quoted project-relative paths.
 
 ### `launcher.py`
 
-Отвечает за application lifecycle:
+Owns application lifecycle after runtime is ready:
 
 - preflight;
-- startup status/log;
-- already-running detection;
-- occupied-port detection;
-- server process launch;
+- already-running/port check;
+- backend import;
+- server start through `RUN_SERVER.cmd`;
+- server console log coordination, without independently writing a competing PID;
+- startup status;
 - health polling;
-- browser open после health.
+- browser open after health.
 
-Runtime download/install в `launcher.py` не переносить.
+No separate bootstrap or runtime-validator layer is required for PR1.
 
 ## 6. Local server
 
-Host:
+Uvicorn serves only `127.0.0.1:17842`. Do not bind `0.0.0.0`, expose LAN access or choose another port automatically.
 
-```text
-127.0.0.1
-```
-
-Port PR1:
-
-```text
-17842
-```
-
-Canonical URL:
-
-```text
-http://127.0.0.1:17842
-```
-
-Health URL:
-
-```text
-http://127.0.0.1:17842/api/health
-```
-
-Не использовать `0.0.0.0`, LAN bind или silent dynamic port switching.
-
-Порт `17842` выбран отдельно от `WB_OZON_Yandex`, который использует `17841`.
-
-## 7. Already-running / port conflict
-
-Перед стартом нового server process launcher делает запрос к `/api/health`.
-
-Already-running считается подтверждённым только если payload одновременно содержит:
-
-```text
-status = ok
-app = SCOZ
-version = текущему VERSION.txt
-```
-
-Тогда второй server process не создаётся, существующий UI открывается, launcher завершается успешно.
-
-HTTP 200 с чужим payload или SCOZ другой версии не считается текущим running instance.
-
-Если `17842` занят, но current-version SCOZ health не подтверждён:
-
-- чужой/старый процесс не завершать;
-- другой порт молча не выбирать;
-- SCOZ не запускать;
-- показать понятную ошибку;
-- если PID безопасно определяется, записать его в diagnostic detail/log.
-
-## 8. Backend foundation
-
-Создать:
-
-```text
-backend/
-├─ __init__.py
-├─ config.py
-└─ main.py
-```
-
-### `backend/config.py`
-
-Только foundation constants/helpers:
-
-- app name;
-- version from `VERSION.txt`;
-- host;
-- port;
-- project root;
-- frontend dist path.
-
-Не создавать settings framework для будущих sources.
-
-### `GET /api/health`
-
-Response `200`:
+`GET /api/health` returns:
 
 ```json
 {
@@ -317,57 +169,32 @@ Response `200`:
 }
 ```
 
-Endpoint ничего не мутирует, не обращается к внешним APIs и не зависит от SQLite.
+Health response is enough to identify a ready SCOZ process; no separate identity subsystem is introduced. Production FastAPI maps `/` to committed `frontend/dist/index.html` and `/assets/*` to committed production assets, same-origin. Unknown `/api/*` paths return 404, and unknown frontend paths also return 404. PR1 has no catch-all SPA fallback.
 
-### Static frontend
+## 7. Already-running and port conflict
 
-PR1 не вводит client-side router.
+Launcher first probes SCOZ health. If current SCOZ is already healthy, do not start a duplicate process; report ready and open its UI. If another/old process occupies port 17842 without the expected health response, fail with a controlled diagnostic. Never kill the foreign process and never fall back to another port.
 
-FastAPI должен:
+## 8. Backend foundation
 
-- отдавать `/` из committed `frontend/dist/index.html`;
-- отдавать `/assets/*` из `frontend/dist/assets/`;
-- возвращать обычный `404` для неизвестных API и неизвестных frontend paths.
+Minimal structure:
 
-SPA fallback для произвольных URL в PR1 не создавать.
+```text
+backend/
+  __init__.py
+  config.py
+  main.py
+```
+
+`backend/config.py` centralizes root, data path, host, port, app version and frontend distribution path. `backend/main.py` contains app composition and static/health wiring only. No business logic belongs in routes.
 
 ## 9. SQLite / persistence
 
-В PR1 не создавать:
-
-- `scoz.db`;
-- migrations framework;
-- repositories;
-- Product/ProductExternalIdentity;
-- ImportBatch/SourceArtifact;
-- snapshot tables;
-- future feature entities.
-
-SQLite foundation начинается в PR2.
-
-Launcher architecture должна позволять позже добавить реальный migration step без переделки portable flow.
+SQLite schema, migrations, repositories and domain entities are explicit PR1 non-goals. `data/` may be created for startup state/logs, but no application database is created in PR1.
 
 ## 10. Frontend foundation
 
-Frontend: React + TypeScript, production build committed в repo.
-
-Базовые exact direct versions для PR1:
-
-```text
-react==19.2.8
-react-dom==19.2.8
-vite==8.1.5
-@vitejs/plugin-react==6.0.4
-typescript==7.0.2
-@types/react==19.2.18
-@types/react-dom==19.2.4
-```
-
-`frontend/package-lock.json` коммитится и является generated artifact npm. Его необходимо получать штатным npm resolution; он обязан описывать реальный resolved dependency graph и проходить `npm ci`.
-
-Запрещено создавать `package-lock.json` вручную, вручную сокращать его до direct dependencies или имитировать resolved dependency graph.
-
-Canonical structure:
+React + TypeScript + Vite stays as already approved:
 
 ```text
 frontend/
@@ -375,65 +202,30 @@ frontend/
 ├─ package-lock.json
 ├─ tsconfig.json
 ├─ vite.config.ts
+├─ index.html
 ├─ src/
 │  ├─ main.tsx
 │  ├─ App.tsx
 │  └─ styles.css
 └─ dist/
-   ├─ index.html
-   └─ assets/...
 ```
 
-Node/npm используются только development/CI. `start.bat` не вызывает npm.
+`package.json` uses the exact direct versions `react==19.2.8`, `react-dom==19.2.8`, `vite==8.1.5`, `@vitejs/plugin-react==6.0.4`, `typescript==7.0.2`, `@types/react==19.2.18`, and `@types/react-dom==19.2.4`. `package-lock.json` must be genuinely npm-generated and `frontend/dist` genuinely Vite-generated. Source and committed production build must stay consistent in CI. User startup never invokes npm, Node or Vite.
 
-`frontend/dist` является generated production artifact Vite. Он получается только из текущего frontend source через production build. Запрещено вручную писать production JS/CSS, вручную подменять Vite output или поддерживать отдельную handcrafted `dist` implementation.
+## 11. PR1 UI shell and visual contract
 
-Обязательный consistency contract:
+PR1 renders only the frozen foundation shell from the canonical UI/UX and Visual Design System:
 
-```text
-npm ci
-→ npm run build
-→ git diff --exit-code -- frontend/dist
-```
+- navigation: `Товары`, `Данные`, `Настройки`;
+- default active global section: `Товары`;
+- page title/description area;
+- neutral empty content state;
+- Russian user-facing copy;
+- no invented scores, charts, marketplace data or PR2+ workflows.
 
-После committed production build повторная сборка не должна изменять `frontend/dist`.
+Use canonical colors, typography, spacing, radii, focus behavior and reusable primitives. React Router is not added in PR1.
 
-## 11. PR1 UI shell
-
-Глобальная IA только:
-
-- **Товары**;
-- **Данные**;
-- **Настройки**.
-
-Default section: **Товары**.
-
-Product Workspace tabs `Диагностика / Поиск / Разгон / Конкуренты` в PR1 не показывать: Product ещё не существует.
-
-Не создавать фиктивные KPI, charts, benchmark cards, scores, demo analytics, competitor data, imports или source settings.
-
-Foundation empty states не должны обещать несуществующие действия.
-
-## 12. Visual contract
-
-Shell обязан использовать frozen Visual Design System:
-
-- desktop-first;
-- sidebar около 224 px;
-- approved design tokens/CSS custom properties;
-- Segoe UI/system stack;
-- light app background + white surfaces;
-- thin borders;
-- restrained shadows;
-- primary-soft active navigation;
-- visible focus;
-- color не является единственным носителем состояния;
-- usable от ~1280 CSS px;
-- без page-level horizontal scroll на основном shell.
-
-Не использовать Bootstrap/admin-template look, gradients, glassmorphism, тяжёлые shadows, hero headings, dashboard wall или emoji-icons.
-
-## 13. Startup feedback
+## 12. Startup feedback
 
 Runtime-generated files:
 
@@ -444,236 +236,147 @@ data/server_console.log
 data/server.pid
 ```
 
-`server.pid` содержит PID server process, созданного текущим launcher, и используется только для диагностики/verification; он не является locking/auth mechanism.
+Understandable stages cover runtime setup, preflight, server start, ready and failed. Logs must not contain credentials/sensitive data. No general operations database or persistent background-job framework is introduced.
 
-Минимальный status payload:
+Every update of `data/startup_status.json` is atomic: write the complete document to a temporary sibling such as `data/startup_status.json.tmp`, then publish it with `os.replace` or an equivalent atomic replace. This safeguard applies only to the status file and does not introduce runtime staging or atomic runtime publication.
 
-```json
-{
-  "stage": "server_start",
-  "message": "Запускаем SCOZ",
-  "startedAt": "...",
-  "updatedAt": "..."
-}
-```
+## 13. Browser contract
 
-Allowed stages:
+Browser opens only after `GET /api/health` returns successful SCOZ health. Failed runtime preparation, failed backend import, occupied foreign port, child exit or health timeout must not open the browser. `SCOZ_NO_BROWSER=1` may suppress opening for tests without changing health behavior.
 
-```text
-preflight
-runtime_setup
-database_backup
-migration
-server_start
-ready
-failed
-```
+## 14. Same-origin security
 
-`database_backup` и `migration` зарезервированы общим startup contract, но PR1 не симулирует их выполнение.
+- loopback only;
+- same-origin frontend/API;
+- no permissive production CORS;
+- no login/session/CSRF/TLS subsystem for the approved trusted-local profile;
+- no credentials in URLs or logs;
+- GET does not mutate state.
 
-Status write должен быть atomic temp-file → replace.
+## 15. Version
 
-Пользовательские сообщения — человеческие. Raw traceback по умолчанию только в technical log.
+`VERSION.txt` contains `0.1.0` and is the single PR1 application-version source used by backend health and launcher health validation.
 
-## 14. Browser contract
+## 16. Gitignore / user-owned state
 
-Browser открывается только после успешного **current-version** SCOZ health response.
-
-Developer/test-only environment switch:
-
-```text
-SCOZ_NO_BROWSER=1
-```
-
-Он не является пользовательской настройкой.
-
-## 15. Same-origin security
-
-Production PR1:
-
-- backend bind только `127.0.0.1`;
-- frontend/API same-origin;
-- permissive CORS не включать;
-- login/auth/session token/CSRF/TLS/LAN security не добавлять;
-- GET endpoints не мутируют состояние;
-- logs не dump-ят environment и используют redaction-safe pattern для credential-like values на будущее.
-
-## 16. Version
-
-Создать единый источник версии:
-
-```text
-VERSION.txt
-```
-
-Initial version:
-
-```text
-0.1.0
-```
-
-Backend health, launcher diagnostics и UI при необходимости читают один источник, а не дублируют вручную version constants.
-
-## 17. Gitignore / user-owned state
-
-Не коммитить:
+Ignore at minimum:
 
 ```text
 runtime/
-runtime.__staging*/
-runtime.__old*/
 data/
 .venv/
 frontend/node_modules/
-__pycache__/
-*.pyc
 *.enc.json
-scoz_credentials*.json
-credentials*.json
+credential-like plaintext JSON names
 ```
 
-`frontend/dist/` коммитится и не игнорируется.
+Never commit real reports, databases, credentials, generated user state or logs. Runtime rebuild must preserve every file in `data/`.
 
-## 18. Automated verification
+## 17. Automated verification
 
 ### Backend
 
-Проверить:
-
-- `/api/health` → 200;
-- `app == SCOZ`;
-- version совпадает с `VERSION.txt`;
-- `/` отдаёт production index;
-- `/assets/*` отдаёт committed asset;
-- unknown `/api/...` → 404;
-- unknown frontend path → 404.
+- exact health payload;
+- static root and assets;
+- missing assets, unknown API behavior and unknown frontend path returning 404 without SPA fallback;
+- fixed host/port configuration;
+- no database creation.
 
 ### Launcher
 
-Проверить:
-
-- exact current-version SCOZ health считается already-running;
-- чужой HTTP response не считается SCOZ;
-- SCOZ другой версии не считается текущим running instance;
-- occupied non-current-SCOZ port → controlled failure;
-- browser вызывается только после current-version health success;
-- `SCOZ_NO_BROWSER=1` suppresses browser;
-- startup status atomic;
-- invalid status stage rejected;
-- новый server process записывает `data/server.pid`.
+- health polling and browser ordering;
+- already-running behavior;
+- foreign occupied port fails without killing process;
+- backend import/start failure diagnostics;
+- atomic startup-status write, log behavior, and sole `RUN_SERVER.cmd` ownership of the server PID;
+- `SCOZ_NO_BROWSER` behavior.
 
 ### Runtime contract
 
-Проверить:
+Static/unit checks cover:
 
-- Python version = `3.13.14`;
-- architecture = `amd64`;
-- exact official Python URL;
-- exact Python SHA-256;
-- `pipBootstrap.sha256` непустой и 64 lowercase hex chars;
-- direct runtime packages exact-pinned;
-- generated lock содержит только exact pins.
+- exact Python URL/version/architecture;
+- official `get-pip.py` URL;
+- `.part` downloads and basic size/archive sanity checks;
+- required `_pth` entries;
+- exact two direct dependencies in `requirements.txt`;
+- ordinary initial install and repair command;
+- validation of Python launch, direct versions and imports;
+- reuse, repair, destructive rebuild of only `runtime/`;
+- preservation of `data/`;
+- quoted paths and project-local execution.
 
-## 19. Windows smoke
+## 18. Windows smoke
 
-Обязательные сценарии:
+Authoritative `windows-latest` smoke exercises the actual user flow in an isolated copy:
 
-1. **First run:** `runtime/` отсутствует → bootstrap → health → success.
-2. **Second run:** runtime reuse без полной переустановки.
-3. **Already running:** второй запуск не создаёт второй server; PID остаётся тем же.
-4. **Occupied port:** dummy server на `17842` не убивается, silent port switch отсутствует.
-5. **Spaces/Cyrillic path:** запуск из `C:\Temp\SCOZ тест\Аналитика`.
-6. **Runtime damage:** repair/rebuild без удаления `data/`.
-7. **Bad checksum/download:** artifact не публикуется как runtime; ошибка понятна; log существует.
+1. clean first run creates runtime and reaches health;
+2. with the first server stopped, second run reuses a valid runtime without reinstall/rebuild and reaches health;
+3. already-running SCOZ: start and reach valid current-SCOZ health, read `data/server.pid`, run `start.bat` again without stopping the server, and assert successful exit, no second backend process, the same PID, and the existing healthy process still running;
+4. mismatched/damaged dependency triggers pip repair and reaches health;
+5. failed repair or damaged Python triggers runtime rebuild;
+6. occupied foreign port fails understandably and the foreign process survives;
+7. path with spaces and Cyrillic succeeds;
+8. a sentinel in `data/` survives repair and rebuild.
 
-## 20. CI
+The harness suppresses browser UI only through `SCOZ_NO_BROWSER=1`, never uses real marketplace credentials and does not mutate developer user state.
 
-Минимальный CI:
+## 19. CI
 
-- Python tests;
-- frontend `npm ci`;
-- frontend build;
-- `frontend/dist` consistency;
-- deterministic Windows contract/smoke steps, которые не требуют реальных credentials/APIs.
+Windows CI runs:
 
-Frontend consistency gate:
+- developer Python tests from `requirements-dev.txt`;
+- frontend `npm ci` and production build;
+- `git diff --exit-code -- frontend/dist`;
+- full portable Windows smoke.
 
-```text
-npm ci
-npm run build
-git diff --exit-code -- frontend/dist
-```
+GitHub Actions is authoritative for Windows-specific acceptance after the user pushes and creates the PR. Codex reports commands actually available in its environment and does not claim unexecuted Windows scenarios.
 
-CI Node line: Node 24 LTS.
-
-Windows-specific acceptance может быть недоступен внутри Codex Cloud. Для активного workflow canonical authoritative acceptance выполняется после пользовательского push в GitHub Actions на `windows-latest`. Это разделение ownership/timing не ослабляет Definition of Done: merge по-прежнему требует успешного Windows CI, включая полный Windows smoke и все сценарии §19.
-
-## 21. Target repository shape after PR1
+## 20. Target repository shape after PR1
 
 ```text
-SCOZ/
-├─ .github/workflows/ci.yml
-├─ backend/
-│  ├─ __init__.py
-│  ├─ config.py
-│  └─ main.py
-├─ frontend/
-│  ├─ src/
-│  │  ├─ main.tsx
-│  │  ├─ App.tsx
-│  │  └─ styles.css
-│  ├─ dist/
-│  ├─ package.json
-│  ├─ package-lock.json
-│  ├─ tsconfig.json
-│  └─ vite.config.ts
-├─ scripts/
-│  ├─ bootstrap.ps1
-│  └─ validate_runtime.py
-├─ tests/
-│  ├─ test_backend.py
-│  ├─ test_launcher.py
-│  ├─ test_runtime_contract.py
-│  └─ windows_smoke.ps1
-├─ start.bat
-├─ launcher.py
-├─ requirements.in
-├─ requirements.lock.txt
-├─ requirements-dev.txt
-├─ runtime_manifest.json
-├─ VERSION.txt
-├─ README.md
-├─ .gitignore
-└─ AGENTS.md
+.github/workflows/ci.yml
+.gitignore
+README.md
+RUN_SERVER.cmd
+VERSION.txt
+backend/
+frontend/
+  package.json
+  package-lock.json
+  tsconfig.json
+  vite.config.ts
+  index.html
+  src/
+  dist/
+launcher.py
+requirements.txt
+requirements-dev.txt
+start.bat
+tests/
+  test_backend.py
+  test_launcher.py
+  test_runtime_contract.py
+  windows_smoke.ps1
 ```
 
-Не создавать пустые future architecture folders.
+## 21. Explicit non-goals
 
-## 22. Explicit non-goals
+No SQLite/domain foundation, migrations, imports, credentials UI/keystore implementation, Ozon/MPStats integration, benchmark, analytics, query workflow, jobs, auth, updater, installer, LAN support or user-side frontend build.
 
-PR1 не реализует SQLite domain DB, migrations/repositories, Product, ProductExternalIdentity, ImportBatch, SourceArtifact, XLSX imports, Ozon/MPStats APIs, credentials UI, encrypted keystore, benchmark, relevant queries, competitors, analytics, diagnostics, Ramp-up, background jobs, scheduler, auth, users/roles, auto-update, installer или LAN mode.
+## 22. Acceptance / Definition of Done
 
-UI-аудитные замечания по chart colors, competitor characteristics и `Добавить по SKU` решаются в PR-specific specs тех PR, где эти элементы впервые появляются.
-
-## 23. Acceptance / Definition of Done
-
-PR1 принят только если:
-
-- clean Windows user проходит `ZIP → extract → start.bat → working SCOZ` без system Python/Node;
-- Python runtime project-local и скачанный Python проверяется по pinned SHA-256;
-- pip bootstrap также pinned by SHA-256 до merge;
-- valid runtime reused on second run;
-- dependency drift repairable, broken runtime rebuildable;
-- backend слушает только `127.0.0.1:17842`;
-- health однозначно идентифицирует SCOZ и текущую version;
-- browser открывается только после current-version health;
-- second launch не создаёт второй backend и сохраняет тот же server PID;
-- чужой/старый процесс на порту не завершается и не обходится silent port switching;
-- spaces/Cyrillic path проверен;
-- React production assets присутствуют в repository ZIP и соответствуют source;
-- global shell содержит только `Товары / Данные / Настройки`;
-- UI соответствует frozen Visual Design System;
-- runtime/data не попадают в Git;
-- automated tests и Windows smoke проходят;
-- diff не содержит scope PR2+;
-- при проверке diff frozen master documents пересматриваются только в части конкретного PR1 contract, без нового общего redesign.
+- repository ZIP starts through `start.bat` on Windows x64 without system Python/Node/admin rights;
+- runtime is Python 3.13.14 embeddable x64 in project-local `runtime/`;
+- first run follows the proven reference download, `_pth`, get-pip and ordinary requirements install flow;
+- exact direct FastAPI/Uvicorn pins are installed from `requirements.txt`;
+- valid runtime reuse, pip repair and disposable full rebuild work;
+- repair/rebuild never touches `data/`;
+- server binds only `127.0.0.1:17842` and health identifies SCOZ 0.1.0;
+- browser opens only after health;
+- occupied foreign port is not killed;
+- `RUN_SERVER.cmd` is the only writer of `data/server.pid`, including already-running same-PID behavior;
+- committed Vite production assets match frontend source and need no user-side build;
+- startup has understandable console/status/log feedback and atomic `startup_status.json` publication;
+- eight Windows smoke scenarios pass in authoritative CI;
+- no PR2+ product/application scope is present.
