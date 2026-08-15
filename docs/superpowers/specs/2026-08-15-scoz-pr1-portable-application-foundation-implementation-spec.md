@@ -110,9 +110,18 @@ fastapi==0.139.2
 uvicorn==0.51.0
 ```
 
-`requirements.lock.txt` содержит полностью resolved exact pins транзитивных runtime dependencies и является единственным файлом, из которого устанавливается user runtime.
+`requirements.lock.txt` является fully resolved, exact-pinned и authoritative lock для user runtime. Он содержит каждую direct и transitive runtime dependency с exact version и является единственным файлом, из которого устанавливается user runtime.
 
-Runtime install должен использовать wheels, без локальной компиляции на пользовательском ПК.
+Lock должен быть сформирован и проверен для целевой платформы **Windows x64 + Python 3.13** и содержать platform-specific runtime dependencies, реально требуемые на Windows. Dependency graph, сформированный на Linux, нельзя автоматически считать authoritative для Windows.
+
+Production runtime install должен использовать wheels без локальной компиляции и без разрешения дополнительных незапиненных dependencies на пользовательском ПК:
+
+```text
+--only-binary=:all:
+--no-deps
+```
+
+Оба флага обязательны и для fresh runtime build, и для dependency repair. `scripts/validate_runtime.py` обязан проверить каждый package/version из `requirements.lock.txt`.
 
 Не добавлять в runtime заранее pandas, openpyxl, SQLAlchemy, Alembic, cryptography, HTTP clients для будущих adapters или analytics libraries.
 
@@ -354,7 +363,9 @@ typescript==7.0.2
 @types/react-dom==19.2.4
 ```
 
-`package-lock.json` коммитится.
+`frontend/package-lock.json` коммитится и является generated artifact npm. Его необходимо получать штатным npm resolution; он обязан описывать реальный resolved dependency graph и проходить `npm ci`.
+
+Запрещено создавать `package-lock.json` вручную, вручную сокращать его до direct dependencies или имитировать resolved dependency graph.
 
 Canonical structure:
 
@@ -374,6 +385,18 @@ frontend/
 ```
 
 Node/npm используются только development/CI. `start.bat` не вызывает npm.
+
+`frontend/dist` является generated production artifact Vite. Он получается только из текущего frontend source через production build. Запрещено вручную писать production JS/CSS, вручную подменять Vite output или поддерживать отдельную handcrafted `dist` implementation.
+
+Обязательный consistency contract:
+
+```text
+npm ci
+→ npm run build
+→ git diff --exit-code -- frontend/dist
+```
+
+После committed production build повторная сборка не должна изменять `frontend/dist`.
 
 ## 11. PR1 UI shell
 
@@ -582,6 +605,8 @@ git diff --exit-code -- frontend/dist
 ```
 
 CI Node line: Node 24 LTS.
+
+Windows-specific acceptance может быть недоступен внутри Codex Cloud. Для активного workflow canonical authoritative acceptance выполняется после пользовательского push в GitHub Actions на `windows-latest`. Это разделение ownership/timing не ослабляет Definition of Done: merge по-прежнему требует успешного Windows CI, включая полный Windows smoke и все сценарии §19.
 
 ## 21. Target repository shape after PR1
 

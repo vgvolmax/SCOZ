@@ -8,6 +8,17 @@
 
 **Tech Stack:** Python 3.13.14 embeddable x64, FastAPI 0.139.2, Uvicorn 0.51.0, React 19.2.8, React DOM 19.2.8, Vite 8.1.5, TypeScript 7.0.2, PowerShell, Windows batch, pytest 9.1.1, HTTPX 0.28.1.
 
+## Execution ownership
+
+- The user selects the working branch before the task starts. Codex works only in that selected branch and does not create, switch, search for, or delete branches.
+- Codex implements the approved scope and runs the checks available in its cloud environment. Codex does not push, create a Pull Request, or merge.
+- The user pushes the implementation and creates the Pull Request.
+- GitHub Actions performs the authoritative post-push CI. GitHub Actions `windows-latest` is the authoritative Windows-specific acceptance environment for the active Codex Cloud workflow.
+- Independent review follows push, Pull Request creation, and successful CI; only then is a merge decision made.
+- Codex must not ask the user to run development or testing commands on the user's desktop.
+
+The commit messages shown in Tasks 1–8 are recommended logical checkpoints, not acceptance requirements. The Codex execution environment may return the PR1 change in one or several commits. The final diff, verification evidence, and scope compliance are authoritative; one Task is not one Pull Request, and the complete PR1 remains the single sequence of Tasks 1–8.
+
 ## Global Constraints
 
 - End-user flow is `repository ZIP → extract → start.bat → project-local runtime → FastAPI + committed React build`.
@@ -199,9 +210,9 @@ credentials*.json
 
 Do not ignore `frontend/dist/`.
 
-- [ ] **Step 5: Generate the fully pinned runtime lock in a clean environment**
+- [ ] **Step 5: Generate and verify the authoritative Windows runtime lock**
 
-In **PowerShell**, repository root, use a clean Python 3.13 environment that contains no test packages:
+In a Windows x64 + Python 3.13 environment, from repository root, use a clean environment that contains no test packages:
 
 ```powershell
 py -3.13 -m venv .lock-venv
@@ -212,6 +223,8 @@ Remove-Item -Recurse -Force .lock-venv
 ```
 
 Then inspect `requirements.lock.txt`: every package line must be `name==version`; no editable/VCS/local-path dependencies.
+
+The resulting lock must be fully resolved, exact-pinned, authoritative for the Windows x64 + Python 3.13 user runtime, and include runtime dependencies actually required on Windows. A Linux-generated dependency graph is not automatically authoritative for Windows. Verify the authoritative lock through GitHub Actions `windows-latest` after the user pushes the implementation.
 
 - [ ] **Step 6: Install dev requirements and run tests green**
 
@@ -275,6 +288,8 @@ In **VS Code**, create `frontend/package.json` with exact direct versions:
   }
 }
 ```
+
+Generate `frontend/package-lock.json` through normal npm resolution. Never hand-write it, reduce it to direct dependencies, or imitate a resolved dependency graph; the generated lock must pass `npm ci`.
 
 - [ ] **Step 2: Create TypeScript/Vite config with no router**
 
@@ -349,6 +364,8 @@ cd ..
 ```
 
 Expected: `frontend/dist/index.html` plus at least one asset under `frontend/dist/assets/`; build exits 0.
+
+`frontend/dist` is Vite-generated production output from the current source. Never hand-write production JS/CSS, substitute Vite output manually, or maintain a separate handcrafted dist implementation.
 
 - [ ] **Step 6: Verify the build contains no development dependency on Node at runtime**
 
@@ -717,7 +734,7 @@ download+verify Python
 → create Lib\site-packages
 → download+verify get-pip.py
 → staging\python.exe get-pip.py --no-warn-script-location
-→ staging\python.exe -m pip install --only-binary=:all: -r requirements.lock.txt
+→ staging\python.exe -m pip install --only-binary=:all: --no-deps -r requirements.lock.txt
 → staging\python.exe scripts\validate_runtime.py <root>
 → write staging\.scoz_runtime.json with manifest/lock hashes
 → rename old runtime to runtime.__old.<pid> if present
@@ -734,7 +751,7 @@ Reuse requires marker manifest hash + lock hash and `validate_runtime.py` succes
 If Python launches with correct version but marker/lock validation fails:
 
 ```text
-runtime\python.exe -m pip install --only-binary=:all: -r requirements.lock.txt
+runtime\python.exe -m pip install --only-binary=:all: --no-deps -r requirements.lock.txt
 → validate again
 ```
 
@@ -866,7 +883,9 @@ In a fresh isolated copy, temporarily replace the manifest Python SHA with 64 ze
 
 Do not modify the source checkout manifest; mutate only the isolated smoke copy.
 
-- [ ] **Step 9: Run the full smoke locally on Windows**
+- [ ] **Step 9: Run the full smoke in an available Windows execution environment**
+
+For the active Codex Cloud workflow, GitHub Actions `windows-latest` is the authoritative post-push execution environment. Codex must implement the smoke harness before handoff but must not claim the Windows smoke passed without actual execution evidence.
 
 ```powershell
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File tests\windows_smoke.ps1 -Mode Full
@@ -931,7 +950,9 @@ Select-String -Path start.bat,scripts\bootstrap.ps1,launcher.py -Pattern 'npm|no
 
 Expected: no production-launch invocation of npm/Node/Vite.
 
-- [ ] **Step 3: Run the same verification locally**
+- [ ] **Step 3: Run verification available in the current implementation environment**
+
+Run each command that the current environment supports and report its actual result. Do not ask the user to reproduce development/testing commands on a desktop. The full sequence, including Windows smoke, remains mandatory in the post-push GitHub Actions `windows-latest` gate.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
@@ -994,9 +1015,9 @@ cd ..
 git diff --exit-code -- frontend/dist
 ```
 
-- [ ] **Step 3: Run complete automated verification**
+- [ ] **Step 3: Run available automated verification and identify post-push checks**
 
-From repository root in **PowerShell**:
+From repository root, run the applicable commands in an available execution environment:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
@@ -1009,6 +1030,8 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File tests\windows_sm
 ```
 
 Expected: all pass.
+
+Codex must record any command it could not execute and defer that evidence to the mandatory post-push GitHub Actions run. It must not ask the user to execute these development/testing commands on the user's desktop.
 
 - [ ] **Step 4: Run scope audit**
 
@@ -1052,11 +1075,35 @@ git commit -m "docs: document SCOZ portable startup"
 
 If verification required code fixes, commit those separately with a precise message before this docs commit.
 
-- [ ] **Step 8: Final Definition of Done gate**
+- [ ] **Step 8: Apply the two completion gates**
 
-Before claiming PR1 complete, explicitly confirm all of the following from evidence:
+### A. Codex implementation-complete gate
+
+Before completing the Codex task, confirm from evidence:
 
 ```text
+[ ] approved PR1 scope is implemented
+[ ] available Python tests were run
+[ ] frontend dependency/build checks were run when environment/network allowed
+[ ] static contract tests were run
+[ ] scope audit was completed
+[ ] secret/generated-state audit was completed
+[ ] no PR2+ scope is present
+[ ] every check requiring post-push GitHub Actions is explicitly listed
+```
+
+Passing this gate means `Codex implementation complete`; it does not mean `PR ready to merge`.
+
+### B. Post-push merge gate
+
+After the user pushes and creates the Pull Request, confirm all of the following from evidence on the current HEAD:
+
+```text
+[ ] GitHub Actions workflow actually ran on current HEAD
+[ ] Python tests pass
+[ ] npm ci passes
+[ ] npm run build passes
+[ ] frontend/dist consistency passes
 [ ] clean-style first run passed
 [ ] second run reused runtime
 [ ] already-running reused same PID
@@ -1070,12 +1117,12 @@ Before claiming PR1 complete, explicitly confirm all of the following from evide
 [ ] frontend/dist matches source build
 [ ] no user-side Node/npm
 [ ] no PR2+ scope
-[ ] all Python tests pass
 [ ] full Windows smoke passes
-[ ] CI passes
+[ ] no scope violations
+[ ] independent PR review passes
 ```
 
-Only after this gate is green may the implementation be described as complete.
+Only after this post-push gate is green may the Pull Request be described as merge-ready. Windows checksum rejection, Cyrillic/spaces path, runtime reuse and repair, occupied-port safety, and the rest of the full smoke remain mandatory; their ownership/timing has changed, not their acceptance strength.
 
 ---
 

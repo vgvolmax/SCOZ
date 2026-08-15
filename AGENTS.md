@@ -142,6 +142,36 @@ Do not implement undocumented/internal Ozon endpoint scraping, `xapi` automation
 
 There is no optional internal Search Visibility API PR in the active plan.
 
+## Codex Cloud execution model
+
+The user manually selects the working branch before starting a Codex task. Codex works only inside that already selected branch: it does not need to search for other branches and must not create, switch, or delete branches.
+
+Codex does not push, create a Pull Request, merge a Pull Request, or otherwise perform the post-handoff Git lifecycle. The user performs the push and creates the Pull Request manually. A merge decision is made only after the separate post-push verification sequence described below.
+
+Responsibilities are divided as follows:
+
+- **Codex Cloud** reads the canonical documents, implements the approved changes in the selected branch, runs checks available in its current environment, reports the actual results, and explicitly lists checks that were not executed in that environment.
+- **User** selects the branch, pushes the resulting commits, and creates the Pull Request.
+- **GitHub Actions** is the authoritative environment for post-push CI and the authoritative Windows acceptance environment for Windows-specific workflows.
+- **Independent PR review** occurs after push, Pull Request creation, and CI; only then is a merge decision made.
+
+`Codex implementation complete` is not the same as `PR merge-ready`.
+
+Codex may complete an implementation task when it has implemented the approved scope, run every check available in its cloud environment, and honestly enumerated the pending post-push checks. A Pull Request is merge-ready only after the user has pushed the changes and created the Pull Request, mandatory GitHub Actions CI has passed, and an independent merge review has passed.
+
+The canonical sequence is:
+
+```text
+Codex implementation
+→ user push
+→ user creates PR
+→ GitHub Actions
+→ independent merge review
+→ merge decision
+```
+
+Codex must not ask the user to run development or testing commands on the user's desktop.
+
 ## Development workflow
 
 - Work on one dependency-ordered PR at a time unless the approved plan explicitly permits parallel work.
