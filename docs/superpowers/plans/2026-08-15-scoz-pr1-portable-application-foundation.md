@@ -39,6 +39,7 @@ frontend/package.json
 frontend/package-lock.json
 frontend/tsconfig.json
 frontend/vite.config.ts
+frontend/index.html
 frontend/src/**
 frontend/dist/**
 launcher.py
@@ -97,15 +98,15 @@ git commit -m "chore: define SCOZ PR1 runtime inputs"
 
 ### Task 2: Build the approved React/TypeScript shell and committed production assets
 
-**Files:** create `frontend/package.json`, genuine npm-generated `frontend/package-lock.json`, TypeScript/Vite configuration, `frontend/src/**`, genuine Vite-generated `frontend/dist/**`, and `tests/test_frontend_contract.py`.
+**Files:** create `frontend/package.json`, genuine npm-generated `frontend/package-lock.json`, `frontend/tsconfig.json`, `frontend/vite.config.ts`, `frontend/index.html`, `frontend/src/main.tsx`, `frontend/src/App.tsx`, `frontend/src/styles.css`, genuine Vite-generated `frontend/dist/**`, and `tests/test_frontend_contract.py`.
 
 - [ ] **Step 1: Write frontend contract tests**
 
-Check that the source and built page contain the approved navigation (`Товары`, `Данные`, `Настройки`), one selected section, Russian empty state and no invented PR2+ product content. Check accessible landmark/focus basics and canonical design tokens.
+Check that the source and built page contain exactly the approved global navigation (`Товары`, `Данные`, `Настройки`), with `Товары` as the default active section, a Russian empty state and no invented PR2+ product content. Check accessible landmark/focus basics and canonical design tokens.
 
 - [ ] **Step 2: Create minimal Vite React/TypeScript source**
 
-Use the canonical visual design system. Do not add React Router, fake charts/scores, marketplace data, API settings or feature workflows.
+Use the canonical visual design system and these exact direct versions in `package.json`: `react==19.2.8`, `react-dom==19.2.8`, `vite==8.1.5`, `@vitejs/plugin-react==6.0.4`, `typescript==7.0.2`, `@types/react==19.2.18`, `@types/react-dom==19.2.4`. Do not add React Router, Product Workspace tabs, fake charts/scores, marketplace data, API settings or feature workflows.
 
 - [ ] **Step 3: Generate real dependency/build artifacts**
 
@@ -144,7 +145,7 @@ git commit -m "feat: add SCOZ application shell"
 
 - [ ] **Step 1: Write failing backend tests**
 
-Cover exact health response, root/static assets, missing asset, unknown `/api/*` 404, configuration `127.0.0.1:17842`, version loaded from `VERSION.txt`, and absence of database creation.
+Cover exact health response, `/` serving committed `frontend/dist/index.html`, `/assets/*` serving committed production assets, missing asset, unknown `/api/*` returning 404, unknown frontend path returning 404, configuration `127.0.0.1:17842`, version loaded from `VERSION.txt`, and absence of database creation.
 
 - [ ] **Step 2: Implement minimal backend composition**
 
@@ -154,7 +155,7 @@ Cover exact health response, root/static assets, missing asset, unknown `/api/*`
 {"status":"ok","app":"SCOZ","version":"0.1.0"}
 ```
 
-Serve committed `frontend/dist` same-origin. Do not add business logic, persistence or permissive production CORS.
+Serve committed `frontend/dist` same-origin. Do not add a catch-all SPA fallback or React Router: unknown frontend paths remain 404. Do not add business logic, persistence or permissive production CORS.
 
 - [ ] **Step 3: Run tests**
 
@@ -177,7 +178,7 @@ git commit -m "feat: add SCOZ health and static serving"
 
 - [ ] **Step 1: Write failing lifecycle tests**
 
-Cover status/log output, exact SCOZ health detection, healthy already-running reuse, foreign occupied port failure without process termination, backend import failure, child exit/timeout, PID/server log behavior, `SCOZ_NO_BROWSER`, and browser-after-health ordering.
+Cover atomic status-file output, log output, exact current-SCOZ health detection, healthy already-running reuse with the same PID and no duplicate backend, foreign occupied port failure without process termination, backend import failure, child exit/timeout, sole server-wrapper PID ownership/server log behavior, `SCOZ_NO_BROWSER`, and browser-after-health ordering.
 
 - [ ] **Step 2: Implement launcher preflight**
 
@@ -189,12 +190,12 @@ Use quoted paths and the simple reference shape:
 
 ```text
 runtime\python.exe launcher.py --serve
-→ PID
+→ obtain the started server-process PID and write data/server.pid
 → data/server_console.log
 → exit code diagnostic
 ```
 
-The `--serve` path starts Uvicorn only on `127.0.0.1:17842`. The parent launcher waits for health and writes `data/server.pid`.
+The `--serve` path starts Uvicorn only on `127.0.0.1:17842`. `RUN_SERVER.cmd` is the sole owner that writes the server-process PID to `data/server.pid`. The parent launcher starts `RUN_SERVER.cmd` and coordinates preflight, exact current-SCOZ health polling, already-running detection, browser-after-health and startup status; it never writes a competing PID.
 
 - [ ] **Step 4: Implement startup feedback and browser behavior**
 
@@ -208,6 +209,8 @@ data/server.pid
 ```
 
 Browser opening occurs only after exact successful health. Tests suppress it with `SCOZ_NO_BROWSER=1`.
+
+Write every `data/startup_status.json` update atomically: first write the complete JSON to a sibling temporary file such as `data/startup_status.json.tmp`, then use `os.replace` or an equivalent atomic replace. Unit tests must verify the atomic replacement path. This is a status-file safeguard, not staging or atomic publication of `runtime/`.
 
 - [ ] **Step 5: Run tests and commit**
 
@@ -304,15 +307,16 @@ git commit -m "feat: add portable SCOZ runtime bootstrap"
 
 Copy the repository into a temporary writable path containing spaces and Cyrillic. Set `SCOZ_NO_BROWSER=1`. Never operate on developer `runtime/` or `data/`.
 
-- [ ] **Step 2: Implement the seven user-flow scenarios**
+- [ ] **Step 2: Implement the eight user-flow scenarios**
 
 1. With no runtime, run `start.bat`; assert runtime Python, startup files and healthy server.
 2. Stop isolated server, run again with valid runtime; prove runtime reuse and health.
-3. Damage/mismatch a direct dependency; assert validation triggers pip repair and health.
-4. Damage Python or force repair failure; assert only runtime is rebuilt and health returns.
-5. Occupy port with a foreign test listener; assert understandable nonzero failure and listener remains alive.
-6. Assert the isolated spaces/Cyrillic path succeeds.
-7. Place `data/sentinel.txt` before repair/rebuild and assert it survives both.
+3. Without stopping that healthy SCOZ server, read `data/server.pid`, run `start.bat` again, and assert successful exit, no second backend process, unchanged PID, and the existing healthy SCOZ process still running.
+4. Damage/mismatch a direct dependency; assert validation triggers pip repair and health.
+5. Damage Python or force repair failure; assert only runtime is rebuilt and health returns.
+6. Occupy port with a foreign test listener; assert understandable nonzero failure and listener remains alive.
+7. Assert the isolated spaces/Cyrillic path succeeds.
+8. Place `data/sentinel.txt` before repair/rebuild and assert it survives both.
 
 - [ ] **Step 3: Run on Windows when available**
 
@@ -421,14 +425,15 @@ git commit -m "docs: document SCOZ portable startup"
 
 ### Post-push merge gate
 
-After the user pushes and creates the PR: CI on current HEAD passes Python tests, frontend consistency and all seven Windows portable scenarios; independent review passes; only then may PR1 be called merge-ready.
+After the user pushes and creates the PR: CI on current HEAD passes Python tests, frontend consistency and all eight Windows portable scenarios; independent review passes; only then may PR1 be called merge-ready.
 
 ## Plan self-review result
 
 - Runtime lifecycle matches the proven `WB_OZON_Yandex` flow rather than a new packaging design.
 - One `requirements.txt` carries exact direct user-runtime pins; pip resolves transitives during setup/repair.
 - Valid runtime reuse, ordinary pip repair, disposable rebuild and `data/` preservation are explicit.
-- `start.bat`, `RUN_SERVER.cmd` and `launcher.py` form the complete startup structure.
-- Frontend source, genuine npm lock and committed Vite build contract is unchanged.
+- `start.bat`, `RUN_SERVER.cmd` and `launcher.py` form the complete startup structure; `RUN_SERVER.cmd` is the sole writer of the server PID.
+- Frontend source (including `frontend/index.html`), exact direct stack, genuine npm lock and committed Vite build contract is unchanged; `Товары` remains the default section.
 - Fixed host/port, health-before-browser, occupied-port safety and understandable feedback remain acceptance requirements.
+- Static routing has no SPA fallback, startup status writes atomically, and already-running smoke preserves the same healthy PID.
 - PR1 stays foundation-only and introduces no PR2+ subsystem.
