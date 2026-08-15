@@ -10,7 +10,7 @@
 
 > repository ZIP → extract → `start.bat` → browser UI.
 
-PR1 обеспечивает portable runtime, FastAPI health/static foundation, React/TypeScript shell с committed production assets, понятный startup lifecycle и Windows smoke. Он не реализует imports, credentials, SQLite schema, marketplace adapters, analytics или другие PR2+ features.
+PR1 обеспечивает portable runtime, FastAPI health/static foundation, committed static HTML/CSS/JavaScript shell, понятный startup lifecycle и Windows smoke. Он не реализует imports, credentials, SQLite schema, marketplace adapters, analytics или другие PR2+ features.
 
 Portable runtime не проектируется заново: SCOZ адаптирует proven startup/runtime/server lifecycle текущего main проекта `bimjim225-ship-it/WB_OZON_Yandex`, меняя только SCOZ-specific имя, порт, dependencies, backend и frontend.
 
@@ -23,8 +23,8 @@ Portable runtime не проектируется заново: SCOZ адапти
 - Host `127.0.0.1`, port `17842`; no LAN и no dynamic fallback.
 - App/version: `SCOZ` / `0.1.0` из `VERSION.txt`.
 - Runtime direct requirements: `fastapi==0.139.2`, `uvicorn==0.51.0` в одном `requirements.txt`.
-- Frontend direct versions: `react==19.2.8`, `react-dom==19.2.8`, `vite==8.1.5`, `@vitejs/plugin-react==6.0.4`, `typescript==7.0.2`, `@types/react==19.2.18`, `@types/react-dom==19.2.4`.
-- Frontend production assets committed в `frontend/dist/`; end user не использует Node/npm.
+- Frontend production files are committed directly as `frontend/index.html`, `frontend/assets/css/app.css` and `frontend/assets/js/app.js`; end user не использует Node/npm и не выполняет frontend build.
+- No frontend package manager or npm registry is required. Preinstalled Node may be used in CI only as a direct JavaScript checker, without npm.
 - `runtime/` disposable; `data/` separate persistent user state.
 
 ## 3. Target platform and user contract
@@ -84,7 +84,7 @@ Installation and repair use ordinary pip resolution:
 runtime\python.exe -m pip install -r requirements.txt
 ```
 
-Pip resolves transitive dependencies. Development/CI packages may live separately in `requirements-dev.txt` when needed by pytest/httpx/frontend consistency work; that file is not the user runtime source.
+Pip resolves transitive dependencies. Development/CI packages may live separately in `requirements-dev.txt` when needed by pytest/httpx/static frontend contract work; that file is not the user runtime source.
 
 ### 4.3 Validation, reuse, repair and rebuild
 
@@ -169,7 +169,7 @@ Uvicorn serves only `127.0.0.1:17842`. Do not bind `0.0.0.0`, expose LAN access 
 }
 ```
 
-Health response is enough to identify a ready SCOZ process; no separate identity subsystem is introduced. Production FastAPI maps `/` to committed `frontend/dist/index.html` and `/assets/*` to committed production assets, same-origin. Unknown `/api/*` paths return 404, and unknown frontend paths also return 404. PR1 has no catch-all SPA fallback.
+Health response is enough to identify a ready SCOZ process; no separate identity subsystem is introduced. Production FastAPI maps `/` to committed `frontend/index.html` and `/assets/*` to committed `frontend/assets/*`, same-origin. Unknown `/api/*` paths return 404, and unknown frontend paths also return 404. PR1 has no catch-all SPA fallback.
 
 ## 7. Already-running and port conflict
 
@@ -186,7 +186,7 @@ backend/
   main.py
 ```
 
-`backend/config.py` centralizes root, data path, host, port, app version and frontend distribution path. `backend/main.py` contains app composition and static/health wiring only. No business logic belongs in routes.
+`backend/config.py` centralizes root, data path, host, port, app version and frontend path. `backend/main.py` contains app composition and static/health wiring only. No business logic belongs in routes.
 
 ## 9. SQLite / persistence
 
@@ -194,23 +194,34 @@ SQLite schema, migrations, repositories and domain entities are explicit PR1 non
 
 ## 10. Frontend foundation
 
-React + TypeScript + Vite stays as already approved:
+PR1 uses one committed static frontend as both source and production code:
 
 ```text
 frontend/
-├─ package.json
-├─ package-lock.json
-├─ tsconfig.json
-├─ vite.config.ts
 ├─ index.html
-├─ src/
-│  ├─ main.tsx
-│  ├─ App.tsx
-│  └─ styles.css
-└─ dist/
+└─ assets/
+   ├─ css/
+   │  └─ app.css
+   └─ js/
+      └─ app.js
 ```
 
-`package.json` uses the exact direct versions `react==19.2.8`, `react-dom==19.2.8`, `vite==8.1.5`, `@vitejs/plugin-react==6.0.4`, `typescript==7.0.2`, `@types/react==19.2.18`, and `@types/react-dom==19.2.4`. `package-lock.json` must be genuinely npm-generated and `frontend/dist` genuinely Vite-generated. Source and committed production build must stay consistent in CI. User startup never invokes npm, Node or Vite.
+`frontend/index.html` is the production entry point. It contains the shell markup and links the committed CSS and JavaScript directly; there is no development server, build runtime, package manager or remote CDN dependency.
+
+`frontend/assets/css/app.css` implements the canonical Visual Design System. CSS custom properties are recommended; CSS framework dependencies are not introduced.
+
+`frontend/assets/js/app.js` contains only the minimal PR1 shell behavior: global navigation, active-section state and DOM behavior genuinely required by PR1. It contains no business analytics or PR2+ behavior. JS/CSS may be split into more files later only when actual functionality requires it; PR1 does not pre-create a framework/module architecture.
+
+FastAPI serves these committed files directly:
+
+```text
+GET /          → frontend/index.html
+GET /assets/*  → frontend/assets/*
+unknown /api/* → 404
+unknown frontend path → 404
+```
+
+There is no SPA catch-all. Same-origin, loopback-only serving and the absence of permissive production CORS remain unchanged. End users and the frontend runtime do not need Node; CI may optionally run `node --check frontend/assets/js/app.js` or later direct `node tests/...test.js` checks without npm. Node is not a SCOZ dependency-delivery mechanism, and PR1 has no npm registry requirement.
 
 ## 11. PR1 UI shell and visual contract
 
@@ -223,7 +234,7 @@ PR1 renders only the frozen foundation shell from the canonical UI/UX and Visual
 - Russian user-facing copy;
 - no invented scores, charts, marketplace data or PR2+ workflows.
 
-Use canonical colors, typography, spacing, radii, focus behavior and reusable primitives. React Router is not added in PR1.
+Use canonical colors, typography, spacing, radii, focus behavior and reusable primitives. Preserve keyboard accessibility, visible focus and `aria-current` or equivalent clear active-navigation semantics. The UI functional contract is unchanged.
 
 ## 12. Startup feedback
 
@@ -265,7 +276,6 @@ Ignore at minimum:
 runtime/
 data/
 .venv/
-frontend/node_modules/
 *.enc.json
 credential-like plaintext JSON names
 ```
@@ -326,11 +336,13 @@ The harness suppresses browser UI only through `SCOZ_NO_BROWSER=1`, never uses r
 Windows CI runs:
 
 - developer Python tests from `requirements-dev.txt`;
-- frontend `npm ci` and production build;
-- `git diff --exit-code -- frontend/dist`;
+- frontend contract tests;
+- optional `node --check frontend/assets/js/app.js` when Node is available, without npm or registry access;
 - full portable Windows smoke.
 
 GitHub Actions is authoritative for Windows-specific acceptance after the user pushes and creates the PR. Codex reports commands actually available in its environment and does not claim unexecuted Windows scenarios.
+
+Codex implementation may be complete when the committed HTML/CSS/JavaScript exists and all available Python/static/direct-JavaScript checks pass. Windows-only portable smoke remains pending for authoritative GitHub Actions when unavailable locally. Unavailable PyPI/network verification is reported as external pending verification, not as a frontend blocker; npm network access is not required.
 
 ## 20. Target repository shape after PR1
 
@@ -342,13 +354,10 @@ RUN_SERVER.cmd
 VERSION.txt
 backend/
 frontend/
-  package.json
-  package-lock.json
-  tsconfig.json
-  vite.config.ts
   index.html
-  src/
-  dist/
+  assets/
+    css/app.css
+    js/app.js
 launcher.py
 requirements.txt
 requirements-dev.txt
@@ -376,7 +385,7 @@ No SQLite/domain foundation, migrations, imports, credentials UI/keystore implem
 - browser opens only after health;
 - occupied foreign port is not killed;
 - `RUN_SERVER.cmd` is the only writer of `data/server.pid`, including already-running same-PID behavior;
-- committed Vite production assets match frontend source and need no user-side build;
+- committed `frontend/index.html`, `frontend/assets/css/app.css` and `frontend/assets/js/app.js` are the production frontend and need no user-side build, frontend dependency resolution or npm registry;
 - startup has understandable console/status/log feedback and atomic `startup_status.json` publication;
 - eight Windows smoke scenarios pass in authoritative CI;
 - no PR2+ product/application scope is present.

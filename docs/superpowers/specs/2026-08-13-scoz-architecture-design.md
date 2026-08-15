@@ -19,9 +19,9 @@ SCOZ не является SaaS, LAN-сервисом или multi-user плат
 
 ## 2. Стек
 
-Backend — **Python + FastAPI**. Frontend — **React + TypeScript**, заранее собранный в static assets. Storage — **SQLite**.
+Backend — **Python + FastAPI**. Frontend — committed **HTML + CSS + JavaScript**, served directly by FastAPI. Storage — **SQLite**.
 
-`openpyxl`/`pandas` допустимы внутри ingestion, но DataFrame не является межмодульным контрактом. Node/npm нужны только development/CI для подготовки frontend assets.
+`openpyxl`/`pandas` допустимы внутри ingestion, но DataFrame не является межмодульным контрактом. Frontend files already exist in the repository ZIP: there is no frontend dependency resolution or user-side build. Node is not a SCOZ runtime or dependency-delivery mechanism; CI may use a preinstalled Node executable only for direct JavaScript syntax/tests such as `node --check`, without an npm registry requirement.
 
 ## 3. Portable startup
 
@@ -36,7 +36,7 @@ start.bat
   → browser UI
 ```
 
-Portable-механика следует proven startup model проекта `WB_OZON_Yandex`. Первый запуск скачивает Python 3.13.14 Windows embeddable x64 с официального HTTPS URL во временный `.part`, проверяет, что файл имеет разумный размер и является непустым открываемым ZIP, затем распаковывает его прямо в disposable `runtime/`. Embedded `_pth` включает `python313.zip`, `.`, `Lib\site-packages`, `..` и `import site`. Официальный `get-pip.py` также скачивается через `.part`, проходит базовую size/sanity-проверку и запускается runtime Python; exact direct dependencies устанавливаются обычной командой `python -m pip install -r requirements.txt`. Frontend уже собран.
+Portable-механика следует proven startup model проекта `WB_OZON_Yandex`. Первый запуск скачивает Python 3.13.14 Windows embeddable x64 с официального HTTPS URL во временный `.part`, проверяет, что файл имеет разумный размер и является непустым открываемым ZIP, затем распаковывает его прямо в disposable `runtime/`. Embedded `_pth` включает `python313.zip`, `.`, `Lib\site-packages`, `..` и `import site`. Официальный `get-pip.py` также скачивается через `.part`, проходит базовую size/sanity-проверку и запускается runtime Python; exact direct dependencies устанавливаются обычной командой `python -m pip install -r requirements.txt`. Committed frontend уже находится в repository ZIP и не требует build.
 
 Повторный запуск проверяет `runtime\python.exe`, запуск Python, imports и exact direct versions реально используемых packages. Валидный runtime reuse-ится. При mismatch сначала повторяется тот же pip install; если repair или сам runtime неработоспособен, удаляется и с нуля готовится только `runtime/`. Прерванная подготовка повторяется на следующем старте. Отдельный user state в `data/` не затрагивается. Launcher показывает понятные стадии и локальные логи, а browser открывается только после успешного health. Пользователь не устанавливает Python/Node, не меняет PATH и не использует права администратора.
 
@@ -64,7 +64,7 @@ External Sources
   → Ramp-up
   → Application Services
   → FastAPI
-  → React UI
+  → Static Web UI
 ```
 
 Главный инвариант:
@@ -204,7 +204,7 @@ PR требует корректировки, если он добавляет b
 ## 19. Итог
 
 ```text
-ZIP репозитория → start.bat → portable runtime → FastAPI + React → SQLite
+ZIP репозитория → start.bat → portable runtime → FastAPI + Static Web UI → SQLite
                                                        ↓
                                                    adapters
                                                        ↓
