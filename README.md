@@ -35,4 +35,7 @@ Windows end-to-end проверка: `powershell.exe -NoLogo -NoProfile -Executi
 - `backend/main.py:L1-L23` — health и раздача production UI.
 - `frontend/src/App.tsx:L1-L20` — глобальная оболочка.
 
-Границы модулей и runtime flow описаны в `docs/ARCHITECTURE.md` и `docs/PIPELINE.md`; UI — в `docs/UI_GUIDE.md`; изменения — в `docs/CHANGELOG.md`.
+Канонические границы PR1 описаны в
+`docs/superpowers/specs/2026-08-15-scoz-pr1-portable-application-foundation-implementation-spec.md`,
+а последовательность реализации и проверки — в
+`docs/superpowers/plans/2026-08-15-scoz-pr1-portable-application-foundation.md`.

@@ -44,3 +44,5 @@ def test_thin_start_and_verified_bootstrap_contracts():
     assert "runtime_manifest.json" in bootstrap and "requirements.lock.txt" in bootstrap
     assert bootstrap.index("get-filehash") < bootstrap.index("expand-archive")
     assert "runtime.__staging" in bootstrap and "launcher.py') --start" in bootstrap
+    install_prefix = "pip install --disable-pip-version-check --only-binary=:all: --no-deps -r"
+    assert bootstrap.count(install_prefix) == 2

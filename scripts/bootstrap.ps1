@@ -48,7 +48,7 @@ function Build-Runtime {
     New-Item -ItemType Directory -Force -Path (Join-Path $Staging 'Lib\site-packages') | Out-Null
     $getpip=Join-Path $Staging 'get-pip.py'; Get-VerifiedFile $Manifest.pipBootstrap.url $getpip $Manifest.pipBootstrap.sha256
     & (Join-Path $Staging 'python.exe') $getpip --no-warn-script-location; if ($LASTEXITCODE) { throw 'pip bootstrap failed' }; Remove-Item $getpip
-    & (Join-Path $Staging 'python.exe') -m pip install --disable-pip-version-check --only-binary=:all: -r $LockPath; if ($LASTEXITCODE) { throw 'dependency install failed' }
+    & (Join-Path $Staging 'python.exe') -m pip install --disable-pip-version-check --only-binary=:all: --no-deps -r $LockPath; if ($LASTEXITCODE) { throw 'dependency install failed' }
     & (Join-Path $Staging 'python.exe') (Join-Path $Root 'scripts\validate_runtime.py') $Root; if ($LASTEXITCODE) { throw 'runtime validation failed' }
     Write-Marker $Staging
     if (Test-Path $Runtime) { Move-Item $Runtime $Old }
@@ -61,7 +61,7 @@ try {
   Write-Status 'runtime_setup' 'Подготавливаем локальную среду SCOZ'; Write-Log 'Checking project-local runtime'
   if (!(Test-Runtime)) {
     $repaired=$false
-    if (Test-Path $Python) { try { & $Python -m pip install --disable-pip-version-check --only-binary=:all: -r $LockPath; & $Python (Join-Path $Root 'scripts\validate_runtime.py') $Root; if ($LASTEXITCODE -eq 0) { Write-Marker $Runtime; $repaired=$true } } catch {} }
+    if (Test-Path $Python) { try { & $Python -m pip install --disable-pip-version-check --only-binary=:all: --no-deps -r $LockPath; & $Python (Join-Path $Root 'scripts\validate_runtime.py') $Root; if ($LASTEXITCODE -eq 0) { Write-Marker $Runtime; $repaired=$true } } catch {} }
     if (!$repaired) { Write-Log 'Building verified runtime'; Build-Runtime }
   } else { Write-Log 'Reusing verified runtime' }
   & $Python (Join-Path $Root 'launcher.py') --start; exit $LASTEXITCODE
