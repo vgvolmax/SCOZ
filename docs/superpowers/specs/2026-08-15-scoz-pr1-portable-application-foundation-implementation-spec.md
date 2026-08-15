@@ -80,25 +80,19 @@ runtime/
 
 ### 4.2. Runtime manifest
 
-Создать `runtime_manifest.json` с versioned contract. Минимальные поля:
+Создать `runtime_manifest.json` с versioned contract.
 
-```json
-{
-  "schemaVersion": 1,
-  "pythonVersion": "3.13.14",
-  "architecture": "amd64",
-  "python": {
-    "url": "https://www.python.org/ftp/python/3.13.14/python-3.13.14-embed-amd64.zip",
-    "sha256": "90b4e5b9898b72d744650524bff92377c367f44bd5fbd09e3148656c080ad907"
-  },
-  "pipBootstrap": {
-    "url": "https://bootstrap.pypa.io/get-pip.py",
-    "sha256": "<verified exact SHA-256 committed by PR1>"
-  }
-}
-```
+Обязательные поля:
 
-Перед merge PR1 placeholder в `pipBootstrap.sha256` запрещён. PR1 обязан один раз скачать официальный artifact, вычислить SHA-256, записать его в manifest и использовать при каждом first-run/rebuild.
+- `schemaVersion = 1`;
+- `pythonVersion = 3.13.14`;
+- `architecture = amd64`;
+- `python.url` — exact official Python URL из §4.1;
+- `python.sha256` — exact SHA-256 из §4.1;
+- `pipBootstrap.url = https://bootstrap.pypa.io/get-pip.py`;
+- `pipBootstrap.sha256` — exact lowercase 64-hex SHA-256 официального `get-pip.py`, вычисленный и зафиксированный в PR1 до merge.
+
+PR1 обязан один раз скачать официальный `get-pip.py`, вычислить SHA-256, записать его в manifest и затем проверять этот hash при каждом first-run/rebuild. Никакие placeholder/TBD значения в committed manifest не допускаются.
 
 ### 4.3. Dependency lock
 
@@ -258,11 +252,21 @@ http://127.0.0.1:17842/api/health
 
 Перед стартом нового server process launcher делает запрос к `/api/health`.
 
-Если получен валидный SCOZ health payload — второй server process не создаётся, существующий UI открывается, launcher завершается успешно.
+Already-running считается подтверждённым только если payload одновременно содержит:
 
-Если `17842` занят, но SCOZ health не подтверждён:
+```text
+status = ok
+app = SCOZ
+version = текущему VERSION.txt
+```
 
-- чужой процесс не завершать;
+Тогда второй server process не создаётся, существующий UI открывается, launcher завершается успешно.
+
+HTTP 200 с чужим payload или SCOZ другой версии не считается текущим running instance.
+
+Если `17842` занят, но current-version SCOZ health не подтверждён:
+
+- чужой/старый процесс не завершать;
 - другой порт молча не выбирать;
 - SCOZ не запускать;
 - показать понятную ошибку;
@@ -414,7 +418,10 @@ Runtime-generated files:
 data/startup_status.json
 data/launcher.log
 data/server_console.log
+data/server.pid
 ```
+
+`server.pid` содержит PID server process, созданного текущим launcher, и используется только для диагностики/verification; он не является locking/auth mechanism.
 
 Минимальный status payload:
 
@@ -447,7 +454,7 @@ Status write должен быть atomic temp-file → replace.
 
 ## 14. Browser contract
 
-Browser открывается только после успешного SCOZ health response.
+Browser открывается только после успешного **current-version** SCOZ health response.
 
 Developer/test-only environment switch:
 
@@ -522,13 +529,15 @@ credentials*.json
 
 Проверить:
 
-- SCOZ health считается already-running;
+- exact current-version SCOZ health считается already-running;
 - чужой HTTP response не считается SCOZ;
-- occupied non-SCOZ port → controlled failure;
-- browser вызывается только после health success;
+- SCOZ другой версии не считается текущим running instance;
+- occupied non-current-SCOZ port → controlled failure;
+- browser вызывается только после current-version health success;
 - `SCOZ_NO_BROWSER=1` suppresses browser;
 - startup status atomic;
-- invalid status stage rejected.
+- invalid status stage rejected;
+- новый server process записывает `data/server.pid`.
 
 ### Runtime contract
 
@@ -538,7 +547,7 @@ credentials*.json
 - architecture = `amd64`;
 - exact official Python URL;
 - exact Python SHA-256;
-- `pipBootstrap.sha256` непустой и 64 hex chars;
+- `pipBootstrap.sha256` непустой и 64 lowercase hex chars;
 - direct runtime packages exact-pinned;
 - generated lock содержит только exact pins.
 
@@ -548,7 +557,7 @@ credentials*.json
 
 1. **First run:** `runtime/` отсутствует → bootstrap → health → success.
 2. **Second run:** runtime reuse без полной переустановки.
-3. **Already running:** второй запуск не создаёт второй server.
+3. **Already running:** второй запуск не создаёт второй server; PID остаётся тем же.
 4. **Occupied port:** dummy server на `17842` не убивается, silent port switch отсутствует.
 5. **Spaces/Cyrillic path:** запуск из `C:\Temp\SCOZ тест\Аналитика`.
 6. **Runtime damage:** repair/rebuild без удаления `data/`.
@@ -593,7 +602,9 @@ SCOZ/
 │  ├─ package-lock.json
 │  ├─ tsconfig.json
 │  └─ vite.config.ts
-├─ scripts/bootstrap.ps1
+├─ scripts/
+│  ├─ bootstrap.ps1
+│  └─ validate_runtime.py
 ├─ tests/
 │  ├─ test_backend.py
 │  ├─ test_launcher.py
@@ -603,8 +614,10 @@ SCOZ/
 ├─ launcher.py
 ├─ requirements.in
 ├─ requirements.lock.txt
+├─ requirements-dev.txt
 ├─ runtime_manifest.json
 ├─ VERSION.txt
+├─ README.md
 ├─ .gitignore
 └─ AGENTS.md
 ```
@@ -627,10 +640,10 @@ PR1 принят только если:
 - valid runtime reused on second run;
 - dependency drift repairable, broken runtime rebuildable;
 - backend слушает только `127.0.0.1:17842`;
-- health однозначно идентифицирует SCOZ;
-- browser открывается только после health;
-- second launch не создаёт второй backend;
-- чужой процесс на порту не завершается и не обходится silent port switching;
+- health однозначно идентифицирует SCOZ и текущую version;
+- browser открывается только после current-version health;
+- second launch не создаёт второй backend и сохраняет тот же server PID;
+- чужой/старый процесс на порту не завершается и не обходится silent port switching;
 - spaces/Cyrillic path проверен;
 - React production assets присутствуют в repository ZIP и соответствуют source;
 - global shell содержит только `Товары / Данные / Настройки`;
