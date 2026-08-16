@@ -64,7 +64,7 @@ Assert:
 - `VERSION.txt` is exactly `0.1.0` plus newline;
 - `requirements.txt` has only `fastapi==0.139.2` and `uvicorn==0.51.0`;
 - runtime and test dependencies are separate;
-- `.gitignore` excludes `runtime/`, `data/`, `.venv/`, frontend build artifacts/package-manager dependencies, encrypted credential files and plaintext credential-like JSON names;
+- `.gitignore` excludes `runtime/`, `data/`, `.venv/`, encrypted credential files and plaintext credential-like JSON names;
 - no generated runtime/data files are tracked.
 
 - [ ] **Step 2: Run the focused test and confirm expected failure**
@@ -112,10 +112,14 @@ Implement global navigation, active-section state and genuinely required DOM beh
 
 ```powershell
 python -m pytest tests\test_frontend_contract.py -q
-node --check frontend/assets/js/app.js
+if (Get-Command node -ErrorAction SilentlyContinue) {
+    node --check frontend/assets/js/app.js
+} else {
+    Write-Host "SKIP: optional Node syntax check is unavailable"
+}
 ```
 
-The Node check is optional when a preinstalled Node executable is unavailable. The frontend task requires no network, package manager or npm registry. If direct JavaScript tests become necessary later, run them as `node tests\...test.js` without introducing a package or unit-test framework in PR1.
+Node is not a required SCOZ dependency. When a preinstalled Node executable is available, `node --check` provides additional syntax verification; when Node is unavailable in Codex Cloud or a developer environment, report this check as `SKIP`, not `IMPLEMENTATION BLOCKED`. Python/static contract tests remain the required frontend verification, so this task requires no network, package manager or npm registry. Do not introduce another JavaScript runtime or JavaScript testing framework in PR1.
 
 - [ ] **Step 5: Commit**
 
@@ -342,8 +346,14 @@ Expected: no startup invocation.
 
 ```powershell
 python -m pytest -q
-node --check frontend/assets/js/app.js
+if (Get-Command node -ErrorAction SilentlyContinue) {
+    node --check frontend/assets/js/app.js
+} else {
+    Write-Host "SKIP: optional Node syntax check is unavailable"
+}
 ```
+
+Node remains an optional CI/developer checker rather than a required SCOZ dependency. Its absence in Codex Cloud or a developer environment is a `SKIP`, never `IMPLEMENTATION BLOCKED`; Python/static contract tests still verify the frontend without Node. No package manager or npm registry is required, and no alternative JavaScript runtime or JavaScript testing framework should be added.
 
 ```powershell
 git add .github/workflows/ci.yml
@@ -368,11 +378,15 @@ From repository root in PowerShell: create developer venv, install `requirements
 
 ```powershell
 python -m pytest -q
-node --check frontend/assets/js/app.js
+if (Get-Command node -ErrorAction SilentlyContinue) {
+    node --check frontend/assets/js/app.js
+} else {
+    Write-Host "SKIP: optional Node syntax check is unavailable"
+}
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File tests\windows_smoke.ps1 -Mode Full
 ```
 
-Report each actual result and explicitly defer unavailable Windows evidence to post-push CI. Do not ask the user to run development commands on a desktop.
+Report each actual result and explicitly defer unavailable Windows evidence to post-push CI. Node is not a required SCOZ dependency: use it only for additional `node --check` syntax verification when available, and report its absence in Codex Cloud or a developer environment as `SKIP`, not `IMPLEMENTATION BLOCKED`. Python/static contract tests remain sufficient to verify the frontend without Node; no package manager, npm registry, alternative JavaScript runtime or JavaScript testing framework is required. Do not ask the user to run development commands on a desktop.
 
 - [ ] **Step 4: Scope and generated-state audit**
 
