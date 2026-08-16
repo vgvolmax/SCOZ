@@ -43,7 +43,9 @@ call :log "runtime setup: downloading Python 3.13.14"
 mkdir "runtime" || exit /b 20
 set "PYTHON_ZIP=runtime\python-3.13.14-embed-amd64.zip"
 set "PYTHON_PART=%PYTHON_ZIP%.part"
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; Invoke-WebRequest -UseBasicParsing -Uri 'https://www.python.org/ftp/python/3.13.14/python-3.13.14-embed-amd64.zip' -OutFile '%PYTHON_PART%'; if (!(Test-Path -LiteralPath '%PYTHON_PART%') -or (Get-Item -LiteralPath '%PYTHON_PART%').Length -lt 5000000) { throw 'Python archive is missing or too small' }; Add-Type -AssemblyName System.IO.Compression.FileSystem; $z=[IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath '%PYTHON_PART%')); try { if ($z.Entries.Count -eq 0) { throw 'Python archive is empty' } } finally { $z.Dispose() }; Move-Item -Force -LiteralPath '%PYTHON_PART%' -Destination '%PYTHON_ZIP%'; [IO.Compression.ZipFile]::ExtractToDirectory((Resolve-Path -LiteralPath '%PYTHON_ZIP%'), (Resolve-Path -LiteralPath 'runtime'))"
+call :download "https://www.python.org/ftp/python/3.13.14/python-3.13.14-embed-amd64.zip" "%PYTHON_PART%"
+if errorlevel 1 exit /b 21
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; if (!(Test-Path -LiteralPath '%PYTHON_PART%') -or (Get-Item -LiteralPath '%PYTHON_PART%').Length -lt 5000000) { throw 'Python archive is missing or too small' }; Add-Type -AssemblyName System.IO.Compression.FileSystem; $z=[IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath '%PYTHON_PART%')); try { if ($z.Entries.Count -eq 0) { throw 'Python archive is empty' } } finally { $z.Dispose() }; Move-Item -Force -LiteralPath '%PYTHON_PART%' -Destination '%PYTHON_ZIP%'; [IO.Compression.ZipFile]::ExtractToDirectory((Resolve-Path -LiteralPath '%PYTHON_ZIP%'), (Resolve-Path -LiteralPath 'runtime'))"
 if errorlevel 1 exit /b 21
 
 >"runtime\python313._pth" echo python313.zip
@@ -56,7 +58,9 @@ if not exist "runtime\Lib\site-packages" mkdir "runtime\Lib\site-packages"
 call :log "runtime setup: downloading pip bootstrap"
 set "GET_PIP=runtime\get-pip.py"
 set "GET_PIP_PART=%GET_PIP%.part"
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; Invoke-WebRequest -UseBasicParsing -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile '%GET_PIP_PART%'; if (!(Test-Path -LiteralPath '%GET_PIP_PART%') -or (Get-Item -LiteralPath '%GET_PIP_PART%').Length -lt 100000) { throw 'get-pip.py is missing or too small' }; if (-not (Select-String -Quiet -LiteralPath '%GET_PIP_PART%' -SimpleMatch 'pip')) { throw 'get-pip.py content check failed' }; Move-Item -Force -LiteralPath '%GET_PIP_PART%' -Destination '%GET_PIP%'"
+call :download "https://bootstrap.pypa.io/get-pip.py" "%GET_PIP_PART%"
+if errorlevel 1 exit /b 22
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; if (!(Test-Path -LiteralPath '%GET_PIP_PART%') -or (Get-Item -LiteralPath '%GET_PIP_PART%').Length -lt 100000) { throw 'get-pip.py is missing or too small' }; if (-not (Select-String -Quiet -LiteralPath '%GET_PIP_PART%' -SimpleMatch 'pip')) { throw 'get-pip.py content check failed' }; Move-Item -Force -LiteralPath '%GET_PIP_PART%' -Destination '%GET_PIP%'"
 if errorlevel 1 exit /b 22
 "runtime\python.exe" "runtime\get-pip.py"
 if errorlevel 1 exit /b 23
@@ -66,6 +70,10 @@ exit /b %ERRORLEVEL%
 :install_requirements
 call :log "runtime setup: installing requirements"
 "runtime\python.exe" -m pip install -r "requirements.txt"
+exit /b %ERRORLEVEL%
+
+:download
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $uri='%~1'; $target='%~2'; for ($attempt=1; $attempt -le 3; $attempt++) { try { Write-Host ('Download attempt {0}/3: {1}' -f $attempt,$uri); Remove-Item -Force -LiteralPath $target -ErrorAction SilentlyContinue; Invoke-WebRequest -UseBasicParsing -TimeoutSec 60 -Uri $uri -OutFile $target; exit 0 } catch { Remove-Item -Force -LiteralPath $target -ErrorAction SilentlyContinue; if ($attempt -eq 3) { Write-Error ('Download failed after 3 attempts: {0}' -f $_.Exception.Message); exit 1 }; Start-Sleep -Seconds 2 } }"
 exit /b %ERRORLEVEL%
 
 :validate_python

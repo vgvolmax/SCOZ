@@ -5,7 +5,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_runtime_inputs():
-    assert (ROOT / "VERSION.txt").read_bytes() == b"0.1.0\n"
+    assert (ROOT / "VERSION.txt").read_text(
+        encoding="utf-8"
+    ).strip() == "0.1.0"
     assert (ROOT / "requirements.txt").read_text().splitlines() == ["fastapi==0.139.2", "uvicorn==0.51.0"]
     assert "pytest" in (ROOT / "requirements-dev.txt").read_text()
 
