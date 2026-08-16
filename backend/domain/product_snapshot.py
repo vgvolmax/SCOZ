@@ -2,14 +2,15 @@ from dataclasses import dataclass, fields
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
+from typing import Literal
 
 from backend.domain.lineage import ImportStatus, SourceArtifact, normalized_payload_sha256
 
 
-class SnapshotWriteStatus(str, Enum):
+class SnapshotWriteKind(str, Enum):
     NEW = "NEW"
-    CORRECTED = "CORRECTED"
     DUPLICATE = "DUPLICATE"
+    CORRECTED = "CORRECTED"
 
 
 @dataclass(frozen=True)
@@ -84,16 +85,17 @@ class OzonProductsImportSummary:
 
 @dataclass(frozen=True)
 class RowError:
-    row_number: int
+    row: int
     code: str
     message: str
 
 
 @dataclass(frozen=True)
-class ParsedProductRow:
+class ParsedOzonProductRow:
+    source_row: int
     ozon_product_id: str
+    snapshot_values: dict[str, object]
     payload_sha256: str
-    values: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -101,16 +103,16 @@ class ParsedOzonProductsReport:
     report_generated_on: date
     report_window_days: int
     rows_seen: int
-    rows: tuple[ParsedProductRow, ...]
+    rows: tuple[ParsedOzonProductRow, ...]
     row_errors: tuple[RowError, ...]
-    duplicate_observations: int
+    duplicate_input_rows: int
     warnings_count: int
 
 
 @dataclass(frozen=True)
 class ImportResult:
     import_batch_id: int
-    report_type: str
+    report_type: Literal["OZON_PRODUCTS"]
     status: ImportStatus
     report_generated_on: date | None
     report_window_days: int | None
@@ -126,7 +128,13 @@ class ImportResult:
     row_errors_truncated: bool
     source_artifact: SourceArtifact
     imported_at: datetime
-    readiness: str
+    readiness: Literal["SELECT_OWN_PRODUCTS", "READY"]
+
+
+@dataclass(frozen=True)
+class SnapshotWriteResult:
+    kind: SnapshotWriteKind
+    snapshot: ProductSnapshot
 
 
 class OzonProductsError(ValueError): pass
@@ -154,7 +162,16 @@ class OzonProductsImportFailure(Exception):
 PAYLOAD_FIELDS = tuple(field.name for field in fields(ProductSnapshot)[10:])
 
 
-def canonical_decimal(value: Decimal) -> str:
+def decimal_from_excel_number(value: object) -> Decimal:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise InvalidMetricValue("numeric Excel cell required")
+    result = Decimal(value) if isinstance(value, int) else Decimal(str(value))
+    if not result.is_finite():
+        raise InvalidMetricValue("decimal must be finite")
+    return result
+
+
+def canonical_decimal_text(value: Decimal) -> str:
     if not value.is_finite():
         raise InvalidMetricValue("decimal must be finite")
     text = format(value, "f")
@@ -163,15 +180,17 @@ def canonical_decimal(value: Decimal) -> str:
     return "0" if not text or Decimal(text) == 0 else text
 
 
-def snapshot_payload(values: dict[str, object]) -> dict[str, object]:
+def product_snapshot_payload(values: dict[str, object]) -> dict[str, object]:
+    if set(values) != set(PAYLOAD_FIELDS):
+        raise ValueError("snapshot payload fields do not match frozen contract")
     result: dict[str, object] = {}
     for key in PAYLOAD_FIELDS:
         value = values[key]
-        if isinstance(value, Decimal): value = canonical_decimal(value)
+        if isinstance(value, Decimal): value = canonical_decimal_text(value)
         elif isinstance(value, date): value = value.isoformat()
         result[key] = value
     return result
 
 
 def snapshot_payload_sha256(values: dict[str, object]) -> str:
-    return normalized_payload_sha256(snapshot_payload(values))
+    return normalized_payload_sha256(product_snapshot_payload(values))

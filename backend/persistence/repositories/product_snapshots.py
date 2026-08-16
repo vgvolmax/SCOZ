@@ -1,17 +1,13 @@
 import re
 import sqlite3
-from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 
 from backend.domain.lineage import datetime_from_db, datetime_to_db
-from backend.domain.product_snapshot import PAYLOAD_FIELDS, ProductSnapshot, SnapshotWriteStatus, canonical_decimal
-
-
-@dataclass(frozen=True)
-class SnapshotWriteResult:
-    status: SnapshotWriteStatus
-    snapshot: ProductSnapshot
+from backend.domain.product_snapshot import (
+    PAYLOAD_FIELDS, ProductSnapshot, SnapshotWriteKind, SnapshotWriteResult,
+    canonical_decimal_text,
+)
 
 
 class ProductSnapshotRepository:
@@ -34,7 +30,7 @@ class ProductSnapshotRepository:
         if report_window_days <= 0 or imported_at.tzinfo is None: raise ValueError("invalid snapshot metadata")
         current = self.current_for_key(product_id, report_generated_on, report_window_days)
         if current is not None and current.payload_sha256 == payload_sha256:
-            return SnapshotWriteResult(SnapshotWriteStatus.DUPLICATE, current)
+            return SnapshotWriteResult(SnapshotWriteKind.DUPLICATE, current)
         revision = 1 if current is None else current.revision + 1
         supersedes = None if current is None else current.id
         columns = PAYLOAD_FIELDS
@@ -42,11 +38,11 @@ class ProductSnapshotRepository:
         cursor = self._conn.execute(f"INSERT INTO product_snapshots (product_id,report_generated_on,report_window_days,revision,supersedes_snapshot_id,payload_sha256,import_batch_id,source_artifact_id,imported_at,{','.join(columns)}) VALUES ({','.join('?' for _ in range(9 + len(columns)))})", (product_id, report_generated_on.isoformat(), report_window_days, revision, supersedes, payload_sha256, import_batch_id, source_artifact_id, datetime_to_db(imported_at), *encoded))
         snapshot = self.get(cursor.lastrowid)
         assert snapshot is not None
-        return SnapshotWriteResult(SnapshotWriteStatus.NEW if current is None else SnapshotWriteStatus.CORRECTED, snapshot)
+        return SnapshotWriteResult(SnapshotWriteKind.NEW if current is None else SnapshotWriteKind.CORRECTED, snapshot)
 
     @staticmethod
     def _encode(value: object) -> object:
-        if isinstance(value, Decimal): return canonical_decimal(value)
+        if isinstance(value, Decimal): return canonical_decimal_text(value)
         if isinstance(value, date): return value.isoformat()
         return value
 

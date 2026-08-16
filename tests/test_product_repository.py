@@ -184,7 +184,8 @@ def test_domain_and_repository_boundary_is_narrow(repository):
     ]
     assert set(name for name in vars(ProductRepository) if not name.startswith("_")) == {
         "create_product", "get_product", "set_owned", "add_external_identity",
-        "find_by_external_identity",
+        "find_by_external_identity", "resolve_or_create_ozon_product",
+        "count_ozon_products", "any_owned", "list_ozon_products",
     }
 
     connection.execute("BEGIN")

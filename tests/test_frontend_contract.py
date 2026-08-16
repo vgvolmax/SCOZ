@@ -32,3 +32,25 @@ def test_no_frontend_toolchain_or_future_ui():
     combined = "\n".join(p.read_text(encoding="utf-8") for p in (ROOT / "frontend").rglob("*.*"))
     for forbidden in ("ReactDOM", "Диагностика", "Разгон", "Конкуренты", "MPStats", "API credentials"):
         assert forbidden not in combined
+
+
+def test_pr3_frontend_state_contract():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    assert "Данные загружены. Выберите свои товары." not in html
+    for text in (
+        "Загрузка товаров…",
+        "Для анализа загрузите данные Ozon и выберите собственный товар.",
+        "Данные загружены. Выберите свои товары.",
+        "Товары готовы к анализу.",
+        "PARTIAL_SUCCESS",
+        "rows_accepted",
+        "rows_skipped",
+        "row_errors",
+        "Не удалось изменить принадлежность товара.",
+        "box.checked=previous",
+    ):
+        assert text in html + js
+    assert 'accept=".xlsx"' in html
+    assert 'id="selected-file-name"' in html
+    assert 'aria-live="polite"' in html
