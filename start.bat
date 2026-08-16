@@ -85,7 +85,7 @@ if not exist "runtime\python.exe" exit /b 1
 exit /b %ERRORLEVEL%
 
 :validate_dependencies
-"runtime\python.exe" -c "import importlib.metadata as m; import fastapi,uvicorn; raise SystemExit(0 if m.version('fastapi') == '0.139.2' and m.version('uvicorn') == '0.51.0' else 1)" >nul 2>&1
+"runtime\python.exe" -c "import importlib.metadata as m; import fastapi,uvicorn,openpyxl,multipart; raise SystemExit(0 if m.version('fastapi') == '0.139.2' and m.version('uvicorn') == '0.51.0' and m.version('openpyxl') == '3.1.5' and m.version('python-multipart') == '0.0.32' else 1)" >nul 2>&1
 exit /b %ERRORLEVEL%
 
 :log
