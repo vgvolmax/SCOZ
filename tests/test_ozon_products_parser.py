@@ -1,4 +1,5 @@
 from dataclasses import fields
+from datetime import datetime
 from decimal import Decimal
 from io import BytesIO
 
@@ -6,7 +7,7 @@ import pytest
 from openpyxl import load_workbook
 
 from backend.domain.product_snapshot import (
-    IncompatibleReportSchema, InvalidMetricValue, InvalidReportPeriod,
+    ConflictingObservationRows, IncompatibleReportSchema, InvalidMetricValue, InvalidReportPeriod,
     OzonProductsImportSummary, ParsedOzonProductRow, ParsedOzonProductsReport,
     ProductSnapshot, RowError, SnapshotWriteKind, SnapshotWriteResult, WrongReportType,
     canonical_decimal_text, decimal_from_excel_number, product_snapshot_payload,
@@ -94,7 +95,9 @@ def test_payload_contract_and_stable_hash(tmp_path):
     ({"window_label": "7 days"}, InvalidReportPeriod),
     ({"marker_overrides": {"A1": "Другой отчёт"}}, WrongReportType),
     ({"marker_overrides": {"A6": "wrong"}}, IncompatibleReportSchema),
-    ({"marker_overrides": {"B3": None}}, InvalidMetricValue),
+    ({"marker_overrides": {"B3": None}}, IncompatibleReportSchema),
+    ({"marker_overrides": {"B3": ""}}, IncompatibleReportSchema),
+    ({"marker_overrides": {"B1": "=TODAY()"}}, IncompatibleReportSchema),
 ])
 def test_structural_rejections(tmp_path, kwargs, error):
     with pytest.raises(error):
@@ -118,3 +121,63 @@ def test_recoverable_identity_and_duplicate_rows(tmp_path):
     assert len(report.rows) == 1 and report.duplicate_input_rows == 1 and report.warnings_count == 1
     assert report.rows_seen == 3
     assert report.row_errors == (RowError(9, "InvalidProductIdentity", "Некорректная ссылка на товар."),)
+
+
+@pytest.mark.parametrize(
+    ("header", "value"),
+    [
+        (OZON_PRODUCTS_HEADERS[7], "=1+1"),
+        (OZON_PRODUCTS_HEADERS[7], "Нет данных"),
+        (OZON_PRODUCTS_HEADERS[8], "-"),
+        (OZON_PRODUCTS_HEADERS[7], "1,31"),
+        (OZON_PRODUCTS_HEADERS[7], True),
+        (OZON_PRODUCTS_HEADERS[31], "not-a-date"),
+        (OZON_PRODUCTS_HEADERS[31], datetime(2026, 1, 1)),
+        (OZON_PRODUCTS_HEADERS[6], 0),
+    ],
+)
+def test_invalid_product_cells_are_recoverable(tmp_path, header, value):
+    valid = _default_row("Синтетическая категория")
+    invalid = dict(valid)
+    invalid[OZON_PRODUCTS_HEADERS[1]] = "https://www.ozon.ru/product/100000002/"
+    invalid[header] = value
+    report = _parse_bytes(
+        tmp_path, build_ozon_products_workbook(rows=[valid, invalid])
+    )
+    assert report.rows_seen == 2
+    assert len(report.rows) == 1
+    assert report.row_errors == (
+        RowError(8, "InvalidMetricValue", "Некорректное значение показателя."),
+    )
+
+
+def test_exact_sentinels_zero_and_product_badges(tmp_path):
+    headers = OZON_PRODUCTS_HEADERS
+    rows = []
+    for index, badge in enumerate((None, "", "text"), start=1):
+        row = _default_row("Синтетическая категория")
+        row[headers[1]] = f"https://www.ozon.ru/product/{100000000 + index}/"
+        row[headers[6]] = badge
+        row[headers[7]] = 0
+        row[headers[8]] = "Нет данных"
+        row[headers[12]] = "Нет данных"
+        row[headers[14]] = "-"
+        rows.append(row)
+    report = _parse_bytes(tmp_path, build_ozon_products_workbook(rows=rows))
+    assert [row.snapshot_values["product_badges"] for row in report.rows] == [
+        None,
+        None,
+        "text",
+    ]
+    assert all(row.snapshot_values["ordered_amount_rub"] == 0 for row in report.rows)
+    assert all(row.snapshot_values["turnover_change_pct"] is None for row in report.rows)
+    assert all(row.snapshot_values["buyout_share_pct"] is None for row in report.rows)
+    assert all(row.snapshot_values["out_of_stock_days"] is None for row in report.rows)
+
+
+def test_conflicting_same_key_rows_are_fatal(tmp_path):
+    first = _default_row("Синтетическая категория")
+    changed = dict(first)
+    changed[OZON_PRODUCTS_HEADERS[0]] = "Changed title"
+    with pytest.raises(ConflictingObservationRows):
+        _parse_bytes(tmp_path, build_ozon_products_workbook(rows=[first, changed]))

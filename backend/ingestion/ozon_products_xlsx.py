@@ -52,8 +52,13 @@ def parse_ozon_products_xlsx(path: Path) -> ParsedOzonProductsReport:
         raise
     except (OSError, zipfile.BadZipFile, KeyError) as error:
         raise UnsupportedWorkbook() from error
-    try: workbook = load_workbook(filename=path,read_only=True,data_only=False)
-    except Exception as error: raise UnsupportedWorkbook() from error
+    try:
+        source = path.open("rb")
+        workbook = load_workbook(filename=source,read_only=True,data_only=False)
+    except Exception as error:
+        if "source" in locals():
+            source.close()
+        raise UnsupportedWorkbook() from error
     try:
         if len(workbook.worksheets) != 1: raise IncompatibleReportSchema()
         sheet = workbook.worksheets[0]
@@ -74,6 +79,8 @@ def parse_ozon_products_xlsx(path: Path) -> ParsedOzonProductsReport:
             window = int(match.group(1))
         except (TypeError,ValueError): raise InvalidReportPeriod()
         report_category = sheet["B3"].value
+        if not isinstance(report_category, str) or not report_category:
+            raise IncompatibleReportSchema()
         rows=[]; errors=[]; seen=duplicates=warnings=0; unique={}
         for row_number in range(7,sheet.max_row+1):
             cells=[sheet.cell(row=row_number,column=c).value for c in range(1,33)]
@@ -103,4 +110,6 @@ def parse_ozon_products_xlsx(path: Path) -> ParsedOzonProductsReport:
                 errors.append(RowError(row_number,type(error).__name__,messages[type(error)]))
         if not rows: raise InvalidMetricValue("report contains no usable rows")
         return ParsedOzonProductsReport(generated,window,seen,tuple(rows),tuple(errors),duplicates,warnings)
-    finally: workbook.close()
+    finally:
+        workbook.close()
+        source.close()
