@@ -5,7 +5,7 @@ if errorlevel 1 exit /b 10
 
 if not exist "data" mkdir "data"
 call :log "runtime setup: checking project-local Python"
-call :status "runtime setup" "Подготовка локальной среды Python" ""
+call :status "runtime setup" "041F,043E,0434,0433,043E,0442,043E,0432,043A,0430,0020,043B,043E,043A,0430,043B,044C,043D,043E,0439,0020,0441,0440,0435,0434,044B,0020,0050,0079,0074,0068,006F,006E" ""
 
 call :validate_python
 if not errorlevel 1 (
@@ -91,11 +91,11 @@ echo [%date% %time%] %~1
 exit /b 0
 
 :status
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$p=@{stage='%~1';message='%~2';updated_at=[DateTimeOffset]::UtcNow.ToString('o')}; if ('%~3' -ne '') {$p.ok=[bool]::Parse('%~3')}; $p | ConvertTo-Json | Set-Content -LiteralPath 'data\startup_status.json.tmp' -Encoding utf8; Move-Item -Force -LiteralPath 'data\startup_status.json.tmp' -Destination 'data\startup_status.json'" >nul 2>&1
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$message=-join(('%~2' -split ',') | ForEach-Object {[char][Convert]::ToInt32($_,16)}); $p=@{stage='%~1';message=$message;updated_at=[DateTimeOffset]::UtcNow.ToString('o')}; if ('%~3' -ne '') {$p.ok=[bool]::Parse('%~3')}; $p | ConvertTo-Json | Set-Content -LiteralPath 'data\startup_status.json.tmp' -Encoding utf8; Move-Item -Force -LiteralPath 'data\startup_status.json.tmp' -Destination 'data\startup_status.json'" >nul 2>&1
 exit /b 0
 
 :failed
 set "SCOZ_EXIT=%ERRORLEVEL%"
 call :log "failed: portable runtime setup failed with exit code %SCOZ_EXIT%"
-call :status "failed" "Не удалось подготовить локальную среду Python" "False"
+call :status "failed" "041D,0435,0020,0443,0434,0430,043B,043E,0441,044C,0020,043F,043E,0434,0433,043E,0442,043E,0432,0438,0442,044C,0020,043B,043E,043A,0430,043B,044C,043D,0443,044E,0020,0441,0440,0435,0434,0443,0020,0050,0079,0074,0068,006F,006E" "False"
 exit /b %SCOZ_EXIT%
