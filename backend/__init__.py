@@ -1,0 +1,1 @@
+"""SCOZ web application package."""
