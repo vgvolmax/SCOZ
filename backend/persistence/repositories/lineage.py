@@ -91,7 +91,7 @@ class LineageRepository:
         if result is None: raise LookupError(artifact_id)
         return result
 
-    def finish_ozon_products_import(self, batch_id: int, *, status: ImportStatus, report_generated_on: date | None = None, report_window_days: int | None = None, rows_seen: int | None = None, rows_accepted: int | None = None, rows_skipped: int | None = None, duplicate_observations: int | None = None, new_observations: int | None = None, corrected_revisions: int | None = None, warnings_count: int | None = None, row_errors_total: int | None = None, finished_at: datetime | None = None) -> OzonProductsImportSummary:
+    def finish_ozon_products_import(self, batch_id: int, *, status: ImportStatus, report_generated_on: date | None, report_window_days: int | None, rows_seen: int, rows_accepted: int, rows_skipped: int, duplicate_observations: int, new_observations: int, corrected_revisions: int, warnings_count: int, row_errors_total: int) -> OzonProductsImportSummary:
         batch = self.get_import_batch(batch_id)
         if batch is None:
             raise ImportBatchNotFound(batch_id)
@@ -100,8 +100,8 @@ class LineageRepository:
                 f"cannot transition {batch.status.value} to {status.value}"
             )
         counts = (rows_seen, rows_accepted, rows_skipped, duplicate_observations, new_observations, corrected_revisions, warnings_count, row_errors_total)
-        if any(value is not None and value < 0 for value in counts): raise ValueError("counts must be non-negative")
-        cursor = self._conn.execute("UPDATE import_batches SET status=?,finished_at=?,report_generated_on=?,report_window_days=?,rows_seen=?,rows_accepted=?,rows_skipped=?,duplicate_observations=?,new_observations=?,corrected_revisions=?,warnings_count=?,row_errors_total=? WHERE id=? AND status=?", (status.value, datetime_to_db(finished_at or utc_now()), None if report_generated_on is None else report_generated_on.isoformat(), report_window_days, *counts, batch_id, ImportStatus.RUNNING.value))
+        if any(value < 0 for value in counts): raise ValueError("counts must be non-negative")
+        cursor = self._conn.execute("UPDATE import_batches SET status=?,finished_at=?,report_generated_on=?,report_window_days=?,rows_seen=?,rows_accepted=?,rows_skipped=?,duplicate_observations=?,new_observations=?,corrected_revisions=?,warnings_count=?,row_errors_total=? WHERE id=? AND status=?", (status.value, datetime_to_db(utc_now()), None if report_generated_on is None else report_generated_on.isoformat(), report_window_days, *counts, batch_id, ImportStatus.RUNNING.value))
         if cursor.rowcount != 1:
             raise InvalidImportStatusTransition("import batch was already finished")
         result = self._get_summary(batch_id)

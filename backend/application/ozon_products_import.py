@@ -57,7 +57,7 @@ def import_ozon_products_xlsx(*, upload: BinaryIO, original_name: str, db_path: 
         except OzonProductsError as error:
             staged.unlink(missing_ok=True)
             with transaction(db_path) as conn:
-                summary=LineageRepository(conn).finish_ozon_products_import(batch_id,status=ImportStatus.FAILED)
+                summary=LineageRepository(conn).finish_ozon_products_import(batch_id,status=ImportStatus.FAILED,report_generated_on=None,report_window_days=None,rows_seen=0,rows_accepted=0,rows_skipped=0,duplicate_observations=0,new_observations=0,corrected_revisions=0,warnings_count=0,row_errors_total=0)
             raise OzonProductsImportFailure(error=error,result=_result(summary))
         try:
             now=datetime.now(timezone.utc); filename=f"{now.strftime('%Y%m%dT%H%M%S%fZ')}-{sha}.xlsx"; final=imports_dir/filename
@@ -73,7 +73,7 @@ def import_ozon_products_xlsx(*, upload: BinaryIO, original_name: str, db_path: 
                 products=ProductRepository(conn); snapshots=ProductSnapshotRepository(conn); duplicate=report.duplicate_input_rows; new=corrected=0
                 for row in report.rows:
                     product=products.resolve_or_create_ozon_product(row.ozon_product_id)
-                    write=snapshots.resolve_revision(product_id=product.id,report_generated_on=report.report_generated_on,report_window_days=report.report_window_days,payload_sha256=row.payload_sha256,import_batch_id=batch_id,source_artifact_id=artifact.id,imported_at=now,values=row.snapshot_values)
+                    write=snapshots.resolve_revision(product_id=product.id,report_generated_on=report.report_generated_on,report_window_days=report.report_window_days,payload_sha256=row.payload_sha256,import_batch_id=batch_id,source_artifact_id=artifact.id,imported_at=now,snapshot_values=row.snapshot_values)
                     if write.kind is SnapshotWriteKind.DUPLICATE: duplicate += 1
                     elif write.kind is SnapshotWriteKind.NEW: new += 1
                     else: corrected += 1
@@ -89,7 +89,7 @@ def import_ozon_products_xlsx(*, upload: BinaryIO, original_name: str, db_path: 
                 final.unlink(missing_ok=True)
                 final_owned = False
             with transaction(db_path) as conn:
-                summary=LineageRepository(conn).finish_ozon_products_import(batch_id,status=ImportStatus.FAILED)
+                summary=LineageRepository(conn).finish_ozon_products_import(batch_id,status=ImportStatus.FAILED,report_generated_on=report.report_generated_on,report_window_days=report.report_window_days,rows_seen=report.rows_seen,rows_accepted=len(report.rows),rows_skipped=len(report.row_errors),duplicate_observations=report.duplicate_input_rows,new_observations=0,corrected_revisions=0,warnings_count=report.warnings_count,row_errors_total=len(report.row_errors))
             raise OzonProductsImportFailure(error=ImportPersistenceError(),result=_result(summary)) from error
     except OzonProductsImportFailure: raise
     except (UploadTooLarge,UnsupportedUploadMediaType) as error:

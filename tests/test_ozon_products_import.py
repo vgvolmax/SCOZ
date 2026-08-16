@@ -2,18 +2,20 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
+import inspect
 import re
 
 import pytest
 
 import backend.application.ozon_products_import as service
-from backend.domain.lineage import ImportStatus
+from backend.domain.lineage import ImportStatus, InvalidImportStatusTransition
 from backend.domain.product_snapshot import (
     ConcurrentImportConflict,
     ImportPersistenceError,
     InvalidMetricValue,
     OzonProductsImportFailure,
     UploadTooLarge,
+    UnsupportedWorkbook,
 )
 from backend.ingestion.ozon_products_xlsx import parse_ozon_products_xlsx
 from backend.persistence.connection import transaction
@@ -44,6 +46,22 @@ def _summaries(db_path):
 def _snapshots(db_path):
     with transaction(db_path) as conn:
         return conn.execute("SELECT * FROM product_snapshots ORDER BY id").fetchall()
+
+
+def test_finish_ozon_products_import_has_frozen_signature_and_transition(tmp_path):
+    signature = inspect.signature(LineageRepository.finish_ozon_products_import)
+    assert list(signature.parameters) == ["self", "batch_id", "status", "report_generated_on", "report_window_days", "rows_seen", "rows_accepted", "rows_skipped", "duplicate_observations", "new_observations", "corrected_revisions", "warnings_count", "row_errors_total"]
+    assert all(parameter.default is inspect.Parameter.empty for parameter in signature.parameters.values())
+    db_path, _ = _setup(tmp_path)
+    fields = dict(report_generated_on=None, report_window_days=None, rows_seen=0, rows_accepted=0, rows_skipped=0, duplicate_observations=0, new_observations=0, corrected_revisions=0, warnings_count=0, row_errors_total=0)
+    with transaction(db_path) as conn:
+        repo = LineageRepository(conn)
+        batch = repo.create_import_batch(source="ozon", import_kind="ozon_products_xlsx")
+        assert repo.finish_ozon_products_import(batch.id, status=ImportStatus.SUCCESS, **fields).status is ImportStatus.SUCCESS
+        with pytest.raises(InvalidImportStatusTransition): repo.finish_ozon_products_import(batch.id, status=ImportStatus.FAILED, **fields)
+        running = repo.create_import_batch(source="ozon", import_kind="ozon_products_xlsx")
+        with pytest.raises(ValueError, match="non-negative"):
+            repo.finish_ozon_products_import(running.id, status=ImportStatus.FAILED, **(fields | {"rows_seen": -1}))
 
 
 def test_parser_reads_valid_xlsx_from_part_staging_path(tmp_path):
@@ -79,7 +97,7 @@ def test_stream_limit_staging_hash_size_and_fsync(monkeypatch, tmp_path):
     payload = b"x" * service.MAX_UPLOAD_BYTES
     with pytest.raises(OzonProductsImportFailure) as caught:
         _import(payload, db_path, data_dir)
-    assert isinstance(caught.value.error, service.UnsupportedWorkbook)
+    assert isinstance(caught.value.error, UnsupportedWorkbook)
     summary = _summaries(db_path)[0]
     assert summary.source_artifact.byte_size == service.MAX_UPLOAD_BYTES
     assert summary.source_artifact.content_sha256 == sha256(payload).hexdigest()
@@ -129,7 +147,7 @@ def test_success_persists_identity_snapshot_and_archive(tmp_path):
             identity_value="100000001", source_account_scope="",
         )
         assert product is not None
-        snapshot = ProductSnapshotRepository(conn).latest_for_product(product.id)
+        snapshot = ProductSnapshotRepository(conn).list_latest_current_for_products(limit=100, offset=0)[0]
         assert snapshot is not None and snapshot.revision == 1
 
 

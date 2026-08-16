@@ -69,6 +69,17 @@ def test_set_owned_updates_timestamp_and_missing_product_raises(repository):
         repo.set_owned(999_999, True)
 
 
+def test_list_ozon_products_maps_sqlite_ownership_to_bool(repository):
+    repo, _ = repository
+    product = repo.resolve_or_create_ozon_product("12345")
+    repo.set_owned(product.id, True)
+
+    item = repo.list_ozon_products(limit=10, offset=0)[0]
+
+    assert item["is_owned"] is True
+    assert type(item["is_owned"]) is bool
+
+
 def test_external_identity_insert_and_lookup(repository):
     repo, _ = repository
     product = repo.create_product(is_owned=True)
