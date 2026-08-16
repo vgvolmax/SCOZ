@@ -1,8 +1,26 @@
 param([ValidateSet('Full')][string]$Mode = 'Full')
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$sandbox = Join-Path ([IO.Path]::GetTempPath()) ('SCOZ smoke Тест с пробелами ' + [guid]::NewGuid())
-$app = Join-Path $sandbox 'SCOZ приложение'
+$cyrillicTest = -join @(
+    [char]0x0422,
+    [char]0x0435,
+    [char]0x0441,
+    [char]0x0442
+)
+$cyrillicApp = -join @(
+    [char]0x043F,
+    [char]0x0440,
+    [char]0x0438,
+    [char]0x043B,
+    [char]0x043E,
+    [char]0x0436,
+    [char]0x0435,
+    [char]0x043D,
+    [char]0x0438,
+    [char]0x0435
+)
+$sandbox = Join-Path ([IO.Path]::GetTempPath()) ("SCOZ smoke $cyrillicTest with spaces " + [guid]::NewGuid())
+$app = Join-Path $sandbox "SCOZ $cyrillicApp"
 $env:SCOZ_NO_BROWSER = '1'
 
 function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
