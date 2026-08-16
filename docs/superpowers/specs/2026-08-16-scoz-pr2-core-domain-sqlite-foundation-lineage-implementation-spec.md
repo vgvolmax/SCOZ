@@ -93,7 +93,7 @@ data/
 | `backend/persistence/connection.py` | Add | Connection factory and transaction context manager with late path resolution and explicit optional path injection for tests | Pool, global connection, migrations registry |
 | `backend/persistence/database.py` | Add | Late-resolve or accept a specific DB path, create only its parent, and orchestrate runner for that DB | Eager `imports/`/`backups/` creation, table SQL, repositories, launcher/UI logic |
 | `backend/persistence/migrations/__init__.py` | Add | Package marker | Migration discovery magic |
-| `backend/persistence/migrations/runner.py` | Add | Ordered registry, `schema_migrations`, atomic forward-only execution | Feature/application logic, backup platform, down migrations |
+| `backend/persistence/migrations/runner.py` | Add | Ordered migration registry, `schema_migrations`, migration identity and contiguous-prefix validation, pending suffix calculation, atomic forward-only execution | Automatic migration-history repair, branching migration graph, down migrations, feature/application logic |
 | `backend/persistence/migrations/migration_001_core_foundation.py` | Add | `up(conn)` and separate `conn.execute(...)` DDL statements for exactly four core business tables/indexes inside the runner-owned transaction | Transaction control, `Connection.executescript()`, `schema_migrations`, FastAPI/UI, future tables |
 | `backend/persistence/repositories/__init__.py` | Add | Package marker and repository exports | SQL unrelated to repositories |
 | `backend/persistence/repositories/products.py` | Add | `ProductRepository`, row mapping, product persistence error mapping | Name/photo matching, commits when externally transaction-managed |
@@ -240,7 +240,9 @@ MIGRATIONS = [
 ]
 ```
 
-Each module exports `up(conn: sqlite3.Connection) -> None`, knows neither FastAPI nor UI, and contains no application logic. Runner opens DB, creates `schema_migrations`, reads applied versions, validates that an applied version has the registry name, computes pending entries, and executes them in ascending version order. Unknown applied versions or name mismatch fail startup rather than guessing.
+Each module exports `up(conn: sqlite3.Connection) -> None`, knows neither FastAPI nor UI, and contains no application logic. Runner opens DB, creates `schema_migrations`, then performs migration planning in this order: load the ordered registry; read `schema_migrations`; validate that every applied version exists in the registry, every applied name matches the registry name, and the applied migrations form a contiguous prefix of the ordered registry; only then calculate the pending suffix; execute that suffix in ascending version order. For example, registry `[1, 2, 3, 4]` with applied `[1, 2]` has pending `[3, 4]`; this is the only normal continuation mechanism.
+
+Applied migration history MUST form a contiguous prefix of the ordered migration registry. Thus, for registry `[1, 2, 3]`, `[]`, `[1]`, `[1, 2]`, and `[1, 2, 3]` are valid, while `[2]`, `[3]`, `[1, 3]`, and `[2, 3]` are invalid. An unknown applied version, registry-name mismatch, or history gap raises `DatabaseMigrationError` and stops startup before any pending migration runs. The runner does not try to catch up a missing older migration over already applied newer migrations, delete applied rows, reconstruct or otherwise repair history, or guess intended state. PR2 has one linear migration history: no force migration, downgrade, checksums, dependency graph, branching migrations, or Alembic-like heads are introduced.
 
 For every pending migration, runner explicitly begins one transaction; `up(conn)` and insertion of `(version, name, applied_at)` occur in that transaction. The runner is the only owner of `BEGIN`, `COMMIT`, and `ROLLBACK`. Migration `up(conn)` functions never call `commit()`, `rollback()`, or `BEGIN`, and execute SQL through separate `conn.execute(...)` statements (or `conn.executemany(...)` only when genuinely necessary). **Migration modules MUST NOT use sqlite3.Connection.executescript() under the runner-owned transaction contract.** In particular, migration 001 executes each DDL statement separately with `conn.execute(...)` inside the already-open runner transaction. Success commits schema changes and metadata together. Any exception rolls back both, wraps with `DatabaseMigrationError` preserving the cause, and stops. The failed version is absent and partial changes are not accepted as applied. A second run is a no-op. Migrations are forward-only; PR2 has no `down`.
 
@@ -291,12 +293,13 @@ PR2 creates no `ObservationGrain`, granularity registry, timezone engine or `Ana
 
 ### Automated migration/database tests
 
-1. Clean temp DB migrates to version 1 and contains exactly the four core production tables plus `schema_migrations`.
+1. Clean temp DB migrates to version 1. Its application-owned tables, defined as tables from `sqlite_master` whose names do not begin with `sqlite_` (equivalently, `WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`), are exactly `schema_migrations`, `products`, `product_external_identities`, `import_batches`, and `source_artifacts`. SQLite-owned internal tables such as `sqlite_sequence` are ignored.
 2. Second run is a no-op and version 1 appears once.
 3. Injected synthetic failing registry migration first executes `CREATE TABLE synthetic_first (...)` and then deliberately fails. `run_migrations()` raises `DatabaseMigrationError`; afterward `synthetic_first` does not exist and the failed version is absent from `schema_migrations`, proving atomic rollback of DDL and migration metadata.
 4. Every factory connection reports `PRAGMA foreign_keys = 1`.
 5. `SCOZ_DB_PATH` is resolved at operation time, targets a temp DB without touching production data, and can change between calls without reloading modules.
-6. All PR3+ feature table names are absent.
+6. The anti-scope assertion uses the same application-owned schema definition and proves that the application-owned table set is exactly the five tables in item 1: all PR3+ feature tables and every other unexpected application-owned table are absent, while `sqlite_*` internal objects are not scope violations.
+7. Migration-history integrity uses a synthetic registry `1, 2, 3` and proves: applied `1, 2` is valid with pending `3`; applied `2` raises `DatabaseMigrationError`; applied `1, 3` raises `DatabaseMigrationError`; applied `1` with the wrong name raises `DatabaseMigrationError`; and applied unknown version `99` raises `DatabaseMigrationError`. No production migration 002 or 003 is created for these tests.
 
 ### Product tests
 
@@ -332,7 +335,7 @@ Migration 001 must not create any of those tables, `BenchmarkMember`, `RelevantQ
 4. External identity is unique by source/type/value/account scope.
 5. ImportBatch and optional SourceArtifact form an explicit provenance root.
 6. Production SQL exists only under `backend/persistence/**`; isolated synthetic SQL under `tests/**` is limited to contract verification and never represents or creates production schema.
-7. Migration 001 contains exactly four business tables; future snapshot/feature tables are absent.
+7. Migration 001 contains exactly four business tables, while runner-owned `schema_migrations` is the fifth application-owned table; future snapshot/feature tables are absent. SQLite-owned internal objects such as `sqlite_sequence` are not production or application tables and are not documented as SCOZ schema entities.
 8. Test-only fixture proves duplicate, corrected revision, new period and new dimension semantics without production snapshot infrastructure.
 9. Normalized payload hash is deterministic and changes with normalized value.
 10. Period/granularity conventions are explicit without a generic framework.
