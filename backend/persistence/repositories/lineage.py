@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import date, datetime
 from pathlib import PurePosixPath, PureWindowsPath
 
 from backend.domain.lineage import (
@@ -13,6 +14,7 @@ from backend.domain.lineage import (
     datetime_to_db,
     utc_now,
 )
+from backend.domain.product_snapshot import OzonProductsImportSummary
 
 
 class LineageRepository:
@@ -81,6 +83,45 @@ class LineageRepository:
             content_sha256=row["content_sha256"], byte_size=row["byte_size"],
             stored_relpath=row["stored_relpath"], created_at=datetime_from_db(row["created_at"]),
         )
+
+    def set_source_artifact_stored_relpath(self, artifact_id: int, stored_relpath: str) -> SourceArtifact:
+        if not self._valid_stored_relpath(stored_relpath): raise InvalidStoredRelativePath(stored_relpath)
+        self._conn.execute("UPDATE source_artifacts SET stored_relpath=? WHERE id=?", (stored_relpath, artifact_id))
+        result = self.get_source_artifact(artifact_id)
+        if result is None: raise LookupError(artifact_id)
+        return result
+
+    def finish_ozon_products_import(self, batch_id: int, *, status: ImportStatus, report_generated_on: date | None = None, report_window_days: int | None = None, rows_seen: int | None = None, rows_accepted: int | None = None, rows_skipped: int | None = None, duplicate_observations: int | None = None, new_observations: int | None = None, corrected_revisions: int | None = None, warnings_count: int | None = None, row_errors_total: int | None = None, finished_at: datetime | None = None) -> OzonProductsImportSummary:
+        counts = (rows_seen, rows_accepted, rows_skipped, duplicate_observations, new_observations, corrected_revisions, warnings_count, row_errors_total)
+        if any(value is not None and value < 0 for value in counts): raise ValueError("counts must be non-negative")
+        self._conn.execute("UPDATE import_batches SET status=?,finished_at=?,report_generated_on=?,report_window_days=?,rows_seen=?,rows_accepted=?,rows_skipped=?,duplicate_observations=?,new_observations=?,corrected_revisions=?,warnings_count=?,row_errors_total=? WHERE id=? AND status=?", (status.value, datetime_to_db(finished_at or utc_now()), None if report_generated_on is None else report_generated_on.isoformat(), report_window_days, *counts, batch_id, ImportStatus.RUNNING.value))
+        result = self._get_summary(batch_id)
+        if result is None: raise ImportBatchNotFound(batch_id)
+        return result
+
+    def _get_summary(self, batch_id: int) -> OzonProductsImportSummary | None:
+        row = self._conn.execute("SELECT b.*,a.id artifact_id,a.artifact_kind,a.original_name,a.content_sha256,a.byte_size,a.stored_relpath,a.created_at artifact_created_at FROM import_batches b LEFT JOIN source_artifacts a ON a.import_batch_id=b.id WHERE b.id=?", (batch_id,)).fetchone()
+        return None if row is None else self._summary(row)
+
+    def list_ozon_products_imports(self, *, limit: int, offset: int) -> list[OzonProductsImportSummary]:
+        if not 1 <= limit <= 100 or offset < 0: raise ValueError("invalid pagination")
+        rows = self._conn.execute("SELECT b.*,a.id artifact_id,a.artifact_kind,a.original_name,a.content_sha256,a.byte_size,a.stored_relpath,a.created_at artifact_created_at FROM import_batches b LEFT JOIN source_artifacts a ON a.import_batch_id=b.id WHERE b.import_kind='ozon_products_xlsx' ORDER BY b.started_at DESC,b.id DESC LIMIT ? OFFSET ?", (limit,offset)).fetchall()
+        return [self._summary(row) for row in rows]
+
+    def count_ozon_products_imports(self) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM import_batches WHERE import_kind='ozon_products_xlsx'").fetchone()[0]
+
+    def list_referenced_pr3_archive_paths(self) -> set[str]:
+        return {row[0] for row in self._conn.execute("SELECT a.stored_relpath FROM source_artifacts a JOIN import_batches b ON b.id=a.import_batch_id WHERE b.import_kind='ozon_products_xlsx' AND a.stored_relpath IS NOT NULL")}
+
+    def fail_running_ozon_products_imports(self, *, finished_at: datetime) -> int:
+        cursor = self._conn.execute("UPDATE import_batches SET status=?,finished_at=? WHERE import_kind='ozon_products_xlsx' AND status=?", (ImportStatus.FAILED.value,datetime_to_db(finished_at),ImportStatus.RUNNING.value))
+        return cursor.rowcount
+
+    @staticmethod
+    def _summary(row: sqlite3.Row) -> OzonProductsImportSummary:
+        artifact = None if row["artifact_id"] is None else SourceArtifact(row["artifact_id"],row["id"],row["artifact_kind"],row["original_name"],row["content_sha256"],row["byte_size"],row["stored_relpath"],datetime_from_db(row["artifact_created_at"]))
+        return OzonProductsImportSummary(row["id"],row["source"],row["import_kind"],ImportStatus(row["status"]),None if row["report_generated_on"] is None else date.fromisoformat(row["report_generated_on"]),row["report_window_days"],*(0 if row[name] is None else row[name] for name in ("rows_seen","rows_accepted","rows_skipped","duplicate_observations","new_observations","corrected_revisions","warnings_count","row_errors_total")),datetime_from_db(row["started_at"]),None if row["finished_at"] is None else datetime_from_db(row["finished_at"]),artifact)
 
     @staticmethod
     def _batch_from_row(row: sqlite3.Row) -> ImportBatch:
