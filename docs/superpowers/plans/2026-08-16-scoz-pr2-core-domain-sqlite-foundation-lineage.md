@@ -32,6 +32,22 @@ If this Implementation Plan conflicts with `2026-08-16-scoz-pr2-core-domain-sqli
 
 ---
 
+## Implementation Run Baseline
+
+Before Task 1, from the repository root in the Codex terminal, capture the commit from which PR2 implementation starts and verify that the working tree is clean:
+
+```bash
+PR2_BASE_SHA="$(git rev-parse HEAD)"
+export PR2_BASE_SHA
+git status --short
+```
+
+Expected: `git status --short` has no output. Capturing `PR2_BASE_SHA` neither creates nor switches a branch; it only gives the final audit a stable PR-wide comparison base. If shell state does not persist between task sessions, keep the SHA in a local temporary execution note or otherwise retain the value captured by the implementer at the start of the run. Do not commit a base-SHA file to the repository.
+
+The dependency order is contiguous: Task 1 establishes config and connections; Task 2 adds the database orchestrator, migrations, and schema; Task 3 establishes shared time helpers and Product persistence; Task 4 adds the remaining lineage domain and repository; Task 5 adds hashing and the revision fixture; Task 6 integrates the launcher; Task 7 verifies Windows persistence; Task 8 performs full verification.
+
+---
+
 ## File Map
 
 ### Modify
@@ -47,7 +63,7 @@ If this Implementation Plan conflicts with `2026-08-16-scoz-pr2-core-domain-sqli
 
 - `backend/domain/__init__.py` — intentional domain exports.
 - `backend/domain/product.py` — Product domain dataclasses and errors.
-- `backend/domain/lineage.py` — lineage dataclasses, enum, errors, UTC helpers, and normalized payload hash.
+- `backend/domain/lineage.py` — created in Task 3 with shared UTC/ISO helpers; extended in Task 4 with the lineage domain; extended in Task 5 with the normalized payload hash.
 - `backend/persistence/__init__.py` — persistence package marker.
 - `backend/persistence/connection.py` — connection factory and transaction context manager.
 - `backend/persistence/database.py` — resolved-directory creation and migration orchestration.
@@ -82,7 +98,6 @@ If this Implementation Plan conflicts with `2026-08-16-scoz-pr2-core-domain-sqli
 - Modify: `backend/config.py`
 - Create: `backend/persistence/__init__.py`
 - Create: `backend/persistence/connection.py`
-- Create: `backend/persistence/database.py`
 - Create: `tests/test_database.py`
 
 **Interfaces:**
@@ -95,7 +110,9 @@ def resolve_db_path() -> Path:
     ...
 
 # backend/persistence/connection.py
-def connect(db_path: Path | None = None) -> sqlite3.Connection:
+def connect(
+    db_path: Path | None = None,
+) -> sqlite3.Connection:
     ...
 
 @contextmanager
@@ -103,36 +120,38 @@ def transaction(
     db_path: Path | None = None,
 ) -> Iterator[sqlite3.Connection]:
     ...
-
-# backend/persistence/database.py
-def initialize_database(db_path: Path | None = None) -> None:
-    ...
 ```
 
-`resolve_db_path()` reads and strips `SCOZ_DB_PATH` on every call; a non-empty override becomes `Path(override).expanduser().resolve()`, otherwise it returns `DEFAULT_DB_PATH`. `connect()` gives an explicit argument precedence over the environment, sets `sqlite3.Row`, enables and verifies foreign keys, and returns an open connection. `transaction()` commits on normal exit, rolls back on exceptional exit, and always closes. `initialize_database()` creates only `path.parent`, opens the concrete DB, and delegates to the Task 2 runner.
+`resolve_db_path()` reads and strips `SCOZ_DB_PATH` on every call; a non-empty override becomes `Path(override).expanduser().resolve()`, otherwise it returns `DEFAULT_DB_PATH`. `connect()` gives an explicit argument precedence over the environment, sets `sqlite3.Row`, enables and verifies foreign keys, and returns an open connection. `transaction()` commits on normal exit, rolls back on exceptional exit, and always closes.
 
-- [ ] **Step 1: Write the failing database contract tests.** In `tests/test_database.py`, add tests for default resolution; two successive environment overrides without module reload; explicit `db_path` overriding the environment; creation of only the resolved parent; absence of sibling `imports/` and `backups/`; `sqlite3.Row` mapping; `PRAGMA foreign_keys == 1`; persisted commit; rolled-back mutation; and connection closure after both context-manager outcomes. Mock `backend.persistence.database.run_migrations` in directory-only tests so Task 1 remains isolated from Task 2.
+- [ ] **Step 1: Write the failing connection-foundation tests.** In `tests/test_database.py`, add only tests for default resolution; two successive environment overrides without module reload (including an environment change between calls); explicit `db_path` overriding the environment; `sqlite3.Row` mapping; `PRAGMA foreign_keys == 1`; persisted commit; rolled-back mutation; and connection closure after both context-manager outcomes. Do not import or test `initialize_database()` in Task 1.
 - [ ] **Step 2: Confirm RED.** Working directory: repository root. Execution environment: Codex terminal. Run `python -m pytest tests/test_database.py -q`. Expected RED: collection/import failures for the missing persistence modules and config interfaces.
 - [ ] **Step 3: Add the minimum path and connection code.** Add `os` to `backend/config.py`; define exactly `DEFAULT_DB_PATH` and `resolve_db_path()`. Create the package marker and implement `connect()`/`transaction()` without global connection state or SQL beyond connection setup. Use the resolved/explicit path independently in each operational entry point.
-- [ ] **Step 4: Add the minimum database orchestrator.** In `backend/persistence/database.py`, calculate the concrete path once per invocation, call `path.parent.mkdir(parents=True, exist_ok=True)`, open through `connect(path)`, invoke `run_migrations(conn)`, and close in `finally`. Do not create reserved subdirectories.
-- [ ] **Step 5: Confirm GREEN.** Working directory: repository root. Execution environment: Codex terminal. Run `python -m pytest tests/test_database.py -q`. Expected GREEN: every late-resolution, connection, directory, commit, rollback, and close assertion passes.
-- [ ] **Step 6: Run adjacent regressions.** Working directory: repository root. Execution environment: Codex terminal. Run `python -m pytest tests/test_backend.py tests/test_runtime_contract.py -q`. Expected GREEN: health remains non-mutating and existing runtime contracts remain intact.
-- [ ] **Step 7: Commit the reviewable foundation.** Working directory: repository root. Execution environment: Codex terminal. Run `git add backend/config.py backend/persistence/__init__.py backend/persistence/connection.py backend/persistence/database.py tests/test_database.py && git commit -m "feat: add SQLite connection foundation"`.
+- [ ] **Step 4: Confirm GREEN independently.** Working directory: repository root. Execution environment: Codex terminal. Run `python -m pytest tests/test_database.py -q`. Expected GREEN before any migration runner or `database.py` exists: every late-resolution, connection, commit, rollback, and close assertion passes.
+- [ ] **Step 5: Run adjacent regressions.** Working directory: repository root. Execution environment: Codex terminal. Run `python -m pytest tests/test_backend.py tests/test_runtime_contract.py -q`. Expected GREEN: health remains non-mutating and existing runtime contracts remain intact.
+- [ ] **Step 6: Commit the reviewable foundation.** Working directory: repository root. Execution environment: Codex terminal. Run `git add backend/config.py backend/persistence/__init__.py backend/persistence/connection.py tests/test_database.py && git commit -m "feat: add SQLite connection foundation"`.
 
 ---
 
 ## Task 2: Migration Runner and Exact Migration 001
 
 **Files:**
+- Create: `backend/persistence/database.py`
 - Create: `backend/persistence/migrations/__init__.py`
 - Create: `backend/persistence/migrations/runner.py`
 - Create: `backend/persistence/migrations/migration_001_core_foundation.py`
 - Create: `tests/test_migrations.py`
-- Verify: `backend/persistence/database.py`
+- Modify: `tests/test_database.py`
 
 **Interfaces and registry:**
 
 ```python
+# backend/persistence/database.py
+def initialize_database(
+    db_path: Path | None = None,
+) -> None:
+    ...
+
 # backend/persistence/migrations/runner.py
 MIGRATIONS = [
     (
@@ -152,6 +171,8 @@ def run_migrations(conn: sqlite3.Connection) -> None:
 def up(conn: sqlite3.Connection) -> None:
     ...
 ```
+
+`initialize_database()` resolves its concrete path once per call (with an explicit path overriding the environment), creates only `path.parent`, opens that concrete DB, runs the migration runner, and closes the connection. Task 2 appends its initialization integration tests to `tests/test_database.py`, after `database.py` and the runner exist: parent creation, concrete DB creation/migration, idempotent initialization, and absence of eager `imports/` or `backups/` creation. Task 1's earlier targeted GREEN therefore has no dependency on migration code.
 
 ### Exact migration 001 schema contract
 
@@ -208,16 +229,17 @@ source_artifacts
 
 There are no other business tables and no production migrations 002 or 003. Application-owned tables mean `sqlite_master` tables with `type = 'table' AND name NOT LIKE 'sqlite_%'`; therefore SQLite's `sqlite_sequence` is excluded.
 
-- [ ] **Step 1: Write clean-schema and idempotence tests.** In `tests/test_migrations.py`, initialize a temp DB and assert one `(1, "core_foundation")` row, exactly the five application-owned tables, exact columns/defaults/checks/FKs/unique constraint/indexes, and the absence of every PR3+ table. Run initialization twice and assert the same metadata row and schema remain.
+- [ ] **Step 1: Write initialization, clean-schema, and idempotence tests.** Append `initialize_database()` integration tests to `tests/test_database.py` for parent creation, creation/migration of the concrete DB, idempotence, and absence of `imports/` and `backups/`. In `tests/test_migrations.py`, initialize a temp DB and assert one `(1, "core_foundation")` row, exactly the five application-owned tables, exact columns/defaults/checks/FKs/unique constraint/indexes, and the absence of every PR3+ table. Run initialization twice and assert the same metadata row and schema remain.
 - [ ] **Step 2: Write migration-history tests.** Inject a test-only registry `[1, 2, 3]` and synthetic modules/functions. Assert prefix `[1, 2]` is accepted and applies pending `3`; `[2]`, `[1, 3]`, wrong name for `1`, and unknown `99` each raise `DatabaseMigrationError` before pending code runs. Keep all synthetic registry entries and SQL in this test file.
 - [ ] **Step 3: Write atomic DDL rollback test.** Inject a synthetic pending migration that executes `CREATE TABLE synthetic_first (...)` and then raises. Assert `DatabaseMigrationError` preserves the original cause, `synthetic_first` is absent, and no metadata row exists for the failed version.
-- [ ] **Step 4: Confirm RED.** Working directory: repository root. Execution environment: Codex terminal. Run `python -m pytest tests/test_migrations.py -q`. Expected RED: missing runner, registry, exception, and migration module.
-- [ ] **Step 5: Implement history planning.** Create `schema_migrations`, import the fixed ordered registry, load rows ordered by version, reject unknown versions, reject name mismatches, compare applied `(version, name)` rows with the registry's exact leading prefix, and derive only the pending suffix. Do not repair or rewrite history.
-- [ ] **Step 6: Implement atomic forward execution.** For each pending entry, import its module, explicitly `BEGIN`, call `up(conn)`, insert `(version, name, UTC ISO timestamp)`, and `COMMIT`. On any exception, `ROLLBACK` and raise `DatabaseMigrationError` from the cause. The runner is the only migration transaction owner.
-- [ ] **Step 7: Implement migration 001.** Add the exact four-table/two-index schema above through individual `conn.execute(...)` statements. Do not call `executescript()`, `BEGIN`, `commit()`, or `rollback()` and do not create `schema_migrations` or backup/import directories.
-- [ ] **Step 8: Confirm GREEN.** Working directory: repository root. Execution environment: Codex terminal. Run `python -m pytest tests/test_migrations.py tests/test_database.py -q`. Expected GREEN: schema, history validation, idempotence, and DDL/metadata atomicity all pass.
-- [ ] **Step 9: Run a production migration boundary scan.** Working directory: repository root. Execution environment: Codex terminal. Run `rg -n 'executescript\(|\.commit\(|\.rollback\(|\bBEGIN\b' backend/persistence/migrations/migration_*.py`. Expected GREEN: no matches.
-- [ ] **Step 10: Commit the migration unit.** Working directory: repository root. Execution environment: Codex terminal. Run `git add backend/persistence/migrations backend/persistence/database.py tests/test_migrations.py && git commit -m "feat: add SQLite migration foundation"`.
+- [ ] **Step 4: Confirm RED.** Working directory: repository root. Execution environment: Codex terminal. Run `python -m pytest tests/test_database.py tests/test_migrations.py -q`. Expected RED: missing runner, registry, exception, and migration module.
+- [ ] **Step 5: Implement the database orchestrator.** Create `backend/persistence/database.py`; resolve the concrete path once, create only `path.parent`, open that path through `connect(path)`, call `run_migrations(conn)`, and close in `finally`. Do not create `imports/` or `backups/`.
+- [ ] **Step 6: Implement history planning.** Create `schema_migrations`, import the fixed ordered registry, load rows ordered by version, reject unknown versions, reject name mismatches, compare applied `(version, name)` rows with the registry's exact leading prefix, and derive only the pending suffix. Do not repair or rewrite history.
+- [ ] **Step 7: Implement atomic forward execution.** For each pending entry, import its module, explicitly `BEGIN`, call `up(conn)`, insert `(version, name, UTC ISO timestamp)`, and `COMMIT`. On any exception, `ROLLBACK` and raise `DatabaseMigrationError` from the cause. The runner is the only migration transaction owner.
+- [ ] **Step 8: Implement migration 001.** Add the exact four-table/two-index schema above through individual `conn.execute(...)` statements. Do not call `executescript()`, `BEGIN`, `commit()`, or `rollback()` and do not create `schema_migrations` or backup/import directories.
+- [ ] **Step 9: Confirm GREEN.** Working directory: repository root. Execution environment: Codex terminal. Run `python -m pytest tests/test_migrations.py tests/test_database.py -q`. Expected GREEN: schema, history validation, idempotence, and DDL/metadata atomicity all pass.
+- [ ] **Step 10: Run a production migration boundary scan.** Working directory: repository root. Execution environment: Codex terminal. Run `rg -n 'executescript\(|\.commit\(|\.rollback\(|\bBEGIN\b' backend/persistence/migrations/migration_*.py`. Expected GREEN: no matches.
+- [ ] **Step 11: Commit the migration unit.** Working directory: repository root. Execution environment: Codex terminal. Run `git add backend/persistence/migrations backend/persistence/database.py tests/test_database.py tests/test_migrations.py && git commit -m "feat: add SQLite migration foundation"`.
 
 ---
 
@@ -226,6 +248,7 @@ There are no other business tables and no production migrations 002 or 003. Appl
 **Files:**
 - Create: `backend/domain/__init__.py`
 - Create: `backend/domain/product.py`
+- Create: `backend/domain/lineage.py`
 - Create: `backend/persistence/repositories/__init__.py`
 - Create: `backend/persistence/repositories/products.py`
 - Create: `tests/test_product_repository.py`
@@ -233,6 +256,17 @@ There are no other business tables and no production migrations 002 or 003. Appl
 **Domain and repository interfaces:**
 
 ```python
+# backend/domain/lineage.py
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+def datetime_to_db(value: datetime) -> str:
+    ...
+
+def datetime_from_db(value: str) -> datetime:
+    ...
+
+# backend/domain/product.py
 @dataclass(frozen=True)
 class Product:
     id: int
@@ -277,23 +311,25 @@ class ProductRepository:
     ) -> Product | None: ...
 ```
 
-Map SQLite ISO-8601 text to timezone-aware `datetime` and integer ownership to `bool`; domain objects never retain `sqlite3.Row`. Repository methods use the injected connection and never open, commit, or roll back it. `set_owned()` updates `updated_at`; a missing Product raises `ProductNotFound`. Only the identity composite uniqueness violation maps to `ExternalIdentityConflict`; unrelated database errors propagate.
+Task 3 creates only the shared temporal foundation in `backend/domain/lineage.py`: `utc_now()` returns an aware UTC value without local Windows time; `datetime_to_db()` normalizes an aware value to UTC ISO-8601 `TEXT`; and `datetime_from_db()` parses stored text and returns an aware UTC value. ProductRepository uses these helpers rather than duplicating timestamp logic. Task 3 does not yet add `ImportStatus`, `ImportBatch`, `SourceArtifact`, lineage errors, or hashing.
 
-- [ ] **Step 1: Write failing Product tests.** Create a migrated temp DB fixture with one caller-managed connection. Cover owned and non-owned creation, retrieval, boolean conversion, UTC-aware timestamps, ownership update and changed `updated_at`, missing lookup returning `None`, missing update raising `ProductNotFound`, identity insertion and lookup, duplicate scoped identity across two products raising `ExternalIdentityConflict`, and identical value in distinct account scopes succeeding.
+Map SQLite ISO-8601 text to timezone-aware UTC `datetime` and integer ownership to `bool`; domain objects never retain `sqlite3.Row`. Repository methods use the injected connection and never open, commit, or roll back it. `set_owned()` updates `updated_at`; a missing Product raises `ProductNotFound`. `add_external_identity()` follows this exact order: (1) explicitly verify the Product exists; (2) raise `ProductNotFound` before mutation when it does not; (3) insert the identity; (4) map only the identity composite UNIQUE violation to `ExternalIdentityConflict`; and (5) let unrelated database errors propagate. This avoids parsing SQLite error text and prevents raw `sqlite3.IntegrityError` from becoming the missing-parent application contract.
+
+- [ ] **Step 1: Write failing Product tests.** Create a migrated temp DB fixture with one caller-managed connection. Cover owned and non-owned creation, retrieval, boolean conversion, UTC-aware timestamps, ownership update and changed `updated_at`, missing lookup returning `None`, missing update raising `ProductNotFound`, identity insertion and lookup, an identity for a nonexistent `product_id` raising `ProductNotFound` with no identity row created, duplicate scoped identity across two products raising `ExternalIdentityConflict`, and identical value in distinct account scopes succeeding.
 - [ ] **Step 2: Add boundary assertions.** Assert returned values are the declared dataclasses rather than `sqlite3.Row`; inspect public repository/domain signatures and schema to prove there is no name, brand, photo, alias, temporal identity, or matching API. Patch/spy connection transaction methods as needed to prove repository methods neither commit nor roll back.
 - [ ] **Step 3: Confirm RED.** Working directory: repository root. Execution environment: Codex terminal. Run `python -m pytest tests/test_product_repository.py -q`. Expected RED: missing domain types, errors, and repository.
-- [ ] **Step 4: Implement Product domain types.** Add exactly the two frozen dataclasses and two narrow errors, with intentional exports from `backend/domain/__init__.py`.
-- [ ] **Step 5: Implement minimum Product persistence.** Add private row-to-domain conversion, UTC timestamp serialization, explicit insert/select/update SQL, and constraint-specific duplicate mapping. Use `cursor.lastrowid` plus a readback to return stored domain values. Do not add generic repository helpers.
+- [ ] **Step 4: Implement temporal helpers and Product domain types.** Create `backend/domain/lineage.py` with exactly `utc_now()`, `datetime_to_db()`, and `datetime_from_db()` under the UTC/ISO contract above. Add exactly the two frozen Product dataclasses and two narrow Product errors, with intentional exports from `backend/domain/__init__.py`.
+- [ ] **Step 5: Implement minimum Product persistence.** Add private row-to-domain conversion using the shared temporal helpers, explicit insert/select/update SQL, the explicit Product existence check before identity INSERT, and constraint-specific duplicate mapping. Use `cursor.lastrowid` plus a readback to return stored domain values. Do not add generic repository helpers.
 - [ ] **Step 6: Confirm GREEN.** Working directory: repository root. Execution environment: Codex terminal. Run `python -m pytest tests/test_product_repository.py -q`. Expected GREEN: Product, ownership, identity, error mapping, and connection-ownership contracts pass.
 - [ ] **Step 7: Run adjacent database regressions.** Working directory: repository root. Execution environment: Codex terminal. Run `python -m pytest tests/test_database.py tests/test_migrations.py tests/test_product_repository.py -q`. Expected GREEN: repository work respects the established connection/schema contracts.
-- [ ] **Step 8: Commit the Product unit.** Working directory: repository root. Execution environment: Codex terminal. Run `git add backend/domain/__init__.py backend/domain/product.py backend/persistence/repositories/__init__.py backend/persistence/repositories/products.py tests/test_product_repository.py && git commit -m "feat: add product persistence"`.
+- [ ] **Step 8: Commit the Product unit.** Working directory: repository root. Execution environment: Codex terminal. Run `git add backend/domain/__init__.py backend/domain/product.py backend/domain/lineage.py backend/persistence/repositories/__init__.py backend/persistence/repositories/products.py tests/test_product_repository.py && git commit -m "feat: add product persistence"`.
 
 ---
 
 ## Task 4: Lineage Domain and Repository
 
 **Files:**
-- Create: `backend/domain/lineage.py`
+- Modify: `backend/domain/lineage.py`
 - Create: `backend/persistence/repositories/lineage.py`
 - Modify: `backend/domain/__init__.py`
 - Modify: `backend/persistence/repositories/__init__.py`
@@ -353,13 +389,13 @@ class LineageRepository:
     def get_source_artifact(self, artifact_id: int) -> SourceArtifact | None: ...
 ```
 
-Use one UTC helper returning `datetime.now(timezone.utc)` and paired serialization/parsing helpers so Product and lineage values consistently round-trip aware UTC timestamps as ISO-8601 text. `add_source_artifact()` has this deterministic observable validation order: (1) reject negative `byte_size` or a hash other than exactly 64 lowercase hex characters with `InvalidSourceArtifactMetadata`; (2) reject a non-normalized/empty, absolute, drive/UNC, or `..`-traversing non-null path with `InvalidStoredRelativePath`; (3) establish that the batch exists or raise `ImportBatchNotFound`; (4) insert; (5) map and return the artifact. `stored_relpath=None` is valid.
+Use the Task 3 `utc_now()`, `datetime_to_db()`, and `datetime_from_db()` helpers so Product and lineage values consistently round-trip aware UTC timestamps as ISO-8601 text; do not duplicate temporal helpers. `add_source_artifact()` has this deterministic observable validation order: (1) reject negative `byte_size` or a hash other than exactly 64 lowercase hex characters with `InvalidSourceArtifactMetadata`; (2) reject a non-normalized/empty, absolute, drive/UNC, or `..`-traversing non-null path with `InvalidStoredRelativePath`; (3) establish that the batch exists or raise `ImportBatchNotFound`; (4) insert; (5) map and return the artifact. `stored_relpath=None` is valid.
 
 - [ ] **Step 1: Write failing batch lifecycle tests.** Cover creation as `RUNNING` with `finished_at=None`; nullable get; missing finish raising `ImportBatchNotFound`; independent fresh transitions to `SUCCESS`, `PARTIAL_SUCCESS`, and `FAILED`; and rejection of `RUNNING -> RUNNING`, a second finish, and every terminal-to-any transition with `InvalidImportStatusTransition`.
 - [ ] **Step 2: Write failing artifact and validation tests.** Cover full artifact round trip, nullable `original_name`/`stored_relpath`, correct parent, missing artifact returning `None`, missing batch, negative size, uppercase/short/non-hex hash, absolute POSIX/Windows/UNC paths, empty path, and every component containing `..`. Assert validation errors occur before row growth and verify the declared metadata/path/batch validation precedence with inputs invalid in multiple ways.
 - [ ] **Step 3: Add defense-in-depth tests.** Use isolated direct SQL in the test to prove the DB rejects a negative size and nonexistent batch, while repository callers receive named errors rather than raw `sqlite3.IntegrityError` for contract-covered cases. Prove returned objects and timestamps contain no `sqlite3.Row`.
 - [ ] **Step 4: Confirm RED.** Working directory: repository root. Execution environment: Codex terminal. Run `python -m pytest tests/test_lineage_repository.py -q`. Expected RED: missing lineage types, errors, validation, and repository.
-- [ ] **Step 5: Implement lineage domain values and helpers.** Add exactly the enum, two frozen dataclasses, four errors, UTC generation/ISO conversion helpers, and intentional package exports. Keep SQL and parsing orchestration out of the domain.
+- [ ] **Step 5: Extend the lineage domain.** Add exactly the enum, two frozen dataclasses, four errors, and intentional package exports to the existing `backend/domain/lineage.py`; reuse its Task 3 UTC generation/ISO conversion helpers. Keep SQL and parsing orchestration out of the domain.
 - [ ] **Step 6: Implement the repository lifecycle.** Add explicit insert/select/update SQL, typed row conversion, one-way terminal transition validation, validation in the fixed order above, and targeted integrity-error mapping. Never commit, roll back, or open another connection.
 - [ ] **Step 7: Confirm GREEN.** Working directory: repository root. Execution environment: Codex terminal. Run `python -m pytest tests/test_lineage_repository.py -q`. Expected GREEN: lifecycle, metadata/path validation, FK/check defense, row mapping, and error contracts pass.
 - [ ] **Step 8: Run repository regressions together.** Working directory: repository root. Execution environment: Codex terminal. Run `python -m pytest tests/test_product_repository.py tests/test_lineage_repository.py tests/test_migrations.py -q`. Expected GREEN: both focused repositories share the same caller-owned transaction/schema foundation.
@@ -376,8 +412,12 @@ Use one UTC helper returning `datetime.now(timezone.utc)` and paired serializati
 **Production interface:**
 
 ```python
-JSONPrimitive = None | bool | int | float | str
-JSONValue = JSONPrimitive | list["JSONValue"] | dict[str, "JSONValue"]
+type JSONPrimitive = None | bool | int | float | str
+type JSONValue = (
+    JSONPrimitive
+    | list[JSONValue]
+    | dict[str, JSONValue]
+)
 
 def normalized_payload_sha256(payload: JSONValue) -> str:
     ...
@@ -474,10 +514,23 @@ Extend rather than replace the existing eight-scenario smoke. Use one exact DB s
 - [ ] **Step 4: Scan forbidden dependencies and future production entities.** Working directory: repository root. Execution environment: Codex terminal. Run `rg -ni 'sqlalchemy|alembic|aiosqlite|peewee|apsw|ProductSnapshot|SearchVisibilitySnapshot|QueryMetricSnapshot|ProductQuerySnapshot|SearchPositionSnapshot|AdvertisingSnapshot|BenchmarkSet' backend launcher.py requirements.txt requirements-dev.txt`. Expected GREEN: no matches.
 - [ ] **Step 5: Scan migration transaction ownership.** Working directory: repository root. Execution environment: Codex terminal. Run `rg -n 'executescript\(|\.commit\(|\.rollback\(|\bBEGIN\b' backend/persistence/migrations/migration_*.py`. Expected GREEN: no matches; runner transaction calls are deliberately outside this scan.
 - [ ] **Step 6: Audit SQL placement.** Working directory: repository root. Execution environment: Codex terminal. Run `rg -n -i '\b(SELECT|INSERT|UPDATE|DELETE|CREATE TABLE|CREATE INDEX|PRAGMA)\b' backend launcher.py`. Expected GREEN: production SQL matches occur only below `backend/persistence/**`; domain, launcher, routes, and UI have none.
-- [ ] **Step 7: Prove protected files are unchanged.** Working directory: repository root. Execution environment: Codex terminal. Run `git diff --exit-code HEAD~6 -- requirements.txt requirements-dev.txt frontend backend/main.py start.bat RUN_SERVER.cmd .github/workflows/ci.yml`. Expected GREEN: no diff. If commit count differs because units were squashed, compare against the PR2 base commit instead of guessing a revision.
-- [ ] **Step 8: Inspect patch hygiene and scope.** Working directory: repository root. Execution environment: Codex terminal. Run `git diff --check`, `git status --short`, `git diff --stat`, and `git diff` against the PR2 base. Expected GREEN: clean whitespace; only File Map paths changed; no generated DB/runtime/cache files; implementation remains one PR2.
+- [ ] **Step 7: Prove protected files are unchanged across the PR.** Working directory: repository root. Execution environment: Codex terminal. Run:
+
+  ```bash
+  git diff --exit-code "$PR2_BASE_SHA"..HEAD -- \
+    requirements.txt \
+    requirements-dev.txt \
+    frontend \
+    backend/main.py \
+    start.bat \
+    RUN_SERVER.cmd \
+    .github/workflows/ci.yml
+  ```
+
+  Expected GREEN: no diff. Always use the captured base; never infer it from a commit count.
+- [ ] **Step 8: Inspect PR-wide patch hygiene and scope.** Working directory: repository root. Execution environment: Codex terminal. Run `git diff --check "$PR2_BASE_SHA"..HEAD`, `git diff --stat "$PR2_BASE_SHA"..HEAD`, `git diff "$PR2_BASE_SHA"..HEAD`, and `git diff --name-status "$PR2_BASE_SHA"..HEAD`. Then run `git diff --name-only "$PR2_BASE_SHA"..HEAD` and compare every result with this allowed implementation path set: `backend/config.py`, `backend/domain/**`, `backend/persistence/**`, `launcher.py`, `README.md`, `tests/test_database.py`, `tests/test_migrations.py`, `tests/test_product_repository.py`, `tests/test_lineage_repository.py`, `tests/test_observation_revision_convention.py`, `tests/test_launcher.py`, `tests/test_runtime_contract.py`, and `tests/windows_smoke.ps1`. The Implementation Plan is already on main when implementation starts and must not change again. Expected GREEN: clean whitespace, no path outside that set, no generated DB/runtime/cache files, and one PR2. Separately run `git status --short`; this checks only working-tree cleanliness and must have no output. Both the committed PR-wide diff audit and working-tree check are required.
 - [ ] **Step 9: Perform full frozen-spec coverage review.** Re-read `docs/superpowers/specs/2026-08-16-scoz-pr2-core-domain-sqlite-foundation-lineage-implementation-spec.md` from start to finish and map every requirement/Definition-of-Done item to the matrix below and an automated or Windows assertion. Correct plan-conforming implementation gaps only; do not revise the spec.
-- [ ] **Step 10: Perform placeholder and signature scans.** Working directory: repository root. Execution environment: Codex terminal. Run `python -c "from pathlib import Path; terms=['T'+'BD','T'+'ODO','implement '+'later','fill '+'in','appropriate '+'handling','similar '+'to above']; files=[*Path('backend').rglob('*.py'),*Path('tests').rglob('*'),Path('launcher.py'),Path('README.md')]; hits=[(str(p),t) for p in files if p.is_file() for t in terms if t.lower() in p.read_text(encoding='utf-8',errors='ignore').lower()]; print(hits); raise SystemExit(bool(hits))"` and expect `[]` with exit code 0. Then use `python -m pytest tests/test_database.py tests/test_product_repository.py tests/test_lineage_repository.py tests/test_migrations.py -q` to verify the exact interfaces, enums, exceptions, and migration signature exercised by typed calls.
+- [ ] **Step 10: Perform placeholder and signature scans.** Working directory: repository root. Execution environment: Codex terminal. Run `python -c "from pathlib import Path; terms=['T'+'BD','T'+'ODO','implement '+'later','fill '+'in','appropriate '+'handling','similar '+'to above']; files=[*Path('backend').rglob('*.py'),*Path('tests').rglob('*'),Path('launcher.py'),Path('README.md')]; hits=[(str(p),t) for p in files if p.is_file() for t in terms if t.lower() in p.read_text(encoding='utf-8',errors='ignore').lower()]; print(hits); raise SystemExit(bool(hits))"` and expect `[]` with exit code 0. Then use `python -m pytest tests/test_database.py tests/test_product_repository.py tests/test_lineage_repository.py tests/test_migrations.py -q` to verify the exact interfaces, enums, exceptions, and migration signature exercised by typed calls. Also manually or with a focused extraction check confirm that every snippet declared as literal production Python compiles under Python 3.13, especially the PEP 695 `type JSONPrimitive` and recursive `type JSONValue` statements; scan the plan to ensure the invalid runtime-assignment form is absent. Do not execute the whole Markdown as Python.
 - [ ] **Step 11: Perform dependency-order and anti-scope review.** Confirm each production interface is introduced before its first consumer; no application-service layer, generic persistence abstraction, snapshot framework, source/ingestion work, API, or UI was introduced; and migration 001 still owns exactly four business tables.
 - [ ] **Step 12: Record Windows acceptance state.** If the implementation has not yet been pushed, report `Pending authoritative GitHub Actions verification after user push.` After push, GitHub Actions must run the full Python suite and `tests/windows_smoke.ps1 -Mode Full` on `windows-latest`; do not substitute desktop testing.
 - [ ] **Step 13: Commit any verification-only corrections.** If and only if review required in-scope corrections, stage only those files and run `git commit -m "test: complete PR2 verification"`. If no correction was required, do not create an empty commit.
@@ -489,20 +542,20 @@ Extend rather than replace the existing eight-scenario smoke. Use one exact DB s
 | Spec requirement | Implementation task | Verification |
 |---|---|---|
 | DB path and operation-time environment resolution | Task 1 | Default, changed-env-between-calls, and explicit-override tests in `test_database.py` |
-| SQLite connection factory | Task 1 | Explicit path, `sqlite3.Row`, close, and parent-directory tests |
+| SQLite connection factory | Task 1 | Explicit path, `sqlite3.Row`, foreign keys, commit/rollback, and close tests |
 | Foreign-key enforcement | Tasks 1, 4 | `PRAGMA foreign_keys == 1`; SourceArtifact FK defense test |
 | Caller-owned transactions | Tasks 1, 3, 4 | Commit/rollback tests; repository no-commit/no-rollback assertions |
-| `schema_migrations` | Task 2 | Exact schema and version/name row assertions |
+| DB orchestration and `schema_migrations` | Task 2 | Initialization parent/concrete-DB tests plus Exact schema and version/name row assertions |
 | Known names and contiguous migration history | Task 2 | Synthetic prefix `[1,2]`, gaps `[2]`/`[1,3]`, wrong name, and unknown `99` tests |
 | Atomic migrations | Task 2 | Synthetic DDL failure removes table and metadata row while preserving cause |
 | Exact migration 001 schema | Task 2 | Five application-owned tables, exact columns/FKs/checks/uniques/indexes |
 | Migration idempotence | Tasks 2, 7 | Second initialization and second portable start retain one version-1 row |
 | Product as one common entity | Task 3 | Owned/non-owned Product dataclass tests and anti-matching inspection |
-| External identity and account scope | Task 3 | Add/lookup, scoped conflict, and different-scope allowance tests |
+| External identity and account scope | Task 3 | Add/lookup, missing parent maps to `ProductNotFound` with no row, scoped conflict, and different-scope allowance tests |
 | ImportBatch provenance root | Task 4 | RUNNING creation, nullable get, and all terminal lifecycle tests |
 | SourceArtifact provenance metadata | Task 4 | Full/nullable artifact round trips and correct batch parent |
 | Metadata/path validation and stable errors | Task 4 | Negative size, invalid SHA, unsafe path, missing batch, precedence, and no-row-growth tests |
-| Datetime semantics | Tasks 3, 4 | Timezone-aware UTC domain values and ISO-8601 round trips |
+| Datetime semantics | Task 3 establishes helpers; Tasks 3–4 use them | Timezone-aware UTC domain values and ISO-8601 round trips through shared helpers |
 | Deterministic normalized payload hash | Task 5 | Key-order equality, changed-value inequality, non-ASCII, and non-finite rejection |
 | Immutable revision fixture | Task 5 | Duplicate, correction/revision 2, unchanged prior row, new period, and new dimension tests |
 | Period/granularity convention | Task 5 | Exact period and real dimension in logical key; no invented/mixed dimension behavior |
@@ -518,15 +571,21 @@ Extend rather than replace the existing eight-scenario smoke. Use one exact DB s
 | No API/UI/frontend changes | Tasks 6, 8 | Protected-file diff and full PR1 regressions |
 | No PR3+ tables/entities or generic frameworks | Tasks 2, 5, 8 | Exact application-owned table set and forbidden production entity scan |
 | Minimal operational README | Task 7 | Runtime contract verifies only DB location and automatic migration facts |
+| PR-wide scope verification | Task 8 | All committed diff, protected-file, and allowed-path audits use `PR2_BASE_SHA..HEAD`; working-tree cleanliness is checked separately |
 
 ## Final Self-Review Checklist
 
 - [ ] Re-read the full frozen PR2 Implementation Spec and confirm every normative statement has a task and verification row; the spec remains unchanged.
 - [ ] Confirm the plan and implementation contain no unresolved placeholder language.
 - [ ] Confirm type/signature consistency for `resolve_db_path`, `connect`, `transaction`, `initialize_database`, `run_migrations`, migration `up`, both repository classes, all dataclasses, `ImportStatus`, and every named exception.
-- [ ] Confirm dependency order is Task 1 connection → Task 2 schema → Tasks 3–4 repositories → Task 5 convention → Task 6 launcher → Task 7 portable acceptance → Task 8 global audit.
+- [ ] Confirm Task 1 is independently GREEN before `database.py` or the migration runner exists.
+- [ ] Confirm dependency order is Task 1 config/connection → Task 2 database orchestrator/migrations/schema → Task 3 time helpers/Product → Task 4 remaining lineage domain/repository → Task 5 hash/revision fixture → Task 6 launcher → Task 7 Windows persistence → Task 8 verification.
+- [ ] Confirm Task 3 establishes `utc_now()`, `datetime_to_db()`, and `datetime_from_db()` before Product persistence uses them, and Task 4 reuses rather than duplicates them.
+- [ ] Confirm Task 5's PEP 695 JSON aliases compile under Python 3.13 and no invalid runtime-assignment alias remains.
+- [ ] Confirm `add_external_identity()` explicitly maps a missing parent Product to `ProductNotFound` before INSERT, while UNIQUE conflicts retain their distinct named error.
 - [ ] Confirm production SQL exists only under `backend/persistence/**`; test-only synthetic SQL does not leak into production.
 - [ ] Confirm migration modules contain no transaction control or `executescript()` and the runner owns one transaction per pending migration.
 - [ ] Confirm migration 001 has exactly four business tables and no PR3+ entity, snapshot, benchmark, query, import parser, analytics, API, or UI implementation.
 - [ ] Confirm `requirements*`, frontend, `backend/main.py`, `start.bat`, `RUN_SERVER.cmd`, and CI remain unchanged.
+- [ ] Confirm final scope and protected-file audits compare `PR2_BASE_SHA..HEAD`, not only the working tree, and contain no `HEAD~N` assumptions.
 - [ ] Confirm Codex terminal results and pending authoritative GitHub Actions Windows verification are reported separately, with no desktop testing request.
