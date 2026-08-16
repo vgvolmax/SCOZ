@@ -1,5 +1,5 @@
-import math
 import re
+import zipfile
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -9,7 +9,8 @@ from openpyxl import load_workbook
 from backend.domain.product_snapshot import (
     CategoryMismatch, ConflictingObservationRows, IncompatibleReportSchema,
     InvalidMetricValue, InvalidProductIdentity, InvalidReportPeriod,
-    ParsedOzonProductsReport, ParsedProductRow, RowError, UnsupportedWorkbook,
+    ParsedOzonProductRow, ParsedOzonProductsReport, RowError, UnsupportedWorkbook,
+    decimal_from_excel_number,
     WrongReportType, snapshot_payload_sha256,
 )
 
@@ -24,8 +25,7 @@ def _text(value: object) -> str:
     return value
 def _decimal(value: object, *, sentinel: bool = False) -> Decimal | None:
     if sentinel and value == "Нет данных": return None
-    if isinstance(value, bool) or not isinstance(value, (int,float)) or not math.isfinite(value): raise InvalidMetricValue()
-    return Decimal(value) if isinstance(value,int) else Decimal(str(value))
+    return decimal_from_excel_number(value)
 def _count(value: object) -> int:
     number = _decimal(value)
     assert number is not None
@@ -43,11 +43,26 @@ def _date(value: object) -> date:
     except ValueError as error: raise InvalidMetricValue() from error
 
 def parse_ozon_products_xlsx(path: Path) -> ParsedOzonProductsReport:
-    try: workbook = load_workbook(filename=path,read_only=True,data_only=False)
-    except Exception as error: raise UnsupportedWorkbook() from error
+    try:
+        with zipfile.ZipFile(path) as package:
+            worksheet_xml = [name for name in package.namelist() if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")]
+            if any(b"<mergeCells" in package.read(name) for name in worksheet_xml):
+                raise IncompatibleReportSchema()
+    except IncompatibleReportSchema:
+        raise
+    except (OSError, zipfile.BadZipFile, KeyError) as error:
+        raise UnsupportedWorkbook() from error
+    try:
+        source = path.open("rb")
+        workbook = load_workbook(filename=source,read_only=True,data_only=False)
+    except Exception as error:
+        if "source" in locals():
+            source.close()
+        raise UnsupportedWorkbook() from error
     try:
         if len(workbook.worksheets) != 1: raise IncompatibleReportSchema()
         sheet = workbook.worksheets[0]
+        if sheet.max_column != 32: raise IncompatibleReportSchema()
         markers = tuple(sheet.cell(row=i,column=1).value for i in (1,2,3))
         expected = ("Дата формирования:","Период отчета:","Категория 3 уровня:")
         if markers != expected:
@@ -64,6 +79,8 @@ def parse_ozon_products_xlsx(path: Path) -> ParsedOzonProductsReport:
             window = int(match.group(1))
         except (TypeError,ValueError): raise InvalidReportPeriod()
         report_category = sheet["B3"].value
+        if not isinstance(report_category, str) or not report_category:
+            raise IncompatibleReportSchema()
         rows=[]; errors=[]; seen=duplicates=warnings=0; unique={}
         for row_number in range(7,sheet.max_row+1):
             cells=[sheet.cell(row=row_number,column=c).value for c in range(1,33)]
@@ -82,10 +99,17 @@ def parse_ozon_products_xlsx(path: Path) -> ParsedOzonProductsReport:
                 if key in unique:
                     if unique[key] != payload_hash: raise ConflictingObservationRows()
                     duplicates += 1; warnings += 1; continue
-                unique[key]=payload_hash; rows.append(ParsedProductRow(identity,payload_hash,values))
+                unique[key]=payload_hash; rows.append(ParsedOzonProductRow(row_number,identity,values,payload_hash))
             except ConflictingObservationRows: raise
             except (InvalidProductIdentity,CategoryMismatch,InvalidMetricValue) as error:
-                errors.append(RowError(row_number,type(error).__name__,str(error)))
+                messages = {
+                    InvalidProductIdentity: "Некорректная ссылка на товар.",
+                    InvalidMetricValue: "Некорректное значение показателя.",
+                    CategoryMismatch: "Категория товара не совпадает с категорией отчёта.",
+                }
+                errors.append(RowError(row_number,type(error).__name__,messages[type(error)]))
         if not rows: raise InvalidMetricValue("report contains no usable rows")
         return ParsedOzonProductsReport(generated,window,seen,tuple(rows),tuple(errors),duplicates,warnings)
-    finally: workbook.close()
+    finally:
+        workbook.close()
+        source.close()

@@ -5,10 +5,11 @@ from decimal import Decimal
 from enum import Enum
 from typing import Annotated
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, StrictBool
+from starlette.datastructures import UploadFile
 
 from backend.application.ozon_products_import import import_ozon_products_xlsx, recover_interrupted_ozon_products_imports
 from backend.config import APP_NAME, DATA_DIR, FRONTEND_DIR, FRONTEND_INDEX, VERSION, resolve_db_path
@@ -39,12 +40,19 @@ app = FastAPI(title=APP_NAME, docs_url=None, redoc_url=None, openapi_url=None, l
 def health() -> dict[str, str]:
     return {"status": "ok", "app": APP_NAME, "version": VERSION}
 
-ERRORS={UnsupportedWorkbook:(422,"UNSUPPORTED_WORKBOOK","Не удалось прочитать XLSX-файл."),WrongReportType:(422,"WRONG_REPORT_TYPE","Выберите отчёт Ozon «Товары на Ozon»."),IncompatibleReportSchema:(422,"INCOMPATIBLE_REPORT_SCHEMA","Версия или структура отчёта не поддерживается."),InvalidReportPeriod:(422,"INVALID_REPORT_PERIOD","Не удалось прочитать дату формирования или период отчёта."),ConflictingObservationRows:(422,"CONFLICTING_OBSERVATION_ROWS","В отчёте есть противоречивые строки одного товара."),ConcurrentImportConflict:(409,"CONCURRENT_IMPORT_CONFLICT","Другой импорт уже выполняется. Дождитесь его завершения."),UploadTooLarge:(413,"UPLOAD_TOO_LARGE","Размер файла превышает 25 МиБ."),UnsupportedUploadMediaType:(415,"UNSUPPORTED_UPLOAD_MEDIA_TYPE","Выберите XLSX-файл."),ImportPersistenceError:(500,"IMPORT_PERSISTENCE_ERROR","Не удалось сохранить импорт. Данные не изменены.")}
+ERRORS={UnsupportedWorkbook:(422,"UNSUPPORTED_WORKBOOK","Не удалось прочитать XLSX-файл."),WrongReportType:(422,"WRONG_REPORT_TYPE","Выберите отчёт Ozon «Товары на Ozon»."),IncompatibleReportSchema:(422,"INCOMPATIBLE_REPORT_SCHEMA","Версия или структура отчёта не поддерживается."),InvalidReportPeriod:(422,"INVALID_REPORT_PERIOD","Не удалось прочитать дату формирования или период отчёта."),InvalidMetricValue:(422,"INVALID_METRIC_VALUE","Некорректное значение показателя."),ConflictingObservationRows:(422,"CONFLICTING_OBSERVATION_ROWS","В отчёте есть противоречивые строки одного товара."),ConcurrentImportConflict:(409,"CONCURRENT_IMPORT_CONFLICT","Другой импорт уже выполняется. Дождитесь его завершения."),UploadTooLarge:(413,"UPLOAD_TOO_LARGE","Размер файла превышает 25 МиБ."),UnsupportedUploadMediaType:(415,"UNSUPPORTED_UPLOAD_MEDIA_TYPE","Выберите XLSX-файл."),ImportPersistenceError:(500,"IMPORT_PERSISTENCE_ERROR","Не удалось сохранить импорт. Данные не изменены.")}
 
 @app.post("/api/imports/ozon-products")
-async def post_ozon_products_import(file: Annotated[UploadFile,File(...)]) -> dict[str,object]:
+async def post_ozon_products_import(request: Request) -> dict[str,object]:
+    if not request.headers.get("content-type", "").lower().startswith("multipart/form-data"):
+        status, code, message = ERRORS[UnsupportedUploadMediaType]
+        return JSONResponse(status_code=status, content={"error": {"code": code, "message": message}, "result": None})
+    form = await request.form()
+    file = form.get("file")
+    if not isinstance(file, UploadFile):
+        raise HTTPException(status_code=422, detail="Multipart field 'file' is required")
     try:
-        return _json(import_ozon_products_xlsx(file.file,original_name=file.filename or "",db_path=resolve_db_path(),data_dir=DATA_DIR))
+        return _json(import_ozon_products_xlsx(upload=file.file,original_name=file.filename or "",db_path=resolve_db_path(),data_dir=DATA_DIR))
     except OzonProductsImportFailure as failure:
         status,code,message=ERRORS.get(type(failure.error),(500,"IMPORT_PERSISTENCE_ERROR","Не удалось сохранить импорт. Данные не изменены."))
         return JSONResponse(status_code=status,content={"error":{"code":code,"message":message},"result":_json(failure.result)})
