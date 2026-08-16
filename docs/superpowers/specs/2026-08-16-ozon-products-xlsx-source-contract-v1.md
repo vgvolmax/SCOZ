@@ -133,7 +133,7 @@ Excel percentage formatting is not used. The source numeric value is already per
 - `Динамика оборота, %`: numeric, or exact string `Нет данных` → `None`.
 - `Доля выкупа, %`: numeric, or exact string `Нет данных` → `None`.
 - `Дней без остатка`: exact window form, or exact string `-` → both normalized fields `None`; this is unknown, not zero.
-- `Признак товара`: blank Excel cell (`None`) → `product_badges = None`; otherwise its source text is preserved without treating an empty/falsy numeric value as missing.
+- `Признак товара`: Excel `None` or a zero-length text value `""` → `product_badges = None`; non-empty text is preserved exactly. Numeric `0` is not missing and is handled by text-field validation rather than silently normalized to `None`. Normalization checks the cell type and value, not Python truthiness.
 
 No other metric accepts those sentinels. An unexpected blank or string in a required numeric metric is invalid. Explicit numeric `0` remains zero in every numeric field.
 

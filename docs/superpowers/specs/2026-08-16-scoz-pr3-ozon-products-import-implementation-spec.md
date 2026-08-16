@@ -24,7 +24,7 @@ The following are explicitly outside PR3: SearchQuery, Cluster, SearchVisibility
 
 ### 3.1 `ProductSnapshot`
 
-Add `backend/domain/product_snapshot.py` with one frozen dataclass whose exact fields are:
+Add `backend/domain/product_snapshot.py` with the frozen `ProductSnapshot` dataclass whose exact fields are:
 
 ```text
 id: int
@@ -88,6 +88,36 @@ Every snapshot source value maps one-to-one from the same-named Source Contract 
 
 Category metadata mismatch is a recoverable row error. A formula or invalid cell in an individual product row is `InvalidMetricValue` for that row. A formula in metadata/structure is fatal `IncompatibleReportSchema`.
 
+For `Признак товара`, Excel `None` and a zero-length text value `""` normalize to `product_badges = None`, while non-empty text is preserved. Numeric `0` is not missing: it is handled by text-field validation and must not silently become `None`. The parser checks cell type and value, never Python truthiness.
+
+### 3.4 `OzonProductsImportSummary`
+
+The generic PR2 `ImportBatch` dataclass remains the lineage root and is not extended with feature-specific fields. Add this exact PR3-specific frozen read/result DTO to `backend/domain/product_snapshot.py`:
+
+```python
+@dataclass(frozen=True)
+class OzonProductsImportSummary:
+    import_batch_id: int
+    source: str
+    import_kind: str
+    status: ImportStatus
+    report_generated_on: date | None
+    report_window_days: int | None
+    rows_seen: int
+    rows_accepted: int
+    rows_skipped: int
+    duplicate_observations: int
+    new_observations: int
+    corrected_revisions: int
+    warnings_count: int
+    row_errors_total: int
+    started_at: datetime
+    finished_at: datetime | None
+    source_artifact: SourceArtifact | None
+```
+
+`source` and `import_kind` are included so import history returns the exact import type without duplicating the generic lineage model. No generic import metadata JSON or generic lineage extension is introduced.
+
 ## 4. Logical key, payload, and immutable revisions
 
 The exact logical key is `(product_id, report_generated_on, report_window_days)`. Category, seller, title, source row, and filename are not key dimensions.
@@ -126,7 +156,7 @@ Register exactly `(2, "ozon_products_import", "backend.persistence.migrations.mi
 
 Migration 002 creates only `product_snapshots`, its indexes, and the PR3 result columns on `import_batches`. It creates no import-history table and no future-feature table. Adding nullable columns to an existing empty/used lineage table is non-destructive and does not require a pre-migration backup.
 
-Add these nullable columns to `import_batches`: `report_generated_on TEXT`, `report_window_days INTEGER`, `rows_seen INTEGER`, `rows_accepted INTEGER`, `rows_skipped INTEGER`, `duplicate_observations INTEGER`, `new_observations INTEGER`, `corrected_revisions INTEGER`, `warnings_count INTEGER`, `row_errors_total INTEGER`. They are null while RUNNING and may remain null for failure before report metadata is readable; terminal application writes every available field. Non-null counts are non-negative by repository validation. `GET /api/imports` uses these durable fields rather than a JSON blob or inference from only inserted snapshots.
+Add these nullable columns to `import_batches`: `report_generated_on TEXT`, `report_window_days INTEGER`, `rows_seen INTEGER`, `rows_accepted INTEGER`, `rows_skipped INTEGER`, `duplicate_observations INTEGER`, `new_observations INTEGER`, `corrected_revisions INTEGER`, `warnings_count INTEGER`, `row_errors_total INTEGER`. They are null while RUNNING and may remain null for failure before report metadata or result counters are measurable; terminal application writes every available field. Non-null counts are non-negative by repository validation. When mapping a terminal FAILED row to `OzonProductsImportSummary` or an API DTO, a NULL result counter maps to integer `0` only when structural failure made measuring that counter objectively impossible; known counter values are preserved. NULL `report_generated_on` and `report_window_days` always remain `None`, so an unreadable source period never becomes a fabricated period. `GET /api/imports` uses these durable fields rather than a JSON blob or inference from only inserted snapshots.
 
 Exact `product_snapshots` DDL contract:
 
@@ -200,13 +230,15 @@ CREATE INDEX idx_product_snapshots_import_batch_id ON product_snapshots(import_b
 CREATE INDEX idx_product_snapshots_source_artifact_id ON product_snapshots(source_artifact_id);
 ```
 
-Current revision is the maximum revision for the logical key; there is no `is_current`. Allocation occurs inside `BEGIN IMMEDIATE`, after reading the current row, and the unique constraint rejects any accidental competing allocation.
+Current revision is the maximum revision for the logical key; there is no `is_current`. Allocation occurs inside the existing PR2 `transaction()` boundary while the process-local import lock is held, after reading the current row. The unique constraint rejects any accidental competing allocation as defense-in-depth.
 
 ## 6. Focused parser and application boundary
 
 `backend/ingestion/ozon_products_xlsx.py` uses `openpyxl` directly in read-only, `data_only=False` mode so formulas can be detected rather than silently evaluated. It validates the exact single-sheet structure, exact signature, metadata, summary row, product cell types, sentinels, identity, and row consistency. It returns a typed normalized report plus bounded row defects; it executes no SQL and knows no FastAPI.
 
 `backend/application/ozon_products_import.py` is the single focused application service. It owns one non-blocking process-local `threading.Lock` covering the complete mutation operation. Failure to acquire it raises `ConcurrentImportConflict`; no lock table, distributed lock, queue, or persistent job is introduced.
+
+The application service acquires that lock before the mutation workflow and opens the existing PR2 `transaction()` boundary for atomic Product/ProductSnapshot mutation. Repositories use the caller-owned connection. The service executes no SQL, and PR3 does not extend the persistence transaction API or add a transaction mode.
 
 The service validates upload extension `.xlsx`, a 25 MiB exact maximum, ZIP/XLSX readability, and the Source Contract. The HTTP layer streams to a generated temporary file and never loads an unbounded upload into memory. Original filename is display metadata only and is reduced to its basename before persistence.
 
@@ -221,13 +253,19 @@ The exact lifecycle is:
 3. parse and normalize completely, including within-file conflict detection, before Product mutation;
 4. on fatal validation, delete `.part`, atomically finish the batch FAILED with available counters/metadata, and insert no ProductSnapshot;
 5. after at least one usable row, atomically rename `.part` to its generated final path;
-6. open one `BEGIN IMMEDIATE` DB transaction; set artifact `stored_relpath`; resolve identities/products; allocate duplicate/new/corrected revisions; write all accepted snapshots and durable result counts; set ImportBatch SUCCESS or PARTIAL_SUCCESS with `finished_at`; commit once;
-7. on any failure before DB commit, roll back all Product/ProductSnapshot/result mutations, delete the staged or final generated file, then in a separate guarded transaction leave the artifact metadata with null path and finish the batch FAILED; expose `ImportPersistenceError` if persistence caused failure;
+6. open one existing PR2 `transaction()` boundary; set artifact `stored_relpath`; resolve identities/products; allocate duplicate/new/corrected revisions; write all accepted snapshots and durable result counts; set ImportBatch SUCCESS or PARTIAL_SUCCESS with `finished_at`; commit once through `transaction()`;
+7. on any failure before DB commit, let the existing `transaction()` roll back and close, delete the staged or final generated file, then use a separate explicit PR2 `transaction()` to leave the artifact metadata with null path and finish the batch FAILED; expose `ImportPersistenceError` if persistence caused failure;
 8. release the lock in every terminal path.
 
 SUCCESS means at least one accepted row and no rejected recoverable row. PARTIAL_SUCCESS means at least one accepted row and at least one recoverable rejected row. FAILED means fatal validation/persistence prevented accepted mutation. A report with no usable product rows is fatal. Identical in-file duplicate rows are warnings, not rejected rows, and do not alone produce PARTIAL_SUCCESS.
 
-On application initialization, the focused service performs narrowly scoped recovery: delete stale `.part` files and generated archive files not referenced by a non-null SourceArtifact path; mark a stale RUNNING `ozon_products_xlsx` batch FAILED with its existing metadata. This compensates interruption between filesystem and SQLite operations without a generic recovery framework or CAS.
+Repositories never commit, roll back, or open a second connection; they operate on the connection owned by the calling `transaction()` boundary. The separate failure-status compensation transaction begins only after the mutation transaction has rolled back and closed.
+
+FastAPI application startup performs one-shot PR3 interrupted-import cleanup after the launcher has applied DB migrations and before the new backend process begins handling HTTP requests. This cleanup is not a migration, persistent job runner, or change to launcher migration responsibility. The launcher already-running path starts no backend process, so it does not run cleanup separately.
+
+At that startup boundary, every ImportBatch with `import_kind = "ozon_products_xlsx"` and `status = RUNNING` is an interrupted previous-process import because no persistent worker can survive process restart. Recovery marks every such batch FAILED, preserves already known metadata and counters, sets `finished_at` to the recovery time, and performs no ProductSnapshot mutation.
+
+Filesystem recovery is equally deterministic and narrow. Every file matching `data/imports/.upload-*.part` is an interrupted staging file from the previous process and is deleted. A generated archive XLSX file is deleted only when its path matches the PR3 generated archive pattern and no SourceArtifact references that path through `stored_relpath`. Recovery never deletes unknown files, manually placed files, arbitrary `.xlsx` files, or referenced source artifacts.
 
 ## 8. Product resolution and ownership
 
@@ -241,14 +279,14 @@ For each valid row, resolve exactly the Source Contract identity tuple. If absen
 | `WrongReportType` | fatal | 422 | `Выберите отчёт Ozon «Товары на Ozon».` |
 | `IncompatibleReportSchema` | fatal | 422 | `Версия или структура отчёта не поддерживается.` |
 | `InvalidReportPeriod` | fatal | 422 | `Не удалось прочитать дату формирования или период отчёта.` |
-| `InvalidProductIdentity` | recoverable row | response 200/207 | `Некорректная ссылка на товар.` |
-| `InvalidMetricValue` | recoverable row | response 200/207 | `Некорректное значение показателя.` |
-| `CategoryMismatch` | recoverable row | response 200/207 | `Категория товара не совпадает с категорией отчёта.` |
+| `InvalidProductIdentity` | recoverable row | 200 (`PARTIAL_SUCCESS` when at least one row is accepted) | `Некорректная ссылка на товар.` |
+| `InvalidMetricValue` | recoverable row | 200 (`PARTIAL_SUCCESS` when at least one row is accepted) | `Некорректное значение показателя.` |
+| `CategoryMismatch` | recoverable row | 200 (`PARTIAL_SUCCESS` when at least one row is accepted) | `Категория товара не совпадает с категорией отчёта.` |
 | `ConflictingObservationRows` | fatal | 422 | `В отчёте есть противоречивые строки одного товара.` |
 | `ConcurrentImportConflict` | request conflict | 409 | `Другой импорт уже выполняется. Дождитесь его завершения.` |
 | `ImportPersistenceError` | fatal | 500 | `Не удалось сохранить импорт. Данные не изменены.` |
 
-Malformed isolated row values are accumulated. Formula metric cells use `InvalidMetricValue`; wrong structural formulas use `IncompatibleReportSchema`. Responses never include a traceback, local absolute path, or uploaded content. For a completed partial import, HTTP 200 is used (not nonstandard 207); status in the DTO is authoritative. Fatal 422/500 responses include the failed batch result when a batch was created.
+Malformed isolated row values are accumulated. Formula metric cells use `InvalidMetricValue`; wrong structural formulas use `IncompatibleReportSchema`. Responses never include a traceback, local absolute path, or uploaded content. For a completed partial import, HTTP 200 is used and status in the DTO is authoritative. HTTP 207 is not used. Fatal 422/500 responses include the failed batch result when a batch was created.
 
 ## 10. Exact API contract
 
@@ -261,6 +299,39 @@ Accept `multipart/form-data` with exactly one required field `file`. Success/par
 ### `GET /api/imports`
 
 Returns `{ "items": [...], "total": <int> }`, newest `started_at` first, with no mutation. Each item includes the same durable summary fields available from ImportBatch and its single SourceArtifact; `row_errors` is not reconstructed in history.
+
+`LineageRepository` maps each item to `OzonProductsImportSummary`. Its exact PR3 extensions are:
+
+```python
+finish_ozon_products_import(
+    batch_id: int,
+    *,
+    status: ImportStatus,
+    report_generated_on: date | None,
+    report_window_days: int | None,
+    rows_seen: int,
+    rows_accepted: int,
+    rows_skipped: int,
+    duplicate_observations: int,
+    new_observations: int,
+    corrected_revisions: int,
+    warnings_count: int,
+    row_errors_total: int,
+) -> OzonProductsImportSummary
+
+list_ozon_products_imports(
+    *,
+    limit: int,
+    offset: int,
+) -> list[OzonProductsImportSummary]
+
+set_source_artifact_stored_relpath(
+    artifact_id: int,
+    stored_relpath: str,
+) -> SourceArtifact
+```
+
+`set_source_artifact_stored_relpath()` reuses the existing `InvalidStoredRelativePath` validation contract. These are focused typed operations; arbitrary keyword metadata and JSON metadata are forbidden.
 
 ### `GET /api/products`
 
@@ -307,30 +378,30 @@ Freshness is based on `report_generated_on` plus `imported_at`, never workbook m
 
 ## 12. Dependency and portable runtime contract
 
-PR3 adds exactly `openpyxl==3.1.5` to runtime `requirements.txt` and uses it directly; pandas is forbidden. This version supports the Python 3.13 portable runtime selected by PR1. Update the current exact-import/version check in `start.bat` to import `openpyxl` and require metadata version `3.1.5`, and extend its contract tests. Ordinary `python -m pip install -r requirements.txt` remains the only install/repair mechanism.
+PR3 adds exactly two direct runtime dependencies: `openpyxl==3.1.5` for XLSX parsing and `python-multipart==0.0.32` for FastAPI `multipart/form-data` upload parsing. Pandas is forbidden, and PR3 adds no other runtime dependency. Both versions support the Python 3.13 portable runtime selected by PR1. Update the exact runtime validation in `start.bat` to import `openpyxl` and require installed distribution metadata version `3.1.5`, and to verify the `multipart` import/package is present and installed `python-multipart` distribution metadata version is `0.0.32`. Ordinary `python -m pip install -r requirements.txt` remains the only install/repair mechanism.
 
-Windows acceptance proves: a clean runtime installs openpyxl; second start reuses the valid runtime; a synthetic parser/import smoke succeeds under that runtime; repair/rebuild preserves `data/scoz.db` and `data/imports`; spaces and Cyrillic paths remain valid. `tests/windows_smoke.ps1` remains ASCII-only, expressing any Cyrillic through character codes.
+Windows acceptance proves: a clean runtime installs both direct dependencies; second start reuses the runtime with both imports and metadata versions valid; dependency corruption or mismatch is restored by the ordinary existing pip repair mechanism; a synthetic parser/import smoke succeeds under that runtime; repair/rebuild preserves `data/scoz.db` and `data/imports`; spaces and Cyrillic paths remain valid. `tests/windows_smoke.ps1` remains ASCII-only, expressing any Cyrillic through character codes.
 
 ## 13. Exact implementation file map
 
 | File | Change | Exact responsibility |
 |---|---|---|
-| `backend/domain/product_snapshot.py` | add | frozen snapshot/normalized report DTOs and narrow validation errors; no SQL |
+| `backend/domain/product_snapshot.py` | add | frozen ProductSnapshot/normalized report DTOs, exact `OzonProductsImportSummary`, and narrow validation errors; no SQL |
 | `backend/ingestion/__init__.py` | add | package marker only |
 | `backend/ingestion/ozon_products_xlsx.py` | add | strict Source Contract parser and normalizer only |
 | `backend/application/__init__.py` | add | package marker only |
-| `backend/application/ozon_products_import.py` | add | focused lock, file/archive lifecycle, transaction orchestration, result DTO |
+| `backend/application/ozon_products_import.py` | add | focused lock, file/archive lifecycle, existing-transaction orchestration, and summary-to-result orchestration; no SQL |
 | `backend/persistence/migrations/migration_002_ozon_products_import.py` | add | exact migration 002 DDL |
 | `backend/persistence/migrations/runner.py` | modify | append stable migration registry entry only |
-| `backend/persistence/repositories/lineage.py` | modify | PR3 terminal counters/history and stored-path update |
+| `backend/persistence/repositories/lineage.py` | modify | exact focused summary finish/list and stored-path operations; maps rows to `OzonProductsImportSummary` |
 | `backend/persistence/repositories/products.py` | modify | identity resolve-or-create and ownership/list support |
 | `backend/persistence/repositories/product_snapshots.py` | add | snapshot revision/current/latest SQL and mapping |
-| `backend/main.py` | modify | thin four-endpoint HTTP adapters and multipart limits/errors |
+| `backend/main.py` | modify | thin four-endpoint HTTP adapters, startup recovery hook, multipart limits/errors, and summary/result response mapping |
 | `frontend/index.html` | modify | existing-shell Data/Product semantic regions and controls |
 | `frontend/assets/css/app.css` | modify | existing-token states/components only |
 | `frontend/assets/js/app.js` | modify | same-origin import/history/products/ownership presentation only |
-| `requirements.txt` | modify | exact openpyxl runtime pin |
-| `start.bat` | modify | exact openpyxl runtime validation |
+| `requirements.txt` | modify | exact `openpyxl==3.1.5` and `python-multipart==0.0.32` runtime pins |
+| `start.bat` | modify | exact import and installed-distribution metadata validation for both new direct dependencies |
 | `tests/xlsx_factory.py` | add | generated exact-contract synthetic workbooks |
 | `tests/test_ozon_products_parser.py` | add | source/normalization cases |
 | `tests/test_product_snapshot_repository.py` | add | key/hash/revision/provenance cases |
@@ -338,14 +409,14 @@ Windows acceptance proves: a clean runtime installs openpyxl; second start reuse
 | `tests/test_ozon_products_api.py` | add | upload/read/ownership/error API cases |
 | `tests/test_frontend_contract.py` | modify | all required visible states and no-framework contract |
 | `tests/test_migrations.py` | modify | migration 002 schema/registry/idempotence/anti-scope |
-| `tests/test_runtime_contract.py` | modify | dependency pin/import validation contract |
+| `tests/test_runtime_contract.py` | modify | exact two PR3 dependency pins plus import/version validation and repair expectations |
 | `tests/windows_smoke.ps1` | modify | portable dependency/import and state-preservation smoke, ASCII-only |
 
 No route package or larger speculative package tree is created. `backend/main.py` remains thin at this scale.
 
 ## 14. Synthetic fixture and verification contract
 
-The real evidence workbook is never committed. `tests/xlsx_factory.py` builds workbooks with openpyxl and exact rows 1–6, all 32 ordered headers, and synthetic product rows. Fixtures cover minimal valid, full valid, wrong marker, wrong headers/order, multiple sheets, missing identity, malformed URL, bad generated date/window, bad percentage, localized numeric string rejection, formula rejection, bad windowed-day value, exact `Нет данных`, exact `-`, explicit zero, card-date text, summary-row exclusion, category mismatch, identical duplicate row, and conflicting same-key row.
+The real evidence workbook is never committed. `tests/xlsx_factory.py` builds workbooks with openpyxl and exact rows 1–6, all 32 ordered headers, and synthetic product rows. Fixtures cover minimal valid, full valid, wrong marker, wrong headers/order, multiple sheets, missing identity, malformed URL, bad generated date/window, bad percentage, localized numeric string rejection, formula rejection, bad windowed-day value, exact `Нет данных`, exact `-`, explicit zero, `None` badge, zero-length text badge, non-empty badge, numeric-zero badge validation without truthiness-to-null conversion, card-date text, summary-row exclusion, category mismatch, identical duplicate row, and conflicting same-key row.
 
 Automated tests must prove:
 
@@ -374,6 +445,8 @@ Before implementation handoff reviewers verify all of the following as a single 
 - raw unconfirmed units remain `*_source_value` and are excluded from analytics/unit labels;
 - logical-key, payload exclusions, unique constraint, duplicate behavior, revision allocation, and immutable supersession agree;
 - archive compensation makes terminal ImportBatch state agree with committed ProductSnapshot data;
+- no transaction-control SQL appears in the PR3 application contract or application service; the existing PR2 `transaction()` owns commit/rollback, repositories remain caller-connection-owned, the process-local import lock serializes imports, and the database UNIQUE constraint remains defense-in-depth;
+- the multipart endpoint includes `python-multipart`; the dependency contract, requirements File Map, runtime validation, contract tests, and Windows smoke all name the same two pins, `openpyxl==3.1.5` and `python-multipart==0.0.32`;
 - anti-scope search finds future concepts only in section 2's non-goal statement.
 
 ## 16. Acceptance / Definition of Done
