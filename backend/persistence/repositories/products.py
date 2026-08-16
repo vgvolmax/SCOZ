@@ -112,3 +112,26 @@ class ProductRepository:
             (source, identity_type, identity_value, source_account_scope),
         ).fetchone()
         return None if row is None else _product_from_row(row)
+
+    def resolve_or_create_ozon_product(self, ozon_product_id: str) -> Product:
+        if not ozon_product_id.isdigit(): raise ValueError("invalid Ozon product ID")
+        product = self.find_by_external_identity(source="ozon", identity_type="ozon_product_id", identity_value=ozon_product_id)
+        if product is not None: return product
+        product = self.create_product(is_owned=False)
+        self.add_external_identity(product.id, source="ozon", identity_type="ozon_product_id", identity_value=ozon_product_id)
+        return product
+
+    def count_ozon_products(self) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM product_external_identities WHERE source='ozon' AND identity_type='ozon_product_id' AND source_account_scope='' ").fetchone()[0]
+
+    def any_owned(self) -> bool:
+        return self._conn.execute("SELECT EXISTS(SELECT 1 FROM products WHERE is_owned=1)").fetchone()[0] == 1
+
+    def list_ozon_products(self, *, limit: int, offset: int) -> list[dict[str, object]]:
+        if not 1 <= limit <= 100 or offset < 0: raise ValueError("invalid pagination")
+        rows = self._conn.execute("""SELECT p.id,p.is_owned,p.created_at,p.updated_at,i.identity_value AS ozon_product_id,s.*
+FROM products p JOIN product_external_identities i ON i.product_id=p.id
+LEFT JOIN product_snapshots s ON s.id=(SELECT ps.id FROM product_snapshots ps WHERE ps.product_id=p.id ORDER BY ps.report_generated_on DESC,ps.report_window_days DESC,ps.revision DESC LIMIT 1)
+WHERE i.source='ozon' AND i.identity_type='ozon_product_id' AND i.source_account_scope=''
+ORDER BY p.is_owned DESC,lower(COALESCE(s.title,'')),p.id LIMIT ? OFFSET ?""",(limit,offset)).fetchall()
+        return [dict(row) for row in rows]

@@ -9,6 +9,7 @@ MIGRATIONS = [
         "core_foundation",
         "backend.persistence.migrations.migration_001_core_foundation",
     ),
+    (2, "ozon_products_import", "backend.persistence.migrations.migration_002_ozon_products_import"),
 ]
 
 

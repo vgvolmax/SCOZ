@@ -132,6 +132,16 @@ try {
     Invoke-Start | Out-Null; Health
     Assert-CoreMigration
     Assert-ProductSentinel $productSentinelId
+    Write-Host '9. PR3 PORTABLE DEPENDENCIES AND IMPORT ARCHIVE'
+    $portablePython = Join-Path $app 'runtime/python.exe'
+    $dependencyProbe = & $portablePython -c "import importlib.metadata as m; import openpyxl, multipart; assert m.version('openpyxl') == '3.1.5'; assert m.version('python-multipart') == '0.0.32'; print('PASS')"
+    Assert-True ($dependencyProbe -contains 'PASS') 'PR3 dependency metadata/import validation failed'
+    $importsPath = Join-Path $app 'data/imports'
+    New-Item -ItemType Directory -Force $importsPath | Out-Null
+    Set-Content (Join-Path $importsPath 'sentinel.txt') 'preserve'
+    Assert-True (Test-Path (Join-Path $importsPath 'sentinel.txt')) 'data/imports sentinel was lost'
+    $parserProbe = & $portablePython -c "from tests.xlsx_factory import build_ozon_products_workbook; from pathlib import Path; from tempfile import TemporaryDirectory; from backend.ingestion.ozon_products_xlsx import parse_ozon_products_xlsx; import os; d=TemporaryDirectory(); p=Path(d.name)/'synthetic.xlsx'; p.write_bytes(build_ozon_products_workbook()); assert len(parse_ozon_products_xlsx(p).rows)==1; d.cleanup(); print('PASS')"
+    Assert-True ($parserProbe -contains 'PASS') 'Synthetic PR3 parser smoke failed'
     Write-Host 'PASS: all 8 PR1 Windows smoke scenarios'
 }
 finally {

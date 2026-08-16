@@ -13,7 +13,8 @@ def test_committed_local_frontend_shell():
         assert html.count(f">{label}</button>") == 1
     assert 'aria-current="page"' in html
     assert 'data-section="products"' in html
-    assert "Пока нет данных" in html
+    assert 'id="products-view"' in html and 'id="data-view"' in html
+    assert 'id="ozon-products-file"' in html and 'aria-live="polite"' in html
 
 
 def test_visual_and_accessibility_contract():
