@@ -6,7 +6,7 @@
 
 SCOZ реализуется последовательно как внутреннее portable Windows-приложение:
 
-> `ZIP репозитория → start.bat → portable Python → FastAPI + built React → SQLite → adapters → analytics`.
+> `ZIP репозитория → start.bat → portable Python → FastAPI + committed static frontend → SQLite → adapters → analytics`.
 
 Репозиторий должен оставаться пользовательски запускаемым: пользователь скачивает ZIP, распаковывает его и запускает `start.bat`. На его ПК не выполняется frontend build и не требуется Node/npm. Необходимые production static assets должны входить в распространяемое состояние репозитория/ZIP.
 
@@ -51,7 +51,7 @@ PR1 → PR2 → PR3 → PR4 → PR5 → PR6 → PR7 → PR8
 
 Result: ZIP текущего поддерживаемого состояния репозитория распаковывается на clean Windows и `start.bat` запускает SCOZ; первый run готовит project-local runtime, later runs reuse it.
 
-Scope: portable Python bootstrap based on the proven `WB_OZON_Yandex` flow, project-local Windows embeddable Python, exact direct dependencies in `requirements.txt`, runtime validation/repair/rebuild, FastAPI health, React shell + production static assets already present in distributable ZIP, loopback only, same-origin, startup status/logs, port/already-running handling, browser after health, base navigation and Windows smoke of the real user flow.
+Scope: portable Python bootstrap based on the proven `WB_OZON_Yandex` flow, project-local Windows embeddable Python, exact direct dependencies in `requirements.txt`, runtime validation/repair/rebuild, FastAPI health, static HTML/CSS/JavaScript application shell committed directly in the repository and already present in the distributable ZIP, loopback only, same-origin, startup status/logs, port/already-running handling, browser after health, base navigation and Windows smoke of the real user flow.
 
 Non-goals: business DB schema, credentials, auth/session framework, DPAPI, persistent jobs, auto-updater, npm/frontend build on user machine.
 
@@ -238,7 +238,7 @@ Acceptance: repository ZIP works without system runtimes; data survives normal r
 
 ## 4. Cross-PR review gate
 
-Reject/correct a PR if it puts business logic in React/routes, lets analytics read raw source directly, leaks SQL outside persistence, overwrites history, loses benchmark revision/provenance, invents/mixes granularity, persists plaintext credentials, introduces internal Ozon automation, hides long actions without feedback, presents estimates as facts, pre-creates future feature infrastructure without a current use case, or requires a local npm/frontend build from the end user.
+Reject/correct a PR if it puts business logic in UI/routes, lets analytics read raw source directly, leaks SQL outside persistence, overwrites history, loses benchmark revision/provenance, invents/mixes granularity, persists plaintext credentials, introduces internal Ozon automation, hides long actions without feedback, presents estimates as facts, pre-creates future feature infrastructure without a current use case, or requires a local npm/frontend build from the end user.
 
 ## 5. PR-specific specs
 

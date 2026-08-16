@@ -63,10 +63,11 @@ Do not remove data-integrity safeguards merely to reduce code size.
 
 - Local portable Windows app: repository ZIP → extract → `start.bat` → browser UI.
 - No dependency on system Python, Node/npm, Docker or PostgreSQL for the end user.
-- Production frontend static assets are already present in the distributable ZIP; no user-side frontend build.
+- Production frontend assets are committed directly as HTML/CSS/JavaScript and are already present in the distributable ZIP; no user-side frontend build or npm/package-manager dependency.
 - Backend binds only to `127.0.0.1`; frontend and API are same-origin in production.
-- Source Adapter → Ingestion → Normalized Domain Model → Persistence/History → Analytics → Application Services → FastAPI → React UI.
-- No business logic in React or FastAPI route handlers.
+- Source Adapter → Ingestion → Normalized Domain Model → Persistence/History → Analytics → Application Services → FastAPI → browser UI.
+- No business logic in FastAPI route handlers or the UI presentation layer.
+- Frontend implementation follows the simple committed HTML/CSS/JavaScript model unless a future approved design establishes a real framework need.
 - No SQL outside the persistence/repository layer.
 - DataFrame is not an inter-module domain contract.
 - Historical observations are immutable and source corrections are stored as explicit lightweight revisions rather than overwriting history.

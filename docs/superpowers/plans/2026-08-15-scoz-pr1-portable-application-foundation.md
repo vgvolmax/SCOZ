@@ -4,7 +4,7 @@
 
 **Goal:** Deliver repository ZIP → extract → `start.bat` → healthy local SCOZ UI without system Python, Node, administrator rights or a user-side frontend build.
 
-**Architecture:** `start.bat` owns the simple reference-compatible embeddable-Python setup, validation, pip repair and disposable rebuild. `RUN_SERVER.cmd` is the small server wrapper. `launcher.py` owns preflight, port/server lifecycle, status/logs, health and browser-after-health. FastAPI provides the health/static foundation and React provides only the approved shell.
+**Architecture:** `start.bat` owns the simple reference-compatible embeddable-Python setup, validation, pip repair and disposable rebuild. `RUN_SERVER.cmd` is the small server wrapper. `launcher.py` owns preflight, port/server lifecycle, status/logs, health and browser-after-health. FastAPI provides the health/static foundation and serves the approved committed HTML/CSS/JavaScript shell directly.
 
 **Scope boundary:** Documentation and implementation of PR1 only. Do not add SQLite/domain entities, marketplace adapters, imports, credentials, analytics, jobs, auth, updater, installer, LAN access or PR2+ behavior.
 
@@ -35,13 +35,9 @@ VERSION.txt
 backend/__init__.py
 backend/config.py
 backend/main.py
-frontend/package.json
-frontend/package-lock.json
-frontend/tsconfig.json
-frontend/vite.config.ts
 frontend/index.html
-frontend/src/**
-frontend/dist/**
+frontend/assets/css/app.css
+frontend/assets/js/app.js
 launcher.py
 requirements.txt
 requirements-dev.txt
@@ -68,7 +64,7 @@ Assert:
 - `VERSION.txt` is exactly `0.1.0` plus newline;
 - `requirements.txt` has only `fastapi==0.139.2` and `uvicorn==0.51.0`;
 - runtime and test dependencies are separate;
-- `.gitignore` excludes `runtime/`, `data/`, `.venv/`, frontend dependencies, encrypted credential files and plaintext credential-like JSON names;
+- `.gitignore` excludes `runtime/`, `data/`, `.venv/`, encrypted credential files and plaintext credential-like JSON names;
 - no generated runtime/data files are tracked.
 
 - [ ] **Step 2: Run the focused test and confirm expected failure**
@@ -96,39 +92,34 @@ git commit -m "chore: define SCOZ PR1 runtime inputs"
 
 ---
 
-### Task 2: Build the approved React/TypeScript shell and committed production assets
+### Task 2: Build the committed static application shell
 
-**Files:** create `frontend/package.json`, genuine npm-generated `frontend/package-lock.json`, `frontend/tsconfig.json`, `frontend/vite.config.ts`, `frontend/index.html`, `frontend/src/main.tsx`, `frontend/src/App.tsx`, `frontend/src/styles.css`, genuine Vite-generated `frontend/dist/**`, and `tests/test_frontend_contract.py`.
+**Files:** create `frontend/index.html`, `frontend/assets/css/app.css`, `frontend/assets/js/app.js`, and `tests/test_frontend_contract.py`.
 
 - [ ] **Step 1: Write frontend contract tests**
 
-Check that the source and built page contain exactly the approved global navigation (`Товары`, `Данные`, `Настройки`), with `Товары` as the default active section, a Russian empty state and no invented PR2+ product content. Check accessible landmark/focus basics and canonical design tokens.
+Check that `frontend/index.html` exists and links the local CSS and JavaScript; global navigation contains exactly `Товары`, `Данные`, `Настройки`, with `Товары` default active; Russian page title/description and neutral empty state remain; required design tokens, keyboard/focus basics and `aria-current` or equivalent active semantics are present. Reject PR2+ content, remote CDN references, framework/build dependencies and package-manager artifacts.
 
-- [ ] **Step 2: Create minimal Vite React/TypeScript source**
+- [ ] **Step 2: Create the production entry point and styles**
 
-Use the canonical visual design system and these exact direct versions in `package.json`: `react==19.2.8`, `react-dom==19.2.8`, `vite==8.1.5`, `@vitejs/plugin-react==6.0.4`, `typescript==7.0.2`, `@types/react==19.2.18`, `@types/react-dom==19.2.4`. Do not add React Router, Product Workspace tabs, fake charts/scores, marketplace data, API settings or feature workflows.
+Create shell markup in `frontend/index.html` and implement the canonical Visual Design System in `frontend/assets/css/app.css`, preferably using CSS custom properties. Add no CSS framework, CDN library, product workflow, fake chart/score, marketplace data, API settings or PR2+ behavior.
 
-- [ ] **Step 3: Generate real dependency/build artifacts**
+- [ ] **Step 3: Add only required shell behavior**
 
-```powershell
-cd frontend
-npm install
-npm run build
-cd ..
-```
+Implement global navigation, active-section state and genuinely required DOM behavior in `frontend/assets/js/app.js`. Do not add business analytics or speculative module/framework architecture.
 
-Do not hand-author the npm lock or production bundle.
-
-- [ ] **Step 4: Verify source/build consistency**
+- [ ] **Step 4: Verify the static contract**
 
 ```powershell
 python -m pytest tests\test_frontend_contract.py -q
-cd frontend
-npm ci
-npm run build
-cd ..
-git diff --exit-code -- frontend/dist
+if (Get-Command node -ErrorAction SilentlyContinue) {
+    node --check frontend/assets/js/app.js
+} else {
+    Write-Host "SKIP: optional Node syntax check is unavailable"
+}
 ```
+
+Node is not a required SCOZ dependency. When a preinstalled Node executable is available, `node --check` provides additional syntax verification; when Node is unavailable in Codex Cloud or a developer environment, report this check as `SKIP`, not `IMPLEMENTATION BLOCKED`. Python/static contract tests remain the required frontend verification, so this task requires no network, package manager or npm registry. Do not introduce another JavaScript runtime or JavaScript testing framework in PR1.
 
 - [ ] **Step 5: Commit**
 
@@ -145,7 +136,7 @@ git commit -m "feat: add SCOZ application shell"
 
 - [ ] **Step 1: Write failing backend tests**
 
-Cover exact health response, `/` serving committed `frontend/dist/index.html`, `/assets/*` serving committed production assets, missing asset, unknown `/api/*` returning 404, unknown frontend path returning 404, configuration `127.0.0.1:17842`, version loaded from `VERSION.txt`, and absence of database creation.
+Cover exact health response, `/` serving committed `frontend/index.html`, `/assets/*` serving committed production assets, missing asset, unknown `/api/*` returning 404, unknown frontend path returning 404, configuration `127.0.0.1:17842`, version loaded from `VERSION.txt`, and absence of database creation.
 
 - [ ] **Step 2: Implement minimal backend composition**
 
@@ -155,7 +146,7 @@ Cover exact health response, `/` serving committed `frontend/dist/index.html`, `
 {"status":"ok","app":"SCOZ","version":"0.1.0"}
 ```
 
-Serve committed `frontend/dist` same-origin. Do not add a catch-all SPA fallback or React Router: unknown frontend paths remain 404. Do not add business logic, persistence or permissive production CORS.
+Serve committed `frontend/index.html` and `frontend/assets/*` same-origin. Do not add a catch-all SPA fallback: unknown frontend paths remain 404. Do not add business logic, persistence or permissive production CORS.
 
 - [ ] **Step 3: Run tests**
 
@@ -238,7 +229,7 @@ Assert that `start.bat`:
 - installs with `runtime\python.exe -m pip install -r requirements.txt`;
 - validates runtime Python plus exact FastAPI/Uvicorn versions and imports;
 - invokes `launcher.py` only through project-local Python;
-- never invokes npm/Node/Vite.
+- never invokes a frontend build or package manager; Node is unnecessary at runtime.
 
 - [ ] **Step 2: Implement first-run flow**
 
@@ -335,18 +326,18 @@ git commit -m "test: add PR1 Windows portable smoke"
 
 ---
 
-### Task 7: Add CI and committed-frontend consistency gate
+### Task 7: Add CI and static-frontend contract gate
 
 **Files:** create `.github/workflows/ci.yml`.
 
 - [ ] **Step 1: Configure `windows-latest`**
 
-In order: checkout, setup Python 3.13, install `requirements-dev.txt`, run pytest, setup Node LTS, `npm ci`, build frontend, require clean `frontend/dist`, then run full Windows smoke. Add a reasonable timeout. Do not use marketplace credentials.
+In order: checkout, setup Python 3.13, install `requirements-dev.txt`, run pytest (including frontend contract tests), optionally setup/use Node only for `node --check frontend/assets/js/app.js`, then run full Windows smoke. Add a reasonable timeout. Do not use marketplace credentials. CI must not access an npm registry.
 
 - [ ] **Step 2: Verify production startup has no frontend build**
 
 ```powershell
-Select-String -Path start.bat,RUN_SERVER.cmd,launcher.py -Pattern 'npm|node_modules|vite build'
+Select-String -Path start.bat,RUN_SERVER.cmd,launcher.py -Pattern 'npm|frontend build'
 ```
 
 Expected: no startup invocation.
@@ -355,12 +346,14 @@ Expected: no startup invocation.
 
 ```powershell
 python -m pytest -q
-cd frontend
-npm ci
-npm run build
-cd ..
-git diff --exit-code -- frontend/dist
+if (Get-Command node -ErrorAction SilentlyContinue) {
+    node --check frontend/assets/js/app.js
+} else {
+    Write-Host "SKIP: optional Node syntax check is unavailable"
+}
 ```
+
+Node remains an optional CI/developer checker rather than a required SCOZ dependency. Its absence in Codex Cloud or a developer environment is a `SKIP`, never `IMPLEMENTATION BLOCKED`; Python/static contract tests still verify the frontend without Node. No package manager or npm registry is required, and no alternative JavaScript runtime or JavaScript testing framework should be added.
 
 ```powershell
 git add .github/workflows/ci.yml
@@ -379,21 +372,21 @@ State Windows 10/11 x64, ZIP extraction to a writable local folder, `start.bat`,
 
 - [ ] **Step 2: Document developer commands**
 
-From repository root in PowerShell: create developer venv, install `requirements-dev.txt`, run pytest, `npm ci`, frontend build and committed-build diff.
+From repository root in PowerShell: create developer venv, install `requirements-dev.txt`, run pytest and, when Node is available, direct JavaScript syntax checking without npm.
 
 - [ ] **Step 3: Run verification available in the current environment**
 
 ```powershell
 python -m pytest -q
-cd frontend
-npm ci
-npm run build
-cd ..
-git diff --exit-code -- frontend/dist
+if (Get-Command node -ErrorAction SilentlyContinue) {
+    node --check frontend/assets/js/app.js
+} else {
+    Write-Host "SKIP: optional Node syntax check is unavailable"
+}
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File tests\windows_smoke.ps1 -Mode Full
 ```
 
-Report each actual result and explicitly defer unavailable Windows evidence to post-push CI. Do not ask the user to run development commands on a desktop.
+Report each actual result and explicitly defer unavailable Windows evidence to post-push CI. Node is not a required SCOZ dependency: use it only for additional `node --check` syntax verification when available, and report its absence in Codex Cloud or a developer environment as `SKIP`, not `IMPLEMENTATION BLOCKED`. Python/static contract tests remain sufficient to verify the frontend without Node; no package manager, npm registry, alternative JavaScript runtime or JavaScript testing framework is required. Do not ask the user to run development commands on a desktop.
 
 - [ ] **Step 4: Scope and generated-state audit**
 
@@ -401,7 +394,7 @@ Report each actual result and explicitly defer unavailable Windows evidence to p
 git status --short
 git diff --stat
 git diff
-git ls-files runtime data .venv frontend/node_modules
+git ls-files runtime data .venv
 ```
 
 Reject SQLite/domain/import/credentials/marketplace/analytics/auth/updater/LAN/user-side build scope. Confirm all required file-map entries exist and no generated user state or secrets are tracked.
@@ -421,11 +414,12 @@ git commit -m "docs: document SCOZ portable startup"
 - available Python/frontend/static checks actually run;
 - scope and generated-state audits complete;
 - no PR2+ scope;
-- unavailable Windows checks explicitly listed.
+- unavailable Windows checks explicitly listed;
+- unavailable PyPI/network verification is reported as external pending verification for GitHub Actions/Windows acceptance, not as a frontend blocker; npm network access is never required.
 
 ### Post-push merge gate
 
-After the user pushes and creates the PR: CI on current HEAD passes Python tests, frontend consistency and all eight Windows portable scenarios; independent review passes; only then may PR1 be called merge-ready.
+After the user pushes and creates the PR: CI on current HEAD passes Python/static frontend checks and all eight Windows portable scenarios; independent review passes; only then may PR1 be called merge-ready.
 
 ## Plan self-review result
 
@@ -433,7 +427,7 @@ After the user pushes and creates the PR: CI on current HEAD passes Python tests
 - One `requirements.txt` carries exact direct user-runtime pins; pip resolves transitives during setup/repair.
 - Valid runtime reuse, ordinary pip repair, disposable rebuild and `data/` preservation are explicit.
 - `start.bat`, `RUN_SERVER.cmd` and `launcher.py` form the complete startup structure; `RUN_SERVER.cmd` is the sole writer of the server PID.
-- Frontend source (including `frontend/index.html`), exact direct stack, genuine npm lock and committed Vite build contract is unchanged; `Товары` remains the default section.
+- Committed `frontend/index.html`, `frontend/assets/css/app.css` and `frontend/assets/js/app.js` are the production frontend; no package lock, build output or npm registry is required, and `Товары` remains the default section. The UI contract is unchanged.
 - Fixed host/port, health-before-browser, occupied-port safety and understandable feedback remain acceptance requirements.
 - Static routing has no SPA fallback, startup status writes atomically, and already-running smoke preserves the same healthy PID.
 - PR1 stays foundation-only and introduces no PR2+ subsystem.
