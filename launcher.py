@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from backend.config import APP_NAME, BASE_URL, DATA_DIR, FRONTEND_INDEX, HOST, PORT, ROOT_DIR, VERSION
+from backend.persistence.database import initialize_database
 
 HEALTH_URL = f"{BASE_URL}/api/health"
 HEALTH_TIMEOUT_SECONDS = 30
@@ -108,6 +109,9 @@ def launch() -> int:
             return 0
         if port_is_open():
             raise RuntimeError(f"Порт {PORT} занят другим приложением. SCOZ не запускался.")
+        write_status("migration", "Подготовка локальной базы данных")
+        log("Применение миграций локальной базы данных...")
+        initialize_database()
         write_status("server start", "Запуск локального сервера")
         log("Запуск локального сервера...")
         process = start_wrapper()

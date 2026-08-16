@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from backend.config import DATA_DIR, DEFAULT_DB_PATH
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -10,6 +12,9 @@ def test_runtime_inputs():
     ).strip() == "0.1.0"
     assert (ROOT / "requirements.txt").read_text().splitlines() == ["fastapi==0.139.2", "uvicorn==0.51.0"]
     assert "pytest" in (ROOT / "requirements-dev.txt").read_text()
+    assert DEFAULT_DB_PATH == DATA_DIR / "scoz.db"
+    assert DEFAULT_DB_PATH.parent.name == "data"
+    assert "runtime" not in DEFAULT_DB_PATH.parts
 
 
 def test_bootstrap_contract():
@@ -27,6 +32,16 @@ def test_bootstrap_contract():
     lowered = text.lower()
     assert "npm " not in lowered and "node " not in lowered and "frontend build" not in lowered
     assert 'rmdir /s /q "data"' not in lowered
+    assert 'rmdir /s /q "scoz.db"' not in lowered
+    assert 'del /q "data' not in lowered
+    assert 'del /q "scoz.db"' not in lowered
+
+
+def test_readme_documents_user_owned_database_lifecycle():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "`data/scoz.db`" in text
+    assert "user-owned persistent SQLite" in text
+    assert "pending schema migrations apply automatically before a new local server starts" in text
 
 
 def test_ignored_generated_and_sensitive_state():
