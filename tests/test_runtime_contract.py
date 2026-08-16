@@ -15,6 +15,7 @@ def test_runtime_inputs():
 def test_bootstrap_contract():
     text = (ROOT / "start.bat").read_text(encoding="utf-8")
     required = [
+        "chcp 65001 >nul", 'set "PYTHONUTF8=1"', 'set "PYTHONIOENCODING=utf-8"',
         'cd /d "%~dp0"', "python-3.13.14-embed-amd64.zip", "https://www.python.org/ftp/python/3.13.14/",
         "https://bootstrap.pypa.io/get-pip.py", ".part", "Entries.Count", "5000000", "100000",
         "python313.zip", "Lib\\site-packages", "import site", '-m pip install -r "requirements.txt"',
