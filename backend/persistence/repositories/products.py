@@ -134,4 +134,9 @@ FROM products p JOIN product_external_identities i ON i.product_id=p.id
 LEFT JOIN product_snapshots s ON s.id=(SELECT ps.id FROM product_snapshots ps WHERE ps.product_id=p.id ORDER BY ps.report_generated_on DESC,ps.report_window_days DESC,ps.revision DESC LIMIT 1)
 WHERE i.source='ozon' AND i.identity_type='ozon_product_id' AND i.source_account_scope=''
 ORDER BY p.is_owned DESC,lower(COALESCE(s.title,'')),p.id LIMIT ? OFFSET ?""",(limit,offset)).fetchall()
-        return [dict(row) for row in rows]
+        items = []
+        for row in rows:
+            item = dict(row)
+            item["is_owned"] = bool(item["is_owned"])
+            items.append(item)
+        return items

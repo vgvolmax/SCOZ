@@ -43,8 +43,10 @@ def test_products_ownership_and_history_are_functional(monkeypatch, tmp_path):
         client.post("/api/imports/ozon-products", files={"file": ("report.xlsx", build_ozon_products_workbook(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")})
         products = client.get("/api/products").json()
         assert products["total"] == 1 and products["items"][0]["ozon_product_id"] == "100000001"
+        assert type(products["items"][0]["is_owned"]) is bool
         product_id = products["items"][0]["id"]
-        assert client.patch(f"/api/products/{product_id}/ownership", json={"is_owned": True}).status_code == 200
+        patched = client.patch(f"/api/products/{product_id}/ownership", json={"is_owned": True})
+        assert patched.status_code == 200 and type(patched.json()["is_owned"]) is bool
         assert client.get("/api/products").json()["readiness"] == "READY"
         history = client.get("/api/imports").json()
         assert history["total"] == 1 and history["items"][0]["rows_accepted"] == 1
@@ -73,6 +75,23 @@ def test_post_partial_success_is_http_200_not_207(monkeypatch, tmp_path):
         response = _post(client, build_ozon_products_workbook(rows=[valid, invalid]))
     assert response.status_code == 200 and response.status_code != 207
     assert response.json()["status"] == "PARTIAL_SUCCESS"
+
+
+def test_post_zero_usable_rows_returns_422_with_failed_lineage(monkeypatch, tmp_path):
+    invalid = _default_row("Синтетическая категория")
+    invalid[OZON_PRODUCTS_HEADERS[1]] = "bad"
+    with _client(monkeypatch, tmp_path) as client:
+        response = _post(client, build_ozon_products_workbook(rows=[invalid]))
+    assert response.status_code == 422
+    body = response.json()
+    assert body["error"] == {"code": "INVALID_METRIC_VALUE", "message": "Некорректное значение показателя."}
+    assert body["result"] is not None and body["result"]["status"] == "FAILED"
+    with transaction(tmp_path / "scoz.db") as conn:
+        assert conn.execute("SELECT COUNT(*) FROM product_snapshots").fetchone()[0] == 0
+        batch = conn.execute("SELECT status FROM import_batches").fetchone()
+        artifact = conn.execute("SELECT stored_relpath FROM source_artifacts").fetchone()
+    assert batch["status"] == "FAILED"
+    assert artifact["stored_relpath"] is None
 
 
 def test_post_validation_error_matrix(monkeypatch, tmp_path):

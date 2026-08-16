@@ -47,7 +47,7 @@ def _write(repo, product_id, batch_id, artifact_id, *, generated=date(2026, 8, 1
     return repo.resolve_revision(product_id=product_id, report_generated_on=generated,
         report_window_days=window, payload_sha256=digest, import_batch_id=batch_id,
         source_artifact_id=artifact_id, imported_at=datetime(2026, 8, 16, tzinfo=timezone.utc),
-        values=_values(title))
+        snapshot_values=_values(title))
 
 
 def test_revision_duplicate_correction_and_latest_ordering(state):
@@ -59,13 +59,29 @@ def test_revision_duplicate_correction_and_latest_ordering(state):
     assert duplicate.kind is SnapshotWriteKind.DUPLICATE and duplicate.snapshot.id == first.snapshot.id
     assert corrected.kind is SnapshotWriteKind.CORRECTED and corrected.snapshot.revision == 2
     assert corrected.snapshot.supersedes_snapshot_id == first.snapshot.id
-    assert repo.get(first.snapshot.id).title == "First"
+    assert repo._get(first.snapshot.id).title == "First"
     window_28 = _write(repo, product_id, batch_id, artifact_id, window=28, digest="d" * 64)
-    assert window_28.snapshot.revision == 1 and repo.latest_for_product(product_id).id == window_28.snapshot.id
+    assert window_28.snapshot.revision == 1 and repo.list_latest_current_for_products(limit=100, offset=0)[0].id == window_28.snapshot.id
     later = _write(repo, product_id, batch_id, artifact_id, generated=date(2026, 8, 17), digest="e" * 64)
-    assert repo.latest_for_product(product_id).id == later.snapshot.id
+    assert repo.list_latest_current_for_products(limit=100, offset=0)[0].id == later.snapshot.id
     raw = connection.execute("SELECT ordered_amount_rub FROM product_snapshots WHERE id=?", (first.snapshot.id,)).fetchone()[0]
-    assert raw == "1.23" and isinstance(repo.get(first.snapshot.id).ordered_amount_rub, Decimal)
+    assert raw == "1.23" and isinstance(repo._get(first.snapshot.id).ordered_amount_rub, Decimal)
+
+
+def test_frozen_current_list_count_and_pagination_interface(state):
+    connection, repo, product_id, batch_id, artifact_id = state
+    first = _write(repo, product_id, batch_id, artifact_id)
+    corrected = _write(repo, product_id, batch_id, artifact_id, digest="c" * 64)
+    other = ProductRepository(connection).resolve_or_create_ozon_product("2")
+    other_latest = _write(repo, other.id, batch_id, artifact_id, generated=date(2026, 8, 18), digest="d" * 64)
+
+    current = repo.find_current(product_id=product_id, report_generated_on=date(2026, 8, 16), report_window_days=7)
+    assert current is not None and current.id == corrected.snapshot.id and current.id != first.snapshot.id
+    assert repo.count_products_with_snapshots() == 2
+    page = repo.list_latest_current_for_products(limit=1, offset=1)
+    assert page == [other_latest.snapshot]
+    with pytest.raises(ValueError): repo.list_latest_current_for_products(limit=0, offset=0)
+    with pytest.raises(ValueError): repo.list_latest_current_for_products(limit=1, offset=-1)
 
 
 @pytest.mark.parametrize("digest", ["A" * 64, "a" * 63, "g" * 64])
@@ -79,7 +95,7 @@ def test_aware_import_time_required_and_unique_constraint(state):
     with pytest.raises(ValueError):
         repo.resolve_revision(product_id=product_id, report_generated_on=date(2026, 8, 16),
             report_window_days=7, payload_sha256="b" * 64, import_batch_id=batch_id,
-            source_artifact_id=artifact_id, imported_at=datetime(2026, 8, 16), values=_values())
+            source_artifact_id=artifact_id, imported_at=datetime(2026, 8, 16), snapshot_values=_values())
     first = _write(repo, product_id, batch_id, artifact_id)
     columns = [row[1] for row in connection.execute("PRAGMA table_info(product_snapshots)")]
     values = list(connection.execute("SELECT * FROM product_snapshots WHERE id=?", (first.snapshot.id,)).fetchone())
