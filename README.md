@@ -15,6 +15,7 @@ SCOZ 0.1.0 — основа локального Windows-приложения. �
 
 - `runtime/` — закрытая для приложения, одноразовая portable-среда Python. При повреждении она может быть удалена и собрана заново автоматически.
 - `data/` — постоянное пользовательское состояние. Ремонт и пересборка `runtime/` не удаляют эту папку.
+- `data/scoz.db` — user-owned persistent SQLite database; pending schema migrations apply automatically before a new local server starts.
 - `data/launcher.log` — этапы подготовки и запуска.
 - `data/startup_status.json` — актуальный статус запуска.
 - `data/server_console.log` — вывод серверного процесса.

@@ -40,6 +40,29 @@ function Stop-Scoz {
     $pidFile = Join-Path $app 'data/server.pid'
     if (Test-Path $pidFile) { $serverId = [int](Get-Content $pidFile); Stop-Process -Id $serverId -Force -ErrorAction SilentlyContinue; Start-Sleep 2 }
 }
+function Invoke-DbPython([string]$Code, [string[]]$Arguments = @()) {
+    $python = Join-Path $app 'runtime/python.exe'
+    $db = Join-Path $app 'data/scoz.db'
+    $output = & $python -c $Code $db @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "Database verification failed: $LASTEXITCODE" }
+    return $output
+}
+function Assert-CoreMigration {
+    $db = Join-Path $app 'data/scoz.db'
+    Assert-True (Test-Path $db) 'data/scoz.db was not created'
+    $code = "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(list(c.execute('SELECT version,name FROM schema_migrations ORDER BY version')))"
+    $rows = Invoke-DbPython $code
+    Assert-True ($rows -eq "[(1, 'core_foundation')]") 'Migration 1 metadata mismatch'
+}
+function Add-ProductSentinel {
+    $code = "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); x='2000-01-01T00:00:00+00:00'; q=c.execute('INSERT INTO products (is_owned,created_at,updated_at) VALUES (0,?,?)',(x,x)); c.commit(); print(q.lastrowid)"
+    return [int](Invoke-DbPython $code)
+}
+function Assert-ProductSentinel([int]$ProductId) {
+    $code = "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print('|'.join(map(str,c.execute('SELECT is_owned,created_at,updated_at FROM products WHERE id=?',(int(sys.argv[2]),)).fetchone())))"
+    $row = Invoke-DbPython $code @($ProductId.ToString())
+    Assert-True ($row -eq '0|2000-01-01T00:00:00+00:00|2000-01-01T00:00:00+00:00') 'Product sentinel changed or disappeared'
+}
 
 try {
     New-Item -ItemType Directory -Path $app -Force | Out-Null
@@ -49,6 +72,8 @@ try {
     Write-Host '1. CLEAN FIRST RUN'
     Invoke-Start | Out-Null; Health
     Assert-True (Test-Path (Join-Path $app 'runtime/python.exe')) 'Runtime was not prepared'
+    Assert-CoreMigration
+    $productSentinelId = Add-ProductSentinel
 
     Write-Host '2. SECOND RUN / REUSE'
     Stop-Scoz
@@ -62,6 +87,8 @@ try {
     ).Count
     Assert-True ((Get-Item (Join-Path $app 'runtime/python.exe')).LastWriteTimeUtc -eq $pythonTime) 'Runtime was rebuilt instead of reused'
     Assert-True ($countAfter -eq $countBefore) 'Reuse unexpectedly installed packages'
+    Assert-CoreMigration
+    Assert-ProductSentinel $productSentinelId
 
     Write-Host '3. ALREADY RUNNING'
     $originalPid = [int](Get-Content (Join-Path $app 'data/server.pid'))
@@ -83,6 +110,7 @@ try {
     Assert-True $repairRecorded 'Repair was not recorded'
     Assert-True (Test-Path (Join-Path $app 'data/sentinel.txt')) 'data/ sentinel was lost during repair'
     Assert-True ((Get-Content (Join-Path $app 'data/sentinel.txt')) -eq 'preserve') 'data/ sentinel changed during repair'
+    Assert-ProductSentinel $productSentinelId
 
     Write-Host '5 + 8. DAMAGED RUNTIME / DATA PRESERVATION'
     Stop-Scoz
@@ -90,6 +118,7 @@ try {
     Invoke-Start | Out-Null; Health
     Assert-True (Test-Path (Join-Path $app 'data/sentinel.txt')) 'data/ sentinel was lost during rebuild'
     Assert-True ((Get-Content (Join-Path $app 'data/sentinel.txt')) -eq 'preserve') 'data/ sentinel changed during rebuild'
+    Assert-ProductSentinel $productSentinelId
 
     Write-Host '6. FOREIGN PORT'
     Stop-Scoz
@@ -101,6 +130,8 @@ try {
 
     Write-Host '7. SPACES + CYRILLIC PATH'
     Invoke-Start | Out-Null; Health
+    Assert-CoreMigration
+    Assert-ProductSentinel $productSentinelId
     Write-Host 'PASS: all 8 PR1 Windows smoke scenarios'
 }
 finally {
