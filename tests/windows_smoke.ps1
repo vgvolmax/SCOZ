@@ -1,8 +1,26 @@
 param([ValidateSet('Full')][string]$Mode = 'Full')
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$sandbox = Join-Path ([IO.Path]::GetTempPath()) ('SCOZ smoke Тест с пробелами ' + [guid]::NewGuid())
-$app = Join-Path $sandbox 'SCOZ приложение'
+$cyrillicTest = -join @(
+    [char]0x0422,
+    [char]0x0435,
+    [char]0x0441,
+    [char]0x0442
+)
+$cyrillicApp = -join @(
+    [char]0x043F,
+    [char]0x0440,
+    [char]0x0438,
+    [char]0x043B,
+    [char]0x043E,
+    [char]0x0436,
+    [char]0x0435,
+    [char]0x043D,
+    [char]0x0438,
+    [char]0x0435
+)
+$sandbox = Join-Path ([IO.Path]::GetTempPath()) ("SCOZ smoke $cyrillicTest with spaces " + [guid]::NewGuid())
+$app = Join-Path $sandbox "SCOZ $cyrillicApp"
 $env:SCOZ_NO_BROWSER = '1'
 
 function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
@@ -35,9 +53,15 @@ try {
     Write-Host '2. SECOND RUN / REUSE'
     Stop-Scoz
     $pythonTime = (Get-Item (Join-Path $app 'runtime/python.exe')).LastWriteTimeUtc
+    $countBefore = @(
+        Select-String -Path (Join-Path $app 'data/launcher.log') -SimpleMatch 'runtime setup: installing requirements' -ErrorAction SilentlyContinue
+    ).Count
     Invoke-Start | Out-Null; Health
+    $countAfter = @(
+        Select-String -Path (Join-Path $app 'data/launcher.log') -SimpleMatch 'runtime setup: installing requirements' -ErrorAction SilentlyContinue
+    ).Count
     Assert-True ((Get-Item (Join-Path $app 'runtime/python.exe')).LastWriteTimeUtc -eq $pythonTime) 'Runtime was rebuilt instead of reused'
-    Assert-True ((Get-Content (Join-Path $app 'data/launcher.log') -Tail 12) -notmatch 'installing requirements') 'Reuse unexpectedly installed packages'
+    Assert-True ($countAfter -eq $countBefore) 'Reuse unexpectedly installed packages'
 
     Write-Host '3. ALREADY RUNNING'
     $originalPid = [int](Get-Content (Join-Path $app 'data/server.pid'))
@@ -47,16 +71,25 @@ try {
 
     Write-Host '4. DEPENDENCY REPAIR'
     Stop-Scoz
+    Set-Content (Join-Path $app 'data/sentinel.txt') 'preserve'
     Remove-Item (Join-Path $app 'runtime/Lib/site-packages/fastapi') -Recurse -Force
     Invoke-Start | Out-Null; Health
-    Assert-True ((Get-Content (Join-Path $app 'data/launcher.log') -Tail 20) -match 'dependencies need repair') 'Repair was not recorded'
+    $repairRecorded = @(
+        Select-String `
+            -Path (Join-Path $app 'data/launcher.log') `
+            -SimpleMatch 'runtime setup: dependencies need repair' `
+            -ErrorAction SilentlyContinue
+    ).Count -gt 0
+    Assert-True $repairRecorded 'Repair was not recorded'
+    Assert-True (Test-Path (Join-Path $app 'data/sentinel.txt')) 'data/ sentinel was lost during repair'
+    Assert-True ((Get-Content (Join-Path $app 'data/sentinel.txt')) -eq 'preserve') 'data/ sentinel changed during repair'
 
     Write-Host '5 + 8. DAMAGED RUNTIME / DATA PRESERVATION'
     Stop-Scoz
-    Set-Content (Join-Path $app 'data/sentinel.txt') 'preserve'
     Set-Content (Join-Path $app 'runtime/python.exe') 'damaged'
     Invoke-Start | Out-Null; Health
-    Assert-True ((Get-Content (Join-Path $app 'data/sentinel.txt')) -eq 'preserve') 'data/ sentinel was lost'
+    Assert-True (Test-Path (Join-Path $app 'data/sentinel.txt')) 'data/ sentinel was lost during rebuild'
+    Assert-True ((Get-Content (Join-Path $app 'data/sentinel.txt')) -eq 'preserve') 'data/ sentinel changed during rebuild'
 
     Write-Host '6. FOREIGN PORT'
     Stop-Scoz

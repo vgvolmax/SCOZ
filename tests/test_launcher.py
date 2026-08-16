@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
+
 import launcher
 
 
@@ -67,18 +69,14 @@ def test_no_browser_switch(monkeypatch):
 
 def test_child_failure_and_timeout():
     dead = Mock(); dead.poll.return_value = 7; dead.returncode = 7
-    try:
+    with pytest.raises(RuntimeError, match="код 7"):
         launcher.wait_until_ready(dead, timeout=.01)
-    except RuntimeError as exc:
-        assert "код 7" in str(exc)
     alive = Mock(); alive.poll.return_value = None
-    try:
+    with pytest.raises(RuntimeError, match="вовремя"):
         launcher.wait_until_ready(alive, timeout=0)
-    except RuntimeError as exc:
-        assert "вовремя" in str(exc)
 
 
 def test_wrapper_is_sole_pid_writer():
-    wrapper = Path("RUN_SERVER.cmd").read_text()
-    source = Path("launcher.py").read_text()
+    wrapper = Path("RUN_SERVER.cmd").read_text(encoding="utf-8")
+    source = Path("launcher.py").read_text(encoding="utf-8")
     assert "server.pid" in wrapper and "server.pid" not in source
