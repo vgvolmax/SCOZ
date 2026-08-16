@@ -74,7 +74,13 @@ try {
     Set-Content (Join-Path $app 'data/sentinel.txt') 'preserve'
     Remove-Item (Join-Path $app 'runtime/Lib/site-packages/fastapi') -Recurse -Force
     Invoke-Start | Out-Null; Health
-    Assert-True ((Get-Content (Join-Path $app 'data/launcher.log') -Tail 20) -match 'dependencies need repair') 'Repair was not recorded'
+    $repairRecorded = @(
+        Select-String `
+            -Path (Join-Path $app 'data/launcher.log') `
+            -SimpleMatch 'runtime setup: dependencies need repair' `
+            -ErrorAction SilentlyContinue
+    ).Count -gt 0
+    Assert-True $repairRecorded 'Repair was not recorded'
     Assert-True (Test-Path (Join-Path $app 'data/sentinel.txt')) 'data/ sentinel was lost during repair'
     Assert-True ((Get-Content (Join-Path $app 'data/sentinel.txt')) -eq 'preserve') 'data/ sentinel changed during repair'
 
