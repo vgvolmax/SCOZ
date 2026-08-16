@@ -54,37 +54,47 @@ source operation
 
 ## 4. Project-local state and database path
 
-Production DB path строго `data/scoz.db`, вычисляемый как `DATA_DIR / "scoz.db"`. `backend.config` добавляет `DB_PATH`: если environment variable `SCOZ_DB_PATH` задан, его значение преобразуется в `Path` и используется без привязки к `ROOT_DIR`; иначе используется production path. Override предназначен только для automated tests/process launch, не является UI setting и не сохраняется.
+Production DB path строго `data/scoz.db`. `backend.config` задаёт `DEFAULT_DB_PATH = DATA_DIR / "scoz.db"` и выполняет late resolution:
+
+```python
+def resolve_db_path() -> Path:
+    override = os.environ.get("SCOZ_DB_PATH", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    return DEFAULT_DB_PATH
+```
+
+Environment-resolved global `DB_PATH` не является operational source of truth. `SCOZ_DB_PATH` читается при каждой операции, которой нужен DB path, а не один раз при импорте модуля. Override предназначен только для automated tests/process launch, не является UI setting и не сохраняется.
 
 Минимальный user-owned layout:
 
 ```text
 data/
 ├─ scoz.db
-├─ imports/
-├─ backups/
+├─ imports/              # создаётся lazily первой ingestion feature, сохраняющей artifacts
+├─ backups/              # создаётся lazily первой migration, которой нужен backup
 ├─ startup_status.json
 ├─ launcher.log
 ├─ server_console.log
 └─ server.pid
 ```
 
-`initialize_database()` создаёт parent DB directory, `data/imports/` и `data/backups/`. `imports/` только резервируется для будущих source artifacts; PR2 не копирует XLSX. `backups/` резервируется для будущих рискованных migrations. Существующие PR1 startup files не переносятся и не переименовываются. Весь `data/` остаётся gitignored, не находится в `runtime/` и переживает repair/rebuild.
+В PR2 `initialize_database()` создаёт только parent directory фактически resolved DB path, создаёт/открывает эту SQLite DB и выполняет migrations. PR2 физически не создаёт `data/imports/` или `data/backups/`: это зарезервированные canonical future paths, создаваемые lazily первой реально использующей их feature/migration. Поэтому temp override остаётся изолированным. PR2 не копирует XLSX. Существующие PR1 startup files не переносятся и не переименовываются. Весь production `data/` остаётся gitignored, не находится в `runtime/` и переживает repair/rebuild.
 
 ## 5. File-by-file implementation contract
 
 | File | Action | Responsibility | Must not contain |
 |---|---|---|---|
-| `backend/config.py` | Modify | Add exact `SCOZ_DB_PATH`/`DB_PATH` contract | SQL, UI setting, DB connection |
+| `backend/config.py` | Modify | Define `DEFAULT_DB_PATH` and late `resolve_db_path()` using `SCOZ_DB_PATH` | Environment-resolved global `DB_PATH`, SQL, UI setting, DB connection |
 | `backend/domain/__init__.py` | Add | Package marker and intentional public domain exports | SQL, persistence setup |
 | `backend/domain/product.py` | Add | Frozen/simple dataclasses `Product`, `ProductExternalIdentity`; product exceptions | `sqlite3.Row`, SQL, API models, feature metrics |
 | `backend/domain/lineage.py` | Add | `ImportStatus`, `ImportBatch`, `SourceArtifact`, lineage errors, UTC helper and `normalized_payload_sha256` | SQL, parser, jobs, content-addressable storage |
 | `backend/persistence/__init__.py` | Add | Package marker | Business/domain logic |
-| `backend/persistence/connection.py` | Add | Connection factory and transaction context manager | Pool, global connection, migrations registry |
-| `backend/persistence/database.py` | Add | Create data directories and orchestrate runner for configured DB | Table SQL, repositories, launcher/UI logic |
+| `backend/persistence/connection.py` | Add | Connection factory and transaction context manager with late path resolution and explicit optional path injection for tests | Pool, global connection, migrations registry |
+| `backend/persistence/database.py` | Add | Late-resolve or accept a specific DB path, create only its parent, and orchestrate runner for that DB | Eager `imports/`/`backups/` creation, table SQL, repositories, launcher/UI logic |
 | `backend/persistence/migrations/__init__.py` | Add | Package marker | Migration discovery magic |
 | `backend/persistence/migrations/runner.py` | Add | Ordered registry, `schema_migrations`, atomic forward-only execution | Feature/application logic, backup platform, down migrations |
-| `backend/persistence/migrations/migration_001_core_foundation.py` | Add | `up(conn)` and SQL for exactly four core business tables/indexes | `schema_migrations`, FastAPI/UI, future tables |
+| `backend/persistence/migrations/migration_001_core_foundation.py` | Add | `up(conn)` and separate `conn.execute(...)` DDL statements for exactly four core business tables/indexes inside the runner-owned transaction | Transaction control, `Connection.executescript()`, `schema_migrations`, FastAPI/UI, future tables |
 | `backend/persistence/repositories/__init__.py` | Add | Package marker and repository exports | SQL unrelated to repositories |
 | `backend/persistence/repositories/products.py` | Add | `ProductRepository`, row mapping, product persistence error mapping | Name/photo matching, commits when externally transaction-managed |
 | `backend/persistence/repositories/lineage.py` | Add | `LineageRepository`, row mapping, lineage persistence error mapping | Parser/import orchestration, job state |
@@ -111,9 +121,9 @@ Domain objects are plain typed dataclasses/enums and never expose `sqlite3.Row`.
 
 `ImportStatus` has exactly `RUNNING`, `SUCCESS`, `PARTIAL_SUCCESS`, `FAILED`. `ImportBatch(id, source, import_kind, status, started_at, finished_at)` is one import/sync operation and provenance root. Creation always produces `RUNNING` with `finished_at=None`. The only allowed transition is `RUNNING` to one terminal status. Re-finishing or finishing with `RUNNING` raises `InvalidImportStatusTransition`; no retry/state-machine platform is added.
 
-`SourceArtifact(id, import_batch_id, artifact_kind, original_name, content_sha256, byte_size, stored_relpath, created_at)` describes a concrete input. `stored_relpath`, when present, must be a normalized relative path without `..`; absolute paths raise `InvalidStoredRelativePath`. Metadata may exist with `stored_relpath=None`, and PR2 archives no files.
+`SourceArtifact(id, import_batch_id, artifact_kind, original_name, content_sha256, byte_size, stored_relpath, created_at)` describes a concrete input. `content_sha256` is exactly 64 lowercase hexadecimal characters representing SHA-256; invalid hash metadata raises `InvalidSourceArtifactMetadata` without introducing a generic hash-validation framework. `byte_size` must be non-negative; the repository validates it before any SQL mutation and raises `InvalidSourceArtifactMetadata` on violation. `stored_relpath`, when present, must satisfy the approved normalized relative-path contract: it is not absolute, contains no parent traversal `..`, and is otherwise a valid relative path; violations raise `InvalidStoredRelativePath`. Metadata may exist with `stored_relpath=None`, and PR2 archives no files.
 
-Narrow errors are `ProductNotFound`, `ExternalIdentityConflict`, `ImportBatchNotFound`, `InvalidImportStatusTransition`, `InvalidStoredRelativePath`, plus `DatabaseMigrationError` at the runner boundary. Repositories catch constraint-specific `sqlite3.IntegrityError` and map it to these stable errors; unrelated DB errors propagate as database failures rather than masquerading as domain errors. Raw `IntegrityError` is not an application contract.
+Narrow errors are `ProductNotFound`, `ExternalIdentityConflict`, `ImportBatchNotFound`, `InvalidImportStatusTransition`, `InvalidSourceArtifactMetadata`, `InvalidStoredRelativePath`, plus `DatabaseMigrationError` at the runner boundary. For `LineageRepository.add_source_artifact(...)`, a missing `batch_id` raises `ImportBatchNotFound`; negative `byte_size` or invalid `content_sha256` raises `InvalidSourceArtifactMetadata`; an absolute, parent-traversing, or otherwise invalid `stored_relpath` raises `InvalidStoredRelativePath`; valid input returns `SourceArtifact`. Application validation occurs before SQL mutation. The DB `CHECK (byte_size >= 0)` remains defense-in-depth, not primary application validation. Repositories catch constraint-specific `sqlite3.IntegrityError` and map it to these stable errors; unrelated DB errors propagate as database failures rather than masquerading as domain errors. Raw `IntegrityError` is not an application contract.
 
 ## 7. Exact schema
 
@@ -169,7 +179,7 @@ No additional index is created because PR2 interfaces query by primary key only.
 | `import_batch_id` | `INTEGER` | NOT NULL | FK → `import_batches.id` ON DELETE CASCADE; indexed | Provenance root |
 | `artifact_kind` | `TEXT` | NOT NULL | — | Artifact type |
 | `original_name` | `TEXT` | NULL, DEFAULT NULL | — | Source-visible filename |
-| `content_sha256` | `TEXT` | NOT NULL | — | SHA-256 hex of artifact bytes |
+| `content_sha256` | `TEXT` | NOT NULL | — | 64-character lowercase hexadecimal SHA-256 of artifact bytes |
 | `byte_size` | `INTEGER` | NOT NULL | CHECK (`byte_size >= 0`) | Artifact byte count |
 | `stored_relpath` | `TEXT` | NULL, DEFAULT NULL | — | Relative path inside user-owned data |
 | `created_at` | `TEXT` | NOT NULL | — | UTC metadata timestamp |
@@ -178,11 +188,13 @@ No additional index is created because PR2 interfaces query by primary key only.
 
 ## 8. Connection, transaction and repository boundaries
 
-`connect(db_path: Path = DB_PATH) -> sqlite3.Connection` creates one stdlib connection, sets `row_factory = sqlite3.Row`, executes `PRAGMA foreign_keys = ON`, verifies it reads back as `1`, and returns it. There is no pool or global connection. Lifecycle stays under `backend/persistence/**`.
+`connect(db_path: Path | None = None) -> sqlite3.Connection` computes `path = db_path if db_path is not None else resolve_db_path()` at call time, creates one stdlib connection to that path, sets `row_factory = sqlite3.Row`, executes `PRAGMA foreign_keys = ON`, verifies it reads back as `1`, and returns it. There is no pool or global connection. Lifecycle stays under `backend/persistence/**`.
 
-`transaction(db_path: Path = DB_PATH)` is a persistence context manager: open connection, yield it, commit on success, rollback on exception, close always. Repository constructors require `sqlite3.Connection`. They never open connections and never commit/rollback. Consequently one simple application mutation uses `with transaction() as conn: Repository(conn).method(...)`; a future ingestion operation constructs both repositories with the same yielded connection and atomically stores related rows. This is the exact shared-transaction mechanism; no UnitOfWork abstraction is introduced.
+`transaction(db_path: Path | None = None)` computes `path = db_path if db_path is not None else resolve_db_path()` at call time and is a persistence context manager: open connection, yield it, commit on success, rollback on exception, close always. Repository constructors require `sqlite3.Connection`. They never open connections and never commit/rollback. Consequently one simple application mutation uses `with transaction() as conn: Repository(conn).method(...)`; a future ingestion operation constructs both repositories with the same yielded connection and atomically stores related rows. This is the exact shared-transaction mechanism; no UnitOfWork abstraction is introduced.
 
-SQL is permitted only in `backend/persistence/**`. Domain, application, routes, launcher and UI execute none. Production has no delete APIs in PR2. FK cascades protect explicit parent deletion but must never implement historical correction; no soft-delete framework is added.
+`initialize_database(db_path: Path | None = None) -> None` likewise computes `path = db_path if db_path is not None else resolve_db_path()` at call time, creates only `path.parent`, and initializes/migrates that concrete DB. These three operational entry points therefore observe an updated `SCOZ_DB_PATH` without module reload while retaining explicit path injection for tests.
+
+Production SQL is permitted only under `backend/persistence/**`. Domain, application, routes, launcher and UI execute none. Isolated test-only SQL is allowed under `tests/**` solely for contract verification when it is not imported by production code, does not represent production schema, and is not created by migrations. This narrow allowance covers the synthetic revision fixture; it does not weaken the production boundary. Production has no delete APIs in PR2. FK cascades protect explicit parent deletion but must never implement historical correction; no soft-delete framework is added.
 
 Exact interfaces:
 
@@ -230,9 +242,9 @@ MIGRATIONS = [
 
 Each module exports `up(conn: sqlite3.Connection) -> None`, knows neither FastAPI nor UI, and contains no application logic. Runner opens DB, creates `schema_migrations`, reads applied versions, validates that an applied version has the registry name, computes pending entries, and executes them in ascending version order. Unknown applied versions or name mismatch fail startup rather than guessing.
 
-For every pending migration, runner explicitly begins one transaction; `up(conn)` and insertion of `(version, name, applied_at)` occur in that transaction. Success commits both. Any exception rolls back both, wraps with `DatabaseMigrationError` preserving the cause, and stops. The failed version is absent and partial changes are not accepted as applied. A second run is a no-op. Migrations are forward-only; PR2 has no `down`.
+For every pending migration, runner explicitly begins one transaction; `up(conn)` and insertion of `(version, name, applied_at)` occur in that transaction. The runner is the only owner of `BEGIN`, `COMMIT`, and `ROLLBACK`. Migration `up(conn)` functions never call `commit()`, `rollback()`, or `BEGIN`, and execute SQL through separate `conn.execute(...)` statements (or `conn.executemany(...)` only when genuinely necessary). **Migration modules MUST NOT use sqlite3.Connection.executescript() under the runner-owned transaction contract.** In particular, migration 001 executes each DDL statement separately with `conn.execute(...)` inside the already-open runner transaction. Success commits schema changes and metadata together. Any exception rolls back both, wraps with `DatabaseMigrationError` preserving the cause, and stops. The failed version is absent and partial changes are not accepted as applied. A second run is a no-op. Migrations are forward-only; PR2 has no `down`.
 
-PR2 builds a new foundation, so migration 001 performs no backup and stage `database_backup` is not emitted. A future migration that can irreversibly affect existing user data must define and create a pre-migration copy under `data/backups/` in that PR's spec. PR2 adds neither a universal backup platform nor WB-specific version backup helper.
+PR2 builds a new foundation, so migration 001 performs no backup, does not create `data/backups/`, and stage `database_backup` is not emitted. A future migration that can irreversibly affect existing user data must have its PR-specific spec define the backup and create both the destination directory and pre-migration copy under `data/backups/` at that time. PR2 adds neither a backup directory/platform nor WB-specific version backup helper.
 
 Migration failure propagates to existing `launcher.launch()` catch: backend is not started, browser is not opened, return code is non-zero, `startup_status.json` becomes `failed`, and `launcher.log` contains the `migration` stage and understandable error. Technical traceback may go to technical logging, while user status remains concise. No persistent operation/job table is created.
 
@@ -281,9 +293,9 @@ PR2 creates no `ObservationGrain`, granularity registry, timezone engine or `Ana
 
 1. Clean temp DB migrates to version 1 and contains exactly the four core production tables plus `schema_migrations`.
 2. Second run is a no-op and version 1 appears once.
-3. Injected synthetic failing registry migration rolls back its schema changes and version row.
+3. Injected synthetic failing registry migration first executes `CREATE TABLE synthetic_first (...)` and then deliberately fails. `run_migrations()` raises `DatabaseMigrationError`; afterward `synthetic_first` does not exist and the failed version is absent from `schema_migrations`, proving atomic rollback of DDL and migration metadata.
 4. Every factory connection reports `PRAGMA foreign_keys = 1`.
-5. `SCOZ_DB_PATH` targets a temp DB without touching production data.
+5. `SCOZ_DB_PATH` is resolved at operation time, targets a temp DB without touching production data, and can change between calls without reloading modules.
 6. All PR3+ feature table names are absent.
 
 ### Product tests
@@ -292,7 +304,7 @@ Create owned and non-owned Product; get both; change ownership and `updated_at`;
 
 ### Lineage tests
 
-Create RUNNING batches and independently finish fresh batches as SUCCESS, PARTIAL_SUCCESS and FAILED. Assert terminal/repeated/RUNNING finish is rejected. Attach artifact and round-trip SHA/name/size/path; verify correct parent; reject invalid FK, negative size and unsafe stored path. Database CHECK/FK failures are exercised without exposing raw integrity errors as the repository contract.
+Create RUNNING batches and independently finish fresh batches as SUCCESS, PARTIAL_SUCCESS and FAILED. Assert terminal/repeated/RUNNING finish is rejected. Attach artifact and round-trip SHA/name/size/path; verify correct parent. Assert missing batch raises `ImportBatchNotFound`, negative size and invalid SHA raise `InvalidSourceArtifactMetadata`, and absolute/parent-traversing/otherwise invalid stored paths raise `InvalidStoredRelativePath`, all before SQL mutation where applicable. Database CHECK/FK constraints are exercised as defense-in-depth without exposing raw integrity errors as the repository contract.
 
 ### Launcher regression tests
 
@@ -314,12 +326,12 @@ Migration 001 must not create any of those tables, `BenchmarkMember`, `RelevantQ
 
 ## 14. Acceptance / Definition of Done
 
-1. Clean `data/scoz.db` is created automatically through the configured production path.
+1. Clean `data/scoz.db` is created automatically through the late-resolved production path; PR2 creates neither `data/imports/` nor `data/backups/` eagerly.
 2. Migration 001 applies exactly once; repeated startup is migration-safe.
 3. Product creation, lookup and mutable ownership work through `ProductRepository`.
 4. External identity is unique by source/type/value/account scope.
 5. ImportBatch and optional SourceArtifact form an explicit provenance root.
-6. SQL exists only under `backend/persistence/**`.
+6. Production SQL exists only under `backend/persistence/**`; isolated synthetic SQL under `tests/**` is limited to contract verification and never represents or creates production schema.
 7. Migration 001 contains exactly four business tables; future snapshot/feature tables are absent.
 8. Test-only fixture proves duplicate, corrected revision, new period and new dimension semantics without production snapshot infrastructure.
 9. Normalized payload hash is deterministic and changes with normalized value.
@@ -332,4 +344,4 @@ Migration 001 must not create any of those tables, `BenchmarkMember`, `RelevantQ
 
 ## 15. Spec self-review gates
 
-Before PR2 implementation handoff, reviewers verify: no unresolved placeholders; no production PR3+ entities; no SQL outside persistence; no DB dependency/ORM; migrations precede new server launch; lineage supports artifact and API provenance; duplicate/correction behavior is unambiguous; missing/incompatible grain is never invented or mixed; and every Definition-of-Done item maps to the automated or Windows verification above.
+Before PR2 implementation handoff, reviewers verify: no unresolved placeholders; no production PR3+ entities; production SQL remains under persistence and only isolated contract-fixture SQL exists under tests; no DB dependency/ORM; migrations precede new server launch; runner alone owns transaction boundaries and migration modules do not use `executescript()`; DB path is late-resolved; `imports/` and `backups/` are lazy; lineage metadata failures map to named errors; duplicate/correction behavior is unambiguous; missing/incompatible grain is never invented or mixed; and every Definition-of-Done item maps to the automated or Windows verification above.
