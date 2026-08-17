@@ -42,6 +42,8 @@ Evidence workbook 2:
 - `Регион: г. Санкт-Петербург, Россия`;
 - `Сколько позиций в выдаче: 112`.
 
+Across the 224 verified product rows, 220 `Отзывы` values use the rating/count form and four use the exact missing sentinel `— ` (U+2014 EM DASH followed by U+0020 SPACE). The sentinel occurs for Product IDs `4218542117` and `4906881609` in both Cluster exports.
+
 Filename and worksheet name are evidence metadata, not report-detection inputs. Detection never uses `explainer_report`, filename, worksheet name, or fuzzy similarity.
 
 ### Explicitly excluded evidence
@@ -210,7 +212,12 @@ The active source value is already percentage points: `10%` becomes `Decimal("10
 
 ### Reviews
 
-`Отзывы` has exact composite semantics exemplified by `4,8 (180 шт.)`, `4,8 (33 026 шт.)`, and `5,0 (11 шт.)`. Parse the decimal-comma rating and ordinary-space-grouped integer count into `rating: Decimal` and `reviews_count: int`. Thus `4,8 (33 026 шт.)` becomes `Decimal("4.8")` and `33026`. Do not leave count embedded only in source text. No missing sentinel is evidenced.
+`Отзывы` has exactly two evidenced source forms in v1:
+
+1. Rating/count text exemplified by `4,8 (180 шт.)`, `4,8 (33 026 шт.)`, and `5,0 (11 шт.)`. Parse the decimal-comma rating and ordinary-space-grouped integer count into `rating: Decimal` and `reviews_count: int`. Thus `4,8 (33 026 шт.)` becomes `Decimal("4.8")` and `33026`. Do not leave count embedded only in source text.
+2. The exact missing sentinel `— `, consisting of two Unicode code points: U+2014 EM DASH followed by U+0020 SPACE. Normalize it to `rating = None` and `reviews_count = None`.
+
+The Reviews sentinel is distinct from the CPO sentinel `—`, which is U+2014 alone with no trailing space. Reviews parsing must not apply a generic `strip()` or a generic em-dash-to-null rule: `—`, `-`, ` — `, blank, and `Нет данных` are not accepted Reviews values. Any source form other than the two evidenced forms above is unsupported in v1.
 
 ### Buyer price
 
@@ -236,7 +243,12 @@ Preserve and split all three facts: exact source `delivery_label`, integer `deli
 
 ## 12. Missing-value semantics
 
-The evidence contains no generic blank metric fields. The only evidenced semantic missing state is the exact CPO em dash `—`, meaning `UNAVAILABLE`, distinct from `Выключено`/`DISABLED`. No other column accepts `—` as missing.
+The evidence contains no generic blank metric fields. It proves exactly two field-specific semantic missing cases:
+
+1. CPO accepts exact `—` (U+2014 alone) and normalizes it to `cpo_state = UNAVAILABLE` and `cpo_pct = None`, distinct from `Выключено`/`DISABLED`.
+2. Reviews accepts exact `— ` (U+2014 followed by U+0020) and normalizes it to `rating = None` and `reviews_count = None`.
+
+These forms are not interchangeable, and there is no generic em-dash-to-null rule. No other field has an evidenced missing sentinel.
 
 There is no generic `blank → None`, `"-" → None`, `"Нет данных" → None`, or `0 → None` behavior. An unexpected blank, string, or sentinel in a required field is a row validation error. Explicit numeric zero remains zero.
 
@@ -263,6 +275,8 @@ For duplicate/revision hashing, the normalized source-value payload contains exa
 17. `delivery_min_days`
 18. `delivery_max_days`
 19. `price_index_pct`
+
+When the exact Reviews sentinel `— ` is present, fields 11 and 12 remain in this canonical 19-field payload with `rating = None` and `reviews_count = None`; the payload composition and order do not change.
 
 Do not include `product_id`, `search_query_id`, `cluster_id`, `observed_at`, `revision`, `supersedes_snapshot_id`, `payload_sha256`, `import_batch_id`, `source_artifact_id`, or `imported_at`: those are identity, logical-key, revision, or provenance fields. Decimal hashing must later reuse canonical deterministic decimal text and never float serialization.
 
@@ -326,6 +340,8 @@ Recoverable row-level conditions are:
 - invalid delivery format;
 - unexpected missing row value;
 - product-row formula.
+
+The exact Reviews sentinel `— ` is a valid source value. It is neither `invalid reviews format` nor `unexpected missing row value`, and it does not cause the row to be skipped. Any other unsupported Reviews format remains a recoverable row error.
 
 If zero usable product rows remain, the import outcome is fatal. Exact application error classes/codes belong to a later PR4 Implementation Spec, not this factual contract.
 
