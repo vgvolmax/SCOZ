@@ -94,7 +94,10 @@ def test_initialize_database_creates_only_parent_and_migrated_database(tmp_path)
     with sqlite3.connect(db_path) as verification:
         assert verification.execute(
             "SELECT version, name FROM schema_migrations"
-        ).fetchall() == [(1, "core_foundation")]
+        ).fetchall() == [
+            (1, "core_foundation"),
+            (2, "ozon_products_import"),
+        ]
 
 
 def test_initialize_database_is_idempotent_and_resolves_environment_late(
@@ -113,4 +116,7 @@ def test_initialize_database_is_idempotent_and_resolves_environment_late(
         with sqlite3.connect(path) as verification:
             assert verification.execute(
                 "SELECT version, name FROM schema_migrations"
-            ).fetchall() == [(1, "core_foundation")]
+            ).fetchall() == [
+                (1, "core_foundation"),
+                (2, "ozon_products_import"),
+            ]

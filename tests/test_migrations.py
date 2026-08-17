@@ -28,13 +28,14 @@ def test_migration_001_creates_exact_schema_once(tmp_path):
     with sqlite3.connect(db_path) as connection:
         assert connection.execute(
             "SELECT version, name FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(1, "core_foundation")]
+        ).fetchall() == [(1, "core_foundation"), (2, "ozon_products_import")]
         assert _application_tables(connection) == {
             "schema_migrations",
             "products",
             "product_external_identities",
             "import_batches",
             "source_artifacts",
+            "product_snapshots",
         }
         columns = {
             table: [tuple(row[1:6]) for row in connection.execute(f"PRAGMA table_info({table})")]
@@ -66,7 +67,17 @@ def test_migration_001_creates_exact_schema_once(tmp_path):
             ("import_kind", "TEXT", 1, None, 0),
             ("status", "TEXT", 1, None, 0),
             ("started_at", "TEXT", 1, None, 0),
-            ("finished_at", "TEXT", 0, "NULL", 0),
+                ("finished_at", "TEXT", 0, "NULL", 0),
+                ("report_generated_on", "TEXT", 0, None, 0),
+                ("report_window_days", "INTEGER", 0, None, 0),
+                ("rows_seen", "INTEGER", 0, None, 0),
+                ("rows_accepted", "INTEGER", 0, None, 0),
+                ("rows_skipped", "INTEGER", 0, None, 0),
+                ("duplicate_observations", "INTEGER", 0, None, 0),
+                ("new_observations", "INTEGER", 0, None, 0),
+                ("corrected_revisions", "INTEGER", 0, None, 0),
+                ("warnings_count", "INTEGER", 0, None, 0),
+                ("row_errors_total", "INTEGER", 0, None, 0),
         ]
         assert columns["source_artifacts"] == [
             ("id", "INTEGER", 0, None, 1),

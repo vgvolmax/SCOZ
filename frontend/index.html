@@ -22,11 +22,9 @@
         <h1 id="page-title">Товары</h1>
         <p id="page-description">Здесь появятся ваши товары после добавления данных.</p>
       </header>
-      <section class="empty-state" aria-labelledby="empty-title">
-        <div class="empty-icon" aria-hidden="true">□</div>
-        <h2 id="empty-title">Пока нет данных</h2>
-        <p id="empty-description">Начните работу в разделе «Данные». Содержимое появится здесь после настройки.</p>
-      </section>
+      <section id="products-view" class="view"><div id="products-status" class="status" aria-live="polite">Загрузка товаров…</div><div id="products-list"></div></section>
+      <section id="data-view" class="view" hidden><article class="card"><h2>Импорт отчёта Ozon</h2><label for="ozon-products-file">Отчёт «Товары на Ozon» (.xlsx)</label><input id="ozon-products-file" type="file" accept=".xlsx"><span id="selected-file-name">Файл не выбран</span><button id="import-submit" type="button" disabled>Импортировать</button><div id="import-status" class="status" aria-live="polite">Выберите XLSX-файл</div></article><article class="card"><h2>История импортов</h2><div id="import-history">История пуста</div></article></section>
+      <section id="settings-view" class="view" hidden><div class="empty-state"><h2>Настройки пока не требуются</h2><p>Локальное приложение готово к работе.</p></div></section>
     </main>
   </div>
   <script src="/assets/js/app.js" defer></script>

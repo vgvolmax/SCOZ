@@ -52,7 +52,7 @@ function Assert-CoreMigration {
     Assert-True (Test-Path $db) 'data/scoz.db was not created'
     $code = "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(list(c.execute('SELECT version,name FROM schema_migrations ORDER BY version')))"
     $rows = Invoke-DbPython $code
-    Assert-True ($rows -eq "[(1, 'core_foundation')]") 'Migration 1 metadata mismatch'
+    Assert-True ($rows -eq "[(1, 'core_foundation'), (2, 'ozon_products_import')]") 'Migration metadata mismatch'
 }
 function Add-ProductSentinel {
     $code = "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); x='2000-01-01T00:00:00+00:00'; q=c.execute('INSERT INTO products (is_owned,created_at,updated_at) VALUES (0,?,?)',(x,x)); c.commit(); print(q.lastrowid)"
@@ -99,7 +99,10 @@ try {
     Write-Host '4. DEPENDENCY REPAIR'
     Stop-Scoz
     Set-Content (Join-Path $app 'data/sentinel.txt') 'preserve'
-    Remove-Item (Join-Path $app 'runtime/Lib/site-packages/fastapi') -Recurse -Force
+    $importsPath = Join-Path $app 'data/imports'
+    New-Item -ItemType Directory -Force $importsPath | Out-Null
+    Set-Content (Join-Path $importsPath 'sentinel.txt') 'preserve'
+    Remove-Item (Join-Path $app 'runtime/Lib/site-packages/openpyxl') -Recurse -Force
     Invoke-Start | Out-Null; Health
     $repairRecorded = @(
         Select-String `
@@ -110,6 +113,7 @@ try {
     Assert-True $repairRecorded 'Repair was not recorded'
     Assert-True (Test-Path (Join-Path $app 'data/sentinel.txt')) 'data/ sentinel was lost during repair'
     Assert-True ((Get-Content (Join-Path $app 'data/sentinel.txt')) -eq 'preserve') 'data/ sentinel changed during repair'
+    Assert-True ((Get-Content (Join-Path $importsPath 'sentinel.txt')) -eq 'preserve') 'data/imports sentinel changed during repair'
     Assert-ProductSentinel $productSentinelId
 
     Write-Host '5 + 8. DAMAGED RUNTIME / DATA PRESERVATION'
@@ -118,6 +122,7 @@ try {
     Invoke-Start | Out-Null; Health
     Assert-True (Test-Path (Join-Path $app 'data/sentinel.txt')) 'data/ sentinel was lost during rebuild'
     Assert-True ((Get-Content (Join-Path $app 'data/sentinel.txt')) -eq 'preserve') 'data/ sentinel changed during rebuild'
+    Assert-True ((Get-Content (Join-Path $importsPath 'sentinel.txt')) -eq 'preserve') 'data/imports sentinel changed during rebuild'
     Assert-ProductSentinel $productSentinelId
 
     Write-Host '6. FOREIGN PORT'
@@ -132,6 +137,15 @@ try {
     Invoke-Start | Out-Null; Health
     Assert-CoreMigration
     Assert-ProductSentinel $productSentinelId
+    Write-Host '9. PR3 PORTABLE DEPENDENCIES AND IMPORT ARCHIVE'
+    $portablePython = Join-Path $app 'runtime/python.exe'
+    $dependencyProbe = & $portablePython -c "import importlib.metadata as m; import openpyxl, multipart; assert m.version('openpyxl') == '3.1.5'; assert m.version('python-multipart') == '0.0.32'; print('PASS')"
+    Assert-True ($dependencyProbe -contains 'PASS') 'PR3 dependency metadata/import validation failed'
+    Assert-True (Test-Path (Join-Path $importsPath 'sentinel.txt')) 'data/imports sentinel was lost'
+    $parserProbe = & $portablePython -c "from tests.xlsx_factory import build_ozon_products_workbook; from pathlib import Path; from tempfile import TemporaryDirectory; from backend.ingestion.ozon_products_xlsx import parse_ozon_products_xlsx; import os; d=TemporaryDirectory(); p=Path(d.name)/'synthetic.xlsx'; p.write_bytes(build_ozon_products_workbook()); assert len(parse_ozon_products_xlsx(p).rows)==1; d.cleanup(); print('PASS')"
+    Assert-True ($parserProbe -contains 'PASS') 'Synthetic PR3 parser smoke failed'
+    $importProbe = & $portablePython -c "from io import BytesIO; from pathlib import Path; import sqlite3,sys,tempfile; from tests.xlsx_factory import build_ozon_products_workbook; from backend.persistence.database import initialize_database; from backend.application.ozon_products_import import import_ozon_products_xlsx; d=Path(tempfile.mkdtemp()); db=d/'scoz.db'; initialize_database(db); r=import_ozon_products_xlsx(upload=BytesIO(build_ozon_products_workbook()),original_name='synthetic.xlsx',db_path=db,data_dir=d); c=sqlite3.connect(db); assert r.status.value=='SUCCESS'; assert c.execute('SELECT COUNT(*) FROM products').fetchone()[0]==1; assert c.execute('SELECT COUNT(*) FROM product_snapshots').fetchone()[0]==1; rel=c.execute('SELECT stored_relpath FROM source_artifacts').fetchone()[0]; assert rel and (d/rel).is_file(); print('PASS')"
+    Assert-True ($importProbe -contains 'PASS') 'Synthetic PR3 import smoke failed'
     Write-Host 'PASS: all 8 PR1 Windows smoke scenarios'
 }
 finally {
