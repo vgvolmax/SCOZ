@@ -54,3 +54,35 @@ def test_pr3_frontend_state_contract():
     assert 'accept=".xlsx"' in html
     assert 'id="selected-file-name"' in html
     assert 'aria-live="polite"' in html
+
+
+def test_pr4_search_visibility_import_and_history_contract():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    assert html.count('type="file" accept=".xlsx"') == 2
+    for value in (
+        "Отчёт «Товары на Ozon»", "Поисковая видимость Ozon",
+        'id="ozon-search-visibility-file"', 'id="search-visibility-file-name"',
+        'id="search-visibility-submit"', 'id="search-visibility-status"',
+    ):
+        assert value in html
+    for value in (
+        'item.report_type==="OZON_PRODUCTS"',
+        'item.report_type==="OZON_SEARCH_VISIBILITY"',
+        "query_text", "cluster_name", "observed_at", "declared_rows",
+        "rows_accepted", "rows_skipped", "new_observations",
+        "duplicate_observations", "corrected_revisions", "row_errors",
+        "PARTIAL_SUCCESS", "loadImports()", "/api/imports/ozon-search-visibility",
+    ):
+        assert value in js
+
+
+def test_pr4_does_not_leak_future_analytics_ui():
+    combined = "\n".join(
+        path.read_text(encoding="utf-8") for path in (ROOT / "frontend").rglob("*.*")
+    ).casefold()
+    for forbidden in (
+        "heatmap", "benchmark", "query opportunity", "тепловая карта",
+        "анализ запросов", "карточки конкурентов", "оценка кластера",
+    ):
+        assert forbidden not in combined

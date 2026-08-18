@@ -1,3 +1,4 @@
+from dataclasses import FrozenInstanceError, fields
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -5,13 +6,21 @@ from pathlib import Path
 import pytest
 
 from backend.domain.search_visibility import (
+    Cluster,
     CpoState,
+    OzonSearchVisibilityError,
+    ParsedSearchVisibilityReport,
+    ParsedSearchVisibilityRow,
+    SEARCH_VISIBILITY_PAYLOAD_FIELDS,
+    SearchQuery,
     SearchVisibilityConflictingObservationRows,
     SearchVisibilityIncompatibleReportSchema,
     SearchVisibilityInvalidObservedAt,
     SearchVisibilityInvalidSearchContext,
     SearchVisibilityUnsupportedWorkbook,
     SearchVisibilityWrongReportType,
+    SearchVisibilityRowError,
+    search_visibility_payload_sha256,
 )
 from backend.ingestion.ozon_search_visibility_xlsx import parse_ozon_search_visibility_xlsx
 from tests.xlsx_factory import (
@@ -187,3 +196,44 @@ def test_products_workbook_is_wrong_report_type(tmp_path: Path) -> None:
     path.write_bytes(build_ozon_products_workbook())
     with pytest.raises(SearchVisibilityWrongReportType):
         parse_ozon_search_visibility_xlsx(path)
+
+
+def test_frozen_domain_contract_field_order_and_error_hierarchy() -> None:
+    assert [field.name for field in fields(SearchQuery)] == ["id", "query_text", "created_at"]
+    assert [field.name for field in fields(Cluster)] == ["id", "name", "created_at"]
+    assert [field.name for field in fields(ParsedSearchVisibilityRow)] == [
+        "source_row", "ozon_product_id", "snapshot_values", "payload_sha256",
+    ]
+    assert [field.name for field in fields(ParsedSearchVisibilityReport)] == [
+        "observed_at", "query_text", "cluster_name", "declared_rows", "rows_seen",
+        "rows", "row_errors", "duplicate_input_rows", "warnings_count",
+    ]
+    with pytest.raises(FrozenInstanceError):
+        SearchVisibilityRowError(10, "X", "x").row = 11
+    module = __import__("backend.domain.search_visibility", fromlist=["ignored"])
+    assert set(OzonSearchVisibilityError.__subclasses__()) == {
+        getattr(module, name) for name in (
+            "SearchVisibilityUnsupportedWorkbook", "SearchVisibilityWrongReportType",
+            "SearchVisibilityIncompatibleReportSchema", "SearchVisibilityInvalidObservedAt",
+            "SearchVisibilityInvalidSearchContext", "SearchVisibilityInvalidProductIdentity",
+            "SearchVisibilityInvalidMetricValue", "SearchVisibilityConflictingObservationRows",
+            "SearchVisibilityNoUsableRows", "SearchVisibilityConcurrentImportConflict",
+            "SearchVisibilityUploadTooLarge", "SearchVisibilityUnsupportedUploadMediaType",
+            "SearchVisibilityImportPersistenceError",
+        )
+    }
+
+
+def test_exact_payload_order_and_canonical_decimal_cpo_hashing(tmp_path: Path) -> None:
+    assert SEARCH_VISIBILITY_PAYLOAD_FIELDS == (
+        "source_title", "seller_name", "position", "overall_score", "promotion_status",
+        "cpc_rub", "promotion_strategy", "cpo_state", "cpo_pct", "relevance_score",
+        "rating", "reviews_count", "buyer_price_rub", "popularity_score",
+        "ozon_promotion", "delivery_label", "delivery_min_days", "delivery_max_days",
+        "price_index_pct",
+    )
+    values = _parse(tmp_path).rows[0].snapshot_values
+    equivalent = dict(values, overall_score=Decimal("0.0520"), cpo_state=CpoState("ACTIVE"))
+    assert search_visibility_payload_sha256(values) == search_visibility_payload_sha256(equivalent)
+    changed = dict(values, cpo_state=CpoState.DISABLED, cpo_pct=None)
+    assert search_visibility_payload_sha256(values) != search_visibility_payload_sha256(changed)
