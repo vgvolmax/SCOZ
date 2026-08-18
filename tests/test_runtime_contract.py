@@ -61,6 +61,22 @@ def test_bootstrap_validates_pr3_imports_and_distribution_versions():
     assert "m.version('python-multipart') == '0.0.32'" in text
 
 
+def test_windows_smoke_covers_pr4_portable_persistence_and_recovery():
+    text = (ROOT / "tests/windows_smoke.ps1").read_text(encoding="ascii")
+    for required in (
+        "(3, 'ozon_search_visibility_import')",
+        "build_ozon_search_visibility_workbook",
+        "parse_ozon_search_visibility_xlsx",
+        "search_visibility_snapshots",
+        "ozon_products_xlsx",
+        "ozon_search_visibility_xlsx",
+        "recover_interrupted_ozon_products_imports",
+        "recover_interrupted_ozon_search_visibility_imports",
+        "Portable imports or archives did not survive",
+    ):
+        assert required in text
+
+
 def test_strict_xlsx_factory_emits_contract_rows_in_memory():
     from openpyxl import load_workbook
 

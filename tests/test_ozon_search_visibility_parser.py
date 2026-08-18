@@ -198,6 +198,18 @@ def test_products_workbook_is_wrong_report_type(tmp_path: Path) -> None:
         parse_ozon_search_visibility_xlsx(path)
 
 
+def test_partial_metadata_markers_are_incompatible_schema(tmp_path: Path) -> None:
+    path = tmp_path / "damaged-explainer.xlsx"
+    path.write_bytes(build_ozon_search_visibility_workbook())
+    from openpyxl import load_workbook
+    workbook = load_workbook(path)
+    workbook.active["A1"] = "damaged marker"
+    workbook.save(path)
+    workbook.close()
+    with pytest.raises(SearchVisibilityIncompatibleReportSchema):
+        parse_ozon_search_visibility_xlsx(path)
+
+
 def test_frozen_domain_contract_field_order_and_error_hierarchy() -> None:
     assert [field.name for field in fields(SearchQuery)] == ["id", "query_text", "created_at"]
     assert [field.name for field in fields(Cluster)] == ["id", "name", "created_at"]

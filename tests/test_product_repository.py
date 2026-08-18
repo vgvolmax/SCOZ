@@ -76,6 +76,7 @@ def test_visibility_only_product_stays_out_of_catalog_even_when_owned(repository
 
     assert repo.list_ozon_products(limit=10, offset=0) == []
     assert repo.count_ozon_products() == 0
+    assert repo.any_owned() is False
     assert repo.find_by_external_identity(
         source="ozon", identity_type="ozon_product_id", identity_value="12345"
     ).is_owned is True

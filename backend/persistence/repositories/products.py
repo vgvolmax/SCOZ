@@ -127,7 +127,16 @@ WHERE i.source='ozon' AND i.identity_type='ozon_product_id' AND i.source_account
 AND EXISTS (SELECT 1 FROM product_snapshots ps WHERE ps.product_id=i.product_id)""").fetchone()[0]
 
     def any_owned(self) -> bool:
-        return self._conn.execute("SELECT EXISTS(SELECT 1 FROM products WHERE is_owned=1)").fetchone()[0] == 1
+        return self._conn.execute(
+            """SELECT EXISTS(
+                   SELECT 1 FROM products AS p
+                   WHERE p.is_owned=1
+                     AND EXISTS (
+                         SELECT 1 FROM product_snapshots AS ps
+                         WHERE ps.product_id=p.id
+                     )
+               )"""
+        ).fetchone()[0] == 1
 
     def list_ozon_products(self, *, limit: int, offset: int) -> list[dict[str, object]]:
         if not 1 <= limit <= 100 or offset < 0: raise ValueError("invalid pagination")
