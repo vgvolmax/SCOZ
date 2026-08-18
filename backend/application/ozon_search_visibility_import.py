@@ -39,6 +39,29 @@ def _result(summary, errors=()) -> OzonSearchVisibilityImportResult:
     )
 
 
+def _finish_failed(*, db_path: Path | None, batch_id: int, report=None):
+    """Best-effort durable compensation for a RUNNING import batch."""
+    try:
+        with transaction(db_path) as conn:
+            summary = LineageRepository(conn).finish_ozon_search_visibility_import(
+                batch_id, status=ImportStatus.FAILED,
+                observed_at=None if report is None else report.observed_at,
+                query_text=None if report is None else report.query_text,
+                cluster_name=None if report is None else report.cluster_name,
+                declared_rows=None if report is None else report.declared_rows,
+                rows_seen=0 if report is None else report.rows_seen,
+                rows_accepted=0 if report is None else len(report.rows),
+                rows_skipped=0 if report is None else len(report.row_errors),
+                duplicate_observations=0 if report is None else report.duplicate_input_rows,
+                new_observations=0, corrected_revisions=0,
+                warnings_count=0 if report is None else report.warnings_count,
+                row_errors_total=0 if report is None else len(report.row_errors),
+            )
+        return _result(summary, () if report is None else report.row_errors)
+    except Exception:
+        return None
+
+
 def import_ozon_search_visibility_xlsx(*, upload: BinaryIO, original_name: str,
                                        db_path: Path | None = None,
                                        data_dir: Path = DATA_DIR) -> OzonSearchVisibilityImportResult:
@@ -190,6 +213,13 @@ def import_ozon_search_visibility_xlsx(*, upload: BinaryIO, original_name: str,
             ) from error
     except OzonSearchVisibilityImportFailure:
         raise
+    except Exception as error:
+        result = None if batch_id is None else _finish_failed(
+            db_path=db_path, batch_id=batch_id
+        )
+        raise OzonSearchVisibilityImportFailure(
+            error=SearchVisibilityImportPersistenceError(), result=result
+        ) from error
     finally:
         if staged_path is not None:
             staged_path.unlink(missing_ok=True)

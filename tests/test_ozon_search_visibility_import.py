@@ -182,6 +182,25 @@ def test_persistence_failure_compensates_and_removes_archive(monkeypatch, tmp_pa
             assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
 
 
+def test_early_persistence_failure_is_mapped_and_cleans_stage(monkeypatch, tmp_path):
+    db, data = tmp_path / "scoz.db", tmp_path / "data"
+    initialize_database(db)
+    monkeypatch.setattr(
+        service.LineageRepository, "create_import_batch",
+        lambda self, **kwargs: (_ for _ in ()).throw(RuntimeError("injected")),
+    )
+    with pytest.raises(OzonSearchVisibilityImportFailure) as failure:
+        import_ozon_search_visibility_xlsx(
+            upload=BytesIO(build_ozon_search_visibility_workbook()),
+            original_name="x.xlsx", db_path=db, data_dir=data,
+        )
+    assert isinstance(failure.value.error, SearchVisibilityImportPersistenceError)
+    assert failure.value.result is None
+    assert not list((data / "imports").glob("*"))
+    assert IMPORT_LOCK.acquire(blocking=False)
+    IMPORT_LOCK.release()
+
+
 def test_recovery_is_kind_scoped_and_protects_global_archive_references(tmp_path):
     db, data = tmp_path / "scoz.db", tmp_path / "data"
     imports = data / "imports"
