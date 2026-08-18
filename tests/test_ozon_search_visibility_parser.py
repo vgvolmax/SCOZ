@@ -4,6 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from openpyxl import Workbook, load_workbook
 
 from backend.domain.search_visibility import (
     Cluster,
@@ -198,10 +199,42 @@ def test_products_workbook_is_wrong_report_type(tmp_path: Path) -> None:
         parse_ozon_search_visibility_xlsx(path)
 
 
+def test_seller_queries_workbook_is_wrong_report_type(tmp_path: Path) -> None:
+    path = tmp_path / "seller-queries.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    for row, value in enumerate((
+        "Дата: 17/08/2026",
+        "Время: 03:56 +00",
+        "Дата начала: 18/07/2026",
+        "Дата конца: 14/08/2026",
+    ), start=1):
+        sheet.cell(row=row, column=1, value=value)
+    for column, value in enumerate(
+        ("SKU", "Артикул", "Название товара", "Запросы товара"), start=1
+    ):
+        sheet.cell(row=6, column=column, value=value)
+    workbook.save(path)
+    workbook.close()
+
+    with pytest.raises(SearchVisibilityWrongReportType):
+        parse_ozon_search_visibility_xlsx(path)
+
+
+def test_unrelated_workbook_is_wrong_report_type(tmp_path: Path) -> None:
+    path = tmp_path / "unrelated.xlsx"
+    workbook = Workbook()
+    workbook.active["A1"] = "unrelated readable content"
+    workbook.save(path)
+    workbook.close()
+
+    with pytest.raises(SearchVisibilityWrongReportType):
+        parse_ozon_search_visibility_xlsx(path)
+
+
 def test_partial_metadata_markers_are_incompatible_schema(tmp_path: Path) -> None:
     path = tmp_path / "damaged-explainer.xlsx"
     path.write_bytes(build_ozon_search_visibility_workbook())
-    from openpyxl import load_workbook
     workbook = load_workbook(path)
     workbook.active["A1"] = "damaged marker"
     workbook.save(path)

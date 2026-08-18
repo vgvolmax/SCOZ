@@ -57,6 +57,9 @@ _CPO_RE = re.compile(r"([0-9]+)%")
 _REVIEWS_RE = re.compile(r"([0-9]+,[0-9]+) \(((?:[0-9]+|[1-9][0-9]{0,2}(?: [0-9]{3})+)) шт\.\)")
 _DELIVERY_RE = re.compile(r"([0-9]+)-([0-9]+) (день|дня|дней)")
 _PRICE_INDEX_RE = re.compile(r"([0-9]+,[0-9]+)%")
+_PERIOD_START_RE = re.compile(r"Дата начала: [0-9]{2}/[0-9]{2}/[0-9]{4}")
+_PERIOD_END_RE = re.compile(r"Дата конца: [0-9]{2}/[0-9]{2}/[0-9]{4}")
+_SELLER_QUERIES_HEADERS = ("SKU", "Артикул", "Название товара", "Запросы товара")
 
 
 class _RowProblem(ValueError):
@@ -98,6 +101,30 @@ def _formula_cell(cell: object) -> bool:
     return getattr(cell, "data_type", None) == "f" or (
         isinstance(getattr(cell, "value", None), str)
         and getattr(cell, "value").startswith("=")
+    )
+
+
+def _looks_like_seller_queries(sheet: object) -> bool:
+    """Recognize the known seller-queries report without relying on its name."""
+    metadata = tuple(sheet.cell(row=row, column=1).value for row in range(1, 5))
+    return (
+        isinstance(metadata[0], str)
+        and _DATE_RE.fullmatch(metadata[0]) is not None
+        and isinstance(metadata[1], str)
+        and _TIME_RE.fullmatch(metadata[1]) is not None
+        and isinstance(metadata[2], str)
+        and _PERIOD_START_RE.fullmatch(metadata[2]) is not None
+        and isinstance(metadata[3], str)
+        and _PERIOD_END_RE.fullmatch(metadata[3]) is not None
+        and all(
+            _semantically_blank(sheet.cell(row=5, column=column).value)
+            for column in range(1, 17)
+        )
+        and tuple(
+            sheet.cell(row=6, column=column).value
+            for column in range(1, len(_SELLER_QUERIES_HEADERS) + 1)
+        )
+        == _SELLER_QUERIES_HEADERS
     )
 
 
@@ -252,6 +279,8 @@ def parse_ozon_search_visibility_xlsx(path: Path) -> ParsedSearchVisibilityRepor
         metadata = tuple(sheet.cell(row=row, column=1).value for row in range(1, 6))
         expected_prefixes = ("Дата: ", "Запрос: ", "Время: ", "Регион: ", "Сколько позиций в выдаче: ")
         markers = tuple(isinstance(value, str) and value.startswith(prefix) for value, prefix in zip(metadata, expected_prefixes, strict=True))
+        if _looks_like_seller_queries(sheet):
+            raise SearchVisibilityWrongReportType()
         if not any(markers):
             raise SearchVisibilityWrongReportType()
         if not all(markers):
