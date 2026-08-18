@@ -3,7 +3,7 @@ from datetime import date, datetime
 from pathlib import PurePosixPath, PureWindowsPath
 
 from backend.domain.lineage import (
-    ImportBatch,
+    ImportBatch, ImportHistoryItem,
     ImportBatchNotFound,
     ImportStatus,
     InvalidImportStatusTransition,
@@ -15,6 +15,7 @@ from backend.domain.lineage import (
     utc_now,
 )
 from backend.domain.product_snapshot import OzonProductsImportSummary
+from backend.domain.search_visibility import OzonSearchVisibilityImportSummary
 
 
 class LineageRepository:
@@ -108,6 +109,31 @@ class LineageRepository:
         if result is None: raise ImportBatchNotFound(batch_id)
         return result
 
+    def finish_ozon_search_visibility_import(self, batch_id: int, *, status: ImportStatus, observed_at: datetime | None, query_text: str | None, cluster_name: str | None, declared_rows: int | None, rows_seen: int, rows_accepted: int, rows_skipped: int, duplicate_observations: int, new_observations: int, corrected_revisions: int, warnings_count: int, row_errors_total: int) -> OzonSearchVisibilityImportSummary:
+        batch = self.get_import_batch(batch_id)
+        if batch is None:
+            raise ImportBatchNotFound(batch_id)
+        if batch.import_kind != "ozon_search_visibility_xlsx" or batch.status is not ImportStatus.RUNNING or status is ImportStatus.RUNNING:
+            raise InvalidImportStatusTransition(
+                f"cannot transition {batch.status.value} to {status.value}"
+            )
+        counts = (rows_seen, rows_accepted, rows_skipped, duplicate_observations, new_observations, corrected_revisions, warnings_count, row_errors_total)
+        if any(value < 0 for value in counts):
+            raise ValueError("counts must be non-negative")
+        if declared_rows is not None and declared_rows <= 0:
+            raise ValueError("declared rows must be positive")
+        cursor = self._conn.execute(
+            """UPDATE import_batches SET status=?,finished_at=?,observed_at=?,search_query_text=?,cluster_name=?,declared_rows=?,rows_seen=?,rows_accepted=?,rows_skipped=?,duplicate_observations=?,new_observations=?,corrected_revisions=?,warnings_count=?,row_errors_total=?
+               WHERE id=? AND import_kind='ozon_search_visibility_xlsx' AND status=?""",
+            (status.value, datetime_to_db(utc_now()), None if observed_at is None else datetime_to_db(observed_at), query_text, cluster_name, declared_rows, *counts, batch_id, ImportStatus.RUNNING.value),
+        )
+        if cursor.rowcount != 1:
+            raise InvalidImportStatusTransition("import batch was already finished")
+        result = self._get_search_visibility_summary(batch_id)
+        if result is None:
+            raise ImportBatchNotFound(batch_id)
+        return result
+
     def _get_summary(self, batch_id: int) -> OzonProductsImportSummary | None:
         row = self._conn.execute("SELECT b.*,a.id artifact_id,a.artifact_kind,a.original_name,a.content_sha256,a.byte_size,a.stored_relpath,a.created_at artifact_created_at FROM import_batches b LEFT JOIN source_artifacts a ON a.import_batch_id=b.id WHERE b.id=?", (batch_id,)).fetchone()
         return None if row is None else self._summary(row)
@@ -120,12 +146,76 @@ class LineageRepository:
     def count_ozon_products_imports(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM import_batches WHERE import_kind='ozon_products_xlsx'").fetchone()[0]
 
-    def list_referenced_pr3_archive_paths(self) -> set[str]:
-        return {row[0] for row in self._conn.execute("SELECT a.stored_relpath FROM source_artifacts a JOIN import_batches b ON b.id=a.import_batch_id WHERE b.import_kind='ozon_products_xlsx' AND a.stored_relpath IS NOT NULL")}
+    def list_ozon_search_visibility_imports(self, *, limit: int, offset: int) -> list[OzonSearchVisibilityImportSummary]:
+        self._validate_pagination(limit=limit, offset=offset)
+        rows = self._conn.execute(
+            self._SUMMARY_SELECT + " WHERE b.import_kind='ozon_search_visibility_xlsx' ORDER BY b.started_at DESC,b.id DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+        return [self._search_visibility_summary(row) for row in rows]
+
+    def count_ozon_search_visibility_imports(self) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM import_batches WHERE import_kind='ozon_search_visibility_xlsx'").fetchone()[0]
+
+    def list_referenced_archive_paths(self) -> set[str]:
+        return {row[0] for row in self._conn.execute("SELECT stored_relpath FROM source_artifacts WHERE stored_relpath IS NOT NULL AND stored_relpath LIKE 'imports/%'")}
+
+    def list_import_history(self, *, limit: int, offset: int) -> list[ImportHistoryItem]:
+        self._validate_pagination(limit=limit, offset=offset)
+        rows = self._conn.execute(
+            self._SUMMARY_SELECT + " WHERE b.import_kind IN (?, ?) ORDER BY b.started_at DESC,b.id DESC LIMIT ? OFFSET ?",
+            ("ozon_products_xlsx", "ozon_search_visibility_xlsx", limit, offset),
+        ).fetchall()
+        return [self._history_item(row) for row in rows]
+
+    def count_import_history(self) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM import_batches WHERE import_kind IN (?, ?)", ("ozon_products_xlsx", "ozon_search_visibility_xlsx")).fetchone()[0]
 
     def fail_running_ozon_products_imports(self, *, finished_at: datetime) -> int:
         cursor = self._conn.execute("UPDATE import_batches SET status=?,finished_at=? WHERE import_kind='ozon_products_xlsx' AND status=?", (ImportStatus.FAILED.value,datetime_to_db(finished_at),ImportStatus.RUNNING.value))
         return cursor.rowcount
+
+    def fail_running_ozon_search_visibility_imports(self, *, finished_at: datetime) -> int:
+        cursor = self._conn.execute("UPDATE import_batches SET status=?,finished_at=? WHERE import_kind='ozon_search_visibility_xlsx' AND status=?", (ImportStatus.FAILED.value,datetime_to_db(finished_at),ImportStatus.RUNNING.value))
+        return cursor.rowcount
+
+    _SUMMARY_SELECT = "SELECT b.*,a.id artifact_id,a.artifact_kind,a.original_name,a.content_sha256,a.byte_size,a.stored_relpath,a.created_at artifact_created_at FROM import_batches b LEFT JOIN source_artifacts a ON a.import_batch_id=b.id"
+
+    def _get_search_visibility_summary(self, batch_id: int) -> OzonSearchVisibilityImportSummary | None:
+        row = self._conn.execute(self._SUMMARY_SELECT + " WHERE b.id=?", (batch_id,)).fetchone()
+        return None if row is None else self._search_visibility_summary(row)
+
+    @staticmethod
+    def _artifact(row: sqlite3.Row) -> SourceArtifact | None:
+        return None if row["artifact_id"] is None else SourceArtifact(row["artifact_id"],row["id"],row["artifact_kind"],row["original_name"],row["content_sha256"],row["byte_size"],row["stored_relpath"],datetime_from_db(row["artifact_created_at"]))
+
+    @classmethod
+    def _search_visibility_summary(cls, row: sqlite3.Row) -> OzonSearchVisibilityImportSummary:
+        return OzonSearchVisibilityImportSummary(
+            row["id"], row["source"], row["import_kind"], ImportStatus(row["status"]),
+            None if row["observed_at"] is None else datetime_from_db(row["observed_at"]),
+            row["search_query_text"], row["cluster_name"], row["declared_rows"],
+            *(0 if row[name] is None else row[name] for name in ("rows_seen","rows_accepted","rows_skipped","duplicate_observations","new_observations","corrected_revisions","warnings_count","row_errors_total")),
+            datetime_from_db(row["started_at"]), None if row["finished_at"] is None else datetime_from_db(row["finished_at"]), cls._artifact(row),
+        )
+
+    @classmethod
+    def _history_item(cls, row: sqlite3.Row) -> ImportHistoryItem:
+        products = row["import_kind"] == "ozon_products_xlsx"
+        return ImportHistoryItem(
+            row["id"], row["source"], row["import_kind"], "OZON_PRODUCTS" if products else "OZON_SEARCH_VISIBILITY", ImportStatus(row["status"]),
+            date.fromisoformat(row["report_generated_on"]) if products and row["report_generated_on"] is not None else None,
+            row["report_window_days"] if products else None,
+            datetime_from_db(row["observed_at"]) if not products and row["observed_at"] is not None else None,
+            row["search_query_text"] if not products else None, row["cluster_name"] if not products else None, row["declared_rows"] if not products else None,
+            *(0 if row[name] is None else row[name] for name in ("rows_seen","rows_accepted","rows_skipped","duplicate_observations","new_observations","corrected_revisions","warnings_count","row_errors_total")),
+            datetime_from_db(row["started_at"]), None if row["finished_at"] is None else datetime_from_db(row["finished_at"]), cls._artifact(row),
+        )
+
+    @staticmethod
+    def _validate_pagination(*, limit: int, offset: int) -> None:
+        if not 1 <= limit <= 100 or offset < 0:
+            raise ValueError("invalid pagination")
 
     @staticmethod
     def _summary(row: sqlite3.Row) -> OzonProductsImportSummary:

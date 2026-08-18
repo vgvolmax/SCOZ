@@ -230,7 +230,7 @@ def test_row_error_cap_is_ordered(tmp_path):
 
 def test_nonblocking_lock_has_no_side_effect_and_releases_after_terminal_paths(tmp_path):
     db_path, data_dir = _setup(tmp_path)
-    service._IMPORT_LOCK.acquire()
+    service.IMPORT_LOCK.acquire()
     try:
         with pytest.raises(OzonProductsImportFailure) as caught:
             _import(build_ozon_products_workbook(), db_path, data_dir)
@@ -239,7 +239,7 @@ def test_nonblocking_lock_has_no_side_effect_and_releases_after_terminal_paths(t
         assert not (data_dir / "imports").exists()
         assert not _summaries(db_path)
     finally:
-        service._IMPORT_LOCK.release()
+        service.IMPORT_LOCK.release()
     assert _import(build_ozon_products_workbook(), db_path, data_dir).status is ImportStatus.SUCCESS
     with pytest.raises(OzonProductsImportFailure):
         _import(b"bad", db_path, data_dir)

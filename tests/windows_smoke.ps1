@@ -52,7 +52,7 @@ function Assert-CoreMigration {
     Assert-True (Test-Path $db) 'data/scoz.db was not created'
     $code = "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(list(c.execute('SELECT version,name FROM schema_migrations ORDER BY version')))"
     $rows = Invoke-DbPython $code
-    Assert-True ($rows -eq "[(1, 'core_foundation'), (2, 'ozon_products_import')]") 'Migration metadata mismatch'
+    Assert-True ($rows -eq "[(1, 'core_foundation'), (2, 'ozon_products_import'), (3, 'ozon_search_visibility_import')]") 'Migration metadata mismatch'
 }
 function Add-ProductSentinel {
     $code = "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); x='2000-01-01T00:00:00+00:00'; q=c.execute('INSERT INTO products (is_owned,created_at,updated_at) VALUES (0,?,?)',(x,x)); c.commit(); print(q.lastrowid)"
@@ -146,6 +146,8 @@ try {
     Assert-True ($parserProbe -contains 'PASS') 'Synthetic PR3 parser smoke failed'
     $importProbe = & $portablePython -c "from io import BytesIO; from pathlib import Path; import sqlite3,sys,tempfile; from tests.xlsx_factory import build_ozon_products_workbook; from backend.persistence.database import initialize_database; from backend.application.ozon_products_import import import_ozon_products_xlsx; d=Path(tempfile.mkdtemp()); db=d/'scoz.db'; initialize_database(db); r=import_ozon_products_xlsx(upload=BytesIO(build_ozon_products_workbook()),original_name='synthetic.xlsx',db_path=db,data_dir=d); c=sqlite3.connect(db); assert r.status.value=='SUCCESS'; assert c.execute('SELECT COUNT(*) FROM products').fetchone()[0]==1; assert c.execute('SELECT COUNT(*) FROM product_snapshots').fetchone()[0]==1; rel=c.execute('SELECT stored_relpath FROM source_artifacts').fetchone()[0]; assert rel and (d/rel).is_file(); print('PASS')"
     Assert-True ($importProbe -contains 'PASS') 'Synthetic PR3 import smoke failed'
+    $visibilityProbe = & $portablePython -c "from io import BytesIO; from pathlib import Path; import sqlite3,tempfile; from tests.xlsx_factory import build_ozon_search_visibility_workbook; from backend.persistence.database import initialize_database; from backend.application.ozon_search_visibility_import import import_ozon_search_visibility_xlsx; d=Path(tempfile.mkdtemp()); db=d/'scoz.db'; initialize_database(db); r=import_ozon_search_visibility_xlsx(upload=BytesIO(build_ozon_search_visibility_workbook()),original_name='visibility.xlsx',db_path=db,data_dir=d); c=sqlite3.connect(db); assert r.status.value=='SUCCESS'; assert c.execute('SELECT COUNT(*) FROM search_visibility_snapshots').fetchone()[0]==1; rel=c.execute(`"SELECT stored_relpath FROM source_artifacts WHERE artifact_kind='ozon_search_visibility_xlsx'`" ).fetchone()[0]; assert rel and (d/rel).is_file(); print('PASS')"
+    Assert-True ($visibilityProbe -contains 'PASS') 'Synthetic PR4 import smoke failed'
     Write-Host 'PASS: all 8 PR1 Windows smoke scenarios'
 }
 finally {
