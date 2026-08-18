@@ -23,7 +23,11 @@
         <p id="page-description">Здесь появятся ваши товары после добавления данных.</p>
       </header>
       <section id="products-view" class="view"><div id="products-status" class="status" aria-live="polite">Загрузка товаров…</div><div id="products-list"></div></section>
-      <section id="data-view" class="view" hidden><article class="card"><h2>Импорт отчёта Ozon</h2><label for="ozon-products-file">Отчёт «Товары на Ozon» (.xlsx)</label><input id="ozon-products-file" type="file" accept=".xlsx"><span id="selected-file-name">Файл не выбран</span><button id="import-submit" type="button" disabled>Импортировать</button><div id="import-status" class="status" aria-live="polite">Выберите XLSX-файл</div></article><article class="card"><h2>История импортов</h2><div id="import-history">История пуста</div></article></section>
+      <section id="data-view" class="view" hidden>
+        <article class="card"><h2>Отчёт «Товары на Ozon»</h2><label for="ozon-products-file">XLSX-файл</label><input id="ozon-products-file" type="file" accept=".xlsx"><span id="selected-file-name">Файл не выбран</span><button id="import-submit" type="button" disabled>Импортировать</button><div id="import-status" class="status" aria-live="polite">Выберите XLSX-файл</div></article>
+        <article class="card"><h2>Поисковая видимость Ozon</h2><label for="ozon-search-visibility-file">XLSX-файл explainer_report</label><input id="ozon-search-visibility-file" type="file" accept=".xlsx"><span id="search-visibility-selected-file-name">Файл не выбран</span><button id="search-visibility-import-submit" type="button" disabled>Импортировать</button><div id="search-visibility-import-status" class="status" aria-live="polite">Выберите XLSX-файл</div><div id="search-visibility-row-errors"></div></article>
+        <article class="card"><h2>История импортов</h2><div id="import-history">История пуста</div></article>
+      </section>
       <section id="settings-view" class="view" hidden><div class="empty-state"><h2>Настройки пока не требуются</h2><p>Локальное приложение готово к работе.</p></div></section>
     </main>
   </div>

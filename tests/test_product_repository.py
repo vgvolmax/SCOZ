@@ -1,4 +1,5 @@
 import sqlite3
+from io import BytesIO
 from dataclasses import fields
 from datetime import datetime, timedelta, timezone
 
@@ -14,6 +15,8 @@ from backend.domain.lineage import datetime_from_db, datetime_to_db, utc_now
 from backend.persistence.connection import connect
 from backend.persistence.database import initialize_database
 from backend.persistence.repositories.products import ProductRepository
+from backend.application.ozon_products_import import import_ozon_products_xlsx
+from tests.xlsx_factory import build_ozon_products_workbook
 
 
 @pytest.fixture
@@ -74,10 +77,44 @@ def test_list_ozon_products_maps_sqlite_ownership_to_bool(repository):
     product = repo.resolve_or_create_ozon_product("12345")
     repo.set_owned(product.id, True)
 
-    item = repo.list_ozon_products(limit=10, offset=0)[0]
+    assert repo.list_ozon_products(limit=10, offset=0) == []
 
-    assert item["is_owned"] is True
-    assert type(item["is_owned"]) is bool
+
+def test_catalog_requires_product_snapshot_but_preserves_visibility_identity(tmp_path):
+    db_path = tmp_path / "scoz.db"
+    initialize_database(db_path)
+    with connect(db_path) as connection:
+        repo = ProductRepository(connection)
+        product = repo.resolve_or_create_ozon_product("100000001")
+        repo.set_owned(product.id, True)
+        connection.commit()
+
+        assert repo.count_ozon_products() == 0
+        assert repo.list_ozon_products(limit=10, offset=0) == []
+        assert repo.find_by_external_identity(
+            source="ozon",
+            identity_type="ozon_product_id",
+            identity_value="100000001",
+        ).id == product.id
+
+    import_ozon_products_xlsx(
+        upload=BytesIO(build_ozon_products_workbook()),
+        original_name="products.xlsx",
+        db_path=db_path,
+        data_dir=tmp_path,
+    )
+
+    with connect(db_path) as connection:
+        repo = ProductRepository(connection)
+        items = repo.list_ozon_products(limit=10, offset=0)
+        assert repo.count_ozon_products() == 1
+        assert len(items) == 1
+        assert items[0]["id"] == product.id
+        assert items[0]["is_owned"] is True
+        assert connection.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT COUNT(*) FROM product_external_identities"
+        ).fetchone()[0] == 1
 
 
 def test_external_identity_insert_and_lookup(repository):

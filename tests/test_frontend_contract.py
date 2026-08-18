@@ -54,3 +54,27 @@ def test_pr3_frontend_state_contract():
     assert 'accept=".xlsx"' in html
     assert 'id="selected-file-name"' in html
     assert 'aria-live="polite"' in html
+
+
+def test_pr4_search_visibility_upload_and_unified_history_contract():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    for value in (
+        "Отчёт «Товары на Ozon»", "Поисковая видимость Ozon",
+        'id="ozon-search-visibility-file"',
+        'id="search-visibility-selected-file-name"',
+        'id="search-visibility-import-submit"',
+        'id="search-visibility-import-status"',
+        'id="search-visibility-row-errors"',
+    ):
+        assert value in html
+    for value in (
+        "/api/imports/ozon-search-visibility", "PARTIAL_SUCCESS",
+        "OZON_PRODUCTS", "OZON_SEARCH_VISIBILITY", "item.report_type",
+        "query_text", "cluster_name", "observed_at", "declared_rows",
+        "rows_accepted", "rows_skipped", "duplicate_observations",
+        "new_observations", "corrected_revisions", "loadImports()",
+    ):
+        assert value in js
+    for forbidden in ("heatmap", "Query Opportunity", "benchmark", "aggregate Cluster"):
+        assert forbidden not in html + js

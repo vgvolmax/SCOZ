@@ -35,3 +35,4 @@ h1 { margin: 0 0 10px; font-size: 32px; line-height: 1.2; }
 .card h2 { margin: 0; }.card button { width: max-content; padding: 10px 16px; color: white; border: 0; border-radius: var(--radius-control); background: var(--color-primary); }.card button:disabled { opacity: .55; }
 .status { padding: 12px; border-radius: var(--radius-control); background: var(--color-primary-soft); color: var(--color-text-secondary); }
 #products-list,#import-history { display: grid; gap: 12px; }.product span,.history-item span { color: var(--color-text-secondary); }
+#search-visibility-row-errors { display: grid; gap: 6px; color: var(--color-text-secondary); }

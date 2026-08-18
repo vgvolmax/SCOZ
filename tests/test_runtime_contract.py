@@ -91,6 +91,19 @@ def test_strict_xlsx_factory_emits_contract_rows_in_memory():
     assert set(ROOT.rglob("*.xlsx")) == existing_xlsx
 
 
+def test_windows_smoke_covers_portable_pr4_and_cross_kind_recovery():
+    text = (ROOT / "tests/windows_smoke.ps1").read_text(encoding="ascii")
+    for required in (
+        "ozon_search_visibility_import", "build_ozon_search_visibility_workbook",
+        "parse_ozon_search_visibility_xlsx", "search_visibility_snapshots",
+        "ozon_search_visibility_xlsx", "ozon_products_xlsx",
+        "recover_interrupted_ozon_products_imports",
+        "recover_interrupted_ozon_search_visibility_imports",
+        "(3, 'ozon_search_visibility_import')", "PR4 archive did not survive",
+    ):
+        assert required in text
+
+
 def test_readme_documents_user_owned_database_lifecycle():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "`data/scoz.db`" in text

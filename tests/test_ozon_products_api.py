@@ -3,11 +3,13 @@ from io import BytesIO
 
 import backend.main as main
 import backend.application.ozon_products_import as service
+from backend.application.import_runtime import IMPORT_LOCK
 from backend.domain.lineage import ImportStatus
 from backend.persistence.connection import transaction
 from backend.persistence.database import initialize_database
 from backend.persistence.repositories.lineage import LineageRepository
 from backend.persistence.repositories.product_snapshots import ProductSnapshotRepository
+from backend.persistence.repositories.products import ProductRepository
 from tests.xlsx_factory import OZON_PRODUCTS_HEADERS, _default_row, build_ozon_products_workbook
 
 
@@ -52,6 +54,25 @@ def test_products_ownership_and_history_are_functional(monkeypatch, tmp_path):
         assert history["total"] == 1 and history["items"][0]["rows_accepted"] == 1
         assert client.patch(f"/api/products/{product_id}/ownership", json={"is_owned": "true"}).status_code == 422
         assert client.patch("/api/products/999999/ownership", json={"is_owned": True}).status_code == 404
+
+
+def test_visibility_only_product_is_excluded_until_products_report(monkeypatch, tmp_path):
+    db_path = tmp_path / "scoz.db"
+    initialize_database(db_path)
+    with transaction(db_path) as conn:
+        product = ProductRepository(conn).resolve_or_create_ozon_product("100000001")
+        ProductRepository(conn).set_owned(product.id, True)
+
+    with _client(monkeypatch, tmp_path) as client:
+        assert client.get("/api/products").json() == {
+            "items": [], "total": 0, "readiness": "SELECT_OWN_PRODUCTS"
+        }
+        assert _post(client, build_ozon_products_workbook()).status_code == 200
+        body = client.get("/api/products").json()
+
+    assert body["total"] == 1
+    assert body["items"][0]["id"] == product.id
+    assert body["items"][0]["is_owned"] is True
 
 
 def _post(client, data, *, filename="report.xlsx"):
@@ -114,11 +135,11 @@ def test_post_too_large_and_concurrent_lock(monkeypatch, tmp_path):
         too_large = _post(client, b"x" * (service.MAX_UPLOAD_BYTES + 1))
         assert too_large.status_code == 413
         assert too_large.json()["result"] is None
-        service._IMPORT_LOCK.acquire()
+        IMPORT_LOCK.acquire()
         try:
             conflict = _post(client, build_ozon_products_workbook())
         finally:
-            service._IMPORT_LOCK.release()
+            IMPORT_LOCK.release()
     assert conflict.status_code == 409
     assert conflict.json()["result"] is None
 

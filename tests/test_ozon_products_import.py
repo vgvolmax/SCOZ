@@ -8,6 +8,13 @@ import re
 import pytest
 
 import backend.application.ozon_products_import as service
+from backend.application.import_runtime import (
+    ARCHIVE_RE,
+    IMPORT_LOCK,
+    MAX_ROW_ERRORS,
+    MAX_UPLOAD_BYTES,
+    safe_original_basename,
+)
 from backend.domain.lineage import ImportStatus, InvalidImportStatusTransition
 from backend.domain.product_snapshot import (
     ConcurrentImportConflict,
@@ -88,6 +95,24 @@ def test_parser_reads_valid_xlsx_from_part_staging_path(tmp_path):
 )
 def test_safe_original_basename(original, expected):
     assert service.safe_original_basename(original) == expected
+    assert safe_original_basename(original) == expected
+
+
+def test_shared_runtime_constants_and_archive_pattern_are_exact():
+    assert MAX_UPLOAD_BYTES == 25 * 1024 * 1024
+    assert MAX_ROW_ERRORS == 50
+    assert service.MAX_UPLOAD_BYTES == MAX_UPLOAD_BYTES
+    assert service.MAX_ROW_ERRORS == MAX_ROW_ERRORS
+    assert service.IMPORT_LOCK is IMPORT_LOCK
+    assert service.ARCHIVE_RE is ARCHIVE_RE
+    assert ARCHIVE_RE.fullmatch("20260816T123456123456Z-" + "a" * 64 + ".xlsx")
+    for invalid in (
+        "20260816T123456Z-" + "a" * 64 + ".xlsx",
+        "20260816T123456123456Z-" + "A" * 64 + ".xlsx",
+        "20260816T123456123456Z-" + "a" * 63 + ".xlsx",
+        "prefix-20260816T123456123456Z-" + "a" * 64 + ".xlsx",
+    ):
+        assert ARCHIVE_RE.fullmatch(invalid) is None
 
 
 def test_stream_limit_staging_hash_size_and_fsync(monkeypatch, tmp_path):
@@ -230,7 +255,7 @@ def test_row_error_cap_is_ordered(tmp_path):
 
 def test_nonblocking_lock_has_no_side_effect_and_releases_after_terminal_paths(tmp_path):
     db_path, data_dir = _setup(tmp_path)
-    service._IMPORT_LOCK.acquire()
+    IMPORT_LOCK.acquire()
     try:
         with pytest.raises(OzonProductsImportFailure) as caught:
             _import(build_ozon_products_workbook(), db_path, data_dir)
@@ -239,7 +264,7 @@ def test_nonblocking_lock_has_no_side_effect_and_releases_after_terminal_paths(t
         assert not (data_dir / "imports").exists()
         assert not _summaries(db_path)
     finally:
-        service._IMPORT_LOCK.release()
+        IMPORT_LOCK.release()
     assert _import(build_ozon_products_workbook(), db_path, data_dir).status is ImportStatus.SUCCESS
     with pytest.raises(OzonProductsImportFailure):
         _import(b"bad", db_path, data_dir)
@@ -316,3 +341,24 @@ def test_recovery_preserves_metadata_and_deletes_only_owned_patterns(tmp_path):
     assert (imports / ("20260816T123456Z-" + "c" * 64 + ".xlsx")).exists()
     assert (imports / ".upload-directory.part").is_dir()
     assert not list(imports.glob(".upload-one.part"))
+
+
+def test_recovery_preserves_referenced_pr4_archive_and_removes_unreferenced_generated(tmp_path):
+    db_path, data_dir = _setup(tmp_path)
+    imports = data_dir / "imports"; imports.mkdir()
+    referenced = "20260816T123456123456Z-" + "d" * 64 + ".xlsx"
+    orphan = "20260816T123456123457Z-" + "e" * 64 + ".xlsx"
+    with transaction(db_path) as conn:
+        lineage = LineageRepository(conn)
+        batch = lineage.create_import_batch(source="ozon", import_kind="ozon_search_visibility_xlsx")
+        lineage.add_source_artifact(
+            batch.id, artifact_kind="ozon_search_visibility_xlsx", original_name="search.xlsx",
+            content_sha256="d" * 64, byte_size=1, stored_relpath=f"imports/{referenced}",
+        )
+    (imports / referenced).write_bytes(b"pr4")
+    (imports / orphan).write_bytes(b"orphan")
+
+    service.recover_interrupted_ozon_products_imports(db_path=db_path, data_dir=data_dir)
+
+    assert (imports / referenced).read_bytes() == b"pr4"
+    assert not (imports / orphan).exists()

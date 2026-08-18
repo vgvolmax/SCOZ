@@ -1,12 +1,17 @@
 import hashlib
 import os
-import re
-import threading
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
+from backend.application.import_runtime import (
+    ARCHIVE_RE,
+    IMPORT_LOCK,
+    MAX_ROW_ERRORS,
+    MAX_UPLOAD_BYTES,
+    safe_original_basename,
+)
 from backend.config import DATA_DIR
 from backend.domain.lineage import ImportStatus
 from backend.domain.product_snapshot import (
@@ -20,21 +25,12 @@ from backend.persistence.repositories.lineage import LineageRepository
 from backend.persistence.repositories.product_snapshots import ProductSnapshotRepository
 from backend.persistence.repositories.products import ProductRepository
 
-MAX_UPLOAD_BYTES = 25 * 1024 * 1024
-MAX_ROW_ERRORS = 50
-_IMPORT_LOCK = threading.Lock()
-ARCHIVE_RE = re.compile(r"\d{8}T\d{12}Z-[0-9a-f]{64}\.xlsx")
-
-def safe_original_basename(original_name: str) -> str:
-    name = PureWindowsPath(PurePosixPath(original_name).name).name
-    return "upload.xlsx" if name in ("", ".", "..") else name
-
 def _result(summary, errors=(), readiness="SELECT_OWN_PRODUCTS") -> ImportResult:
     assert summary.source_artifact is not None
     return ImportResult(summary.import_batch_id,"OZON_PRODUCTS",summary.status,summary.report_generated_on,summary.report_window_days,summary.rows_seen,summary.rows_accepted,summary.rows_skipped,summary.duplicate_observations,summary.new_observations,summary.corrected_revisions,summary.warnings_count,summary.row_errors_total,tuple(errors[:MAX_ROW_ERRORS]),len(errors)>MAX_ROW_ERRORS,summary.source_artifact,summary.finished_at or summary.started_at,readiness)
 
 def import_ozon_products_xlsx(*, upload: BinaryIO, original_name: str, db_path: Path | None = None, data_dir: Path = DATA_DIR) -> ImportResult:
-    if not _IMPORT_LOCK.acquire(blocking=False):
+    if not IMPORT_LOCK.acquire(blocking=False):
         raise OzonProductsImportFailure(error=ConcurrentImportConflict(),result=None)
     staged=None; final=None; final_owned=False; batch_id=None
     try:
@@ -95,11 +91,11 @@ def import_ozon_products_xlsx(*, upload: BinaryIO, original_name: str, db_path: 
     except (UploadTooLarge,UnsupportedUploadMediaType) as error:
         if staged: staged.unlink(missing_ok=True)
         raise OzonProductsImportFailure(error=error,result=None)
-    finally: _IMPORT_LOCK.release()
+    finally: IMPORT_LOCK.release()
 
 def recover_interrupted_ozon_products_imports(*, db_path: Path | None = None, data_dir: Path = DATA_DIR) -> None:
     with transaction(db_path) as conn:
-        lineage=LineageRepository(conn); lineage.fail_running_ozon_products_imports(finished_at=datetime.now(timezone.utc)); referenced=lineage.list_referenced_pr3_archive_paths()
+        lineage=LineageRepository(conn); lineage.fail_running_ozon_products_imports(finished_at=datetime.now(timezone.utc)); referenced=lineage.list_referenced_archive_paths()
     imports=data_dir/"imports"
     if not imports.exists(): return
     for path in imports.iterdir():
