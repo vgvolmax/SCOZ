@@ -80,12 +80,12 @@ def import_ozon_search_visibility_xlsx(*, upload: BinaryIO, original_name: str,
             raise OzonSearchVisibilityImportFailure(
                 error=SearchVisibilityUnsupportedUploadMediaType(), result=None
             )
-        imports_dir = data_dir / "imports"
-        imports_dir.mkdir(parents=True, exist_ok=True)
-        staged_path = imports_dir / f".upload-{uuid.uuid4()}.part"
-        digest = hashlib.sha256()
-        size = 0
         try:
+            imports_dir = data_dir / "imports"
+            imports_dir.mkdir(parents=True, exist_ok=True)
+            staged_path = imports_dir / f".upload-{uuid.uuid4()}.part"
+            digest = hashlib.sha256()
+            size = 0
             with staged_path.open("xb") as target:
                 while chunk := upload.read(1024 * 1024):
                     size += len(chunk)
@@ -99,44 +99,75 @@ def import_ozon_search_visibility_xlsx(*, upload: BinaryIO, original_name: str,
             staged_path.unlink(missing_ok=True)
             staged_path = None
             raise OzonSearchVisibilityImportFailure(error=error, result=None) from error
+        except OSError as error:
+            raise OzonSearchVisibilityImportFailure(
+                error=SearchVisibilityImportPersistenceError(), result=None
+            ) from error
         sha256 = digest.hexdigest()
-        with transaction(db_path) as conn:
-            lineage = LineageRepository(conn)
-            batch = lineage.create_import_batch(source="ozon", import_kind="ozon_search_visibility_xlsx")
+        try:
+            with transaction(db_path) as conn:
+                lineage = LineageRepository(conn)
+                batch = lineage.create_import_batch(
+                    source="ozon", import_kind="ozon_search_visibility_xlsx"
+                )
+                artifact = lineage.add_source_artifact(
+                    batch.id, artifact_kind="ozon_search_visibility_xlsx",
+                    original_name=original, content_sha256=sha256, byte_size=size,
+                )
             batch_id = batch.id
-            artifact = lineage.add_source_artifact(
-                batch.id, artifact_kind="ozon_search_visibility_xlsx",
-                original_name=original, content_sha256=sha256, byte_size=size,
-            )
             artifact_id = artifact.id
+        except Exception as error:
+            raise OzonSearchVisibilityImportFailure(
+                error=SearchVisibilityImportPersistenceError(), result=None
+            ) from error
         try:
             report = parse_ozon_search_visibility_xlsx(staged_path)
         except OzonSearchVisibilityError as error:
             staged_path.unlink(missing_ok=True)
             staged_path = None
-            with transaction(db_path) as conn:
-                summary = LineageRepository(conn).finish_ozon_search_visibility_import(
-                    batch_id, status=ImportStatus.FAILED, observed_at=None,
-                    query_text=None, cluster_name=None, declared_rows=None,
-                    rows_seen=0, rows_accepted=0, rows_skipped=0,
-                    duplicate_observations=0, new_observations=0,
-                    corrected_revisions=0, warnings_count=0, row_errors_total=0,
-                )
+            try:
+                with transaction(db_path) as conn:
+                    summary = LineageRepository(conn).finish_ozon_search_visibility_import(
+                        batch_id, status=ImportStatus.FAILED, observed_at=None,
+                        query_text=None, cluster_name=None, declared_rows=None,
+                        rows_seen=0, rows_accepted=0, rows_skipped=0,
+                        duplicate_observations=0, new_observations=0,
+                        corrected_revisions=0, warnings_count=0, row_errors_total=0,
+                    )
+            except Exception as persistence_error:
+                result = _finish_failed(db_path=db_path, batch_id=batch_id)
+                raise OzonSearchVisibilityImportFailure(
+                    error=SearchVisibilityImportPersistenceError(), result=result
+                ) from persistence_error
             raise OzonSearchVisibilityImportFailure(error=error, result=_result(summary)) from error
+        except Exception:
+            try:
+                staged_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            staged_path = None
+            _finish_failed(db_path=db_path, batch_id=batch_id)
+            raise
         if not report.rows:
             staged_path.unlink(missing_ok=True)
             staged_path = None
-            with transaction(db_path) as conn:
-                summary = LineageRepository(conn).finish_ozon_search_visibility_import(
-                    batch_id, status=ImportStatus.FAILED, observed_at=report.observed_at,
-                    query_text=report.query_text, cluster_name=report.cluster_name,
-                    declared_rows=report.declared_rows, rows_seen=report.rows_seen,
-                    rows_accepted=0, rows_skipped=len(report.row_errors),
-                    duplicate_observations=report.duplicate_input_rows,
-                    new_observations=0, corrected_revisions=0,
-                    warnings_count=report.warnings_count,
-                    row_errors_total=len(report.row_errors),
-                )
+            try:
+                with transaction(db_path) as conn:
+                    summary = LineageRepository(conn).finish_ozon_search_visibility_import(
+                        batch_id, status=ImportStatus.FAILED, observed_at=report.observed_at,
+                        query_text=report.query_text, cluster_name=report.cluster_name,
+                        declared_rows=report.declared_rows, rows_seen=report.rows_seen,
+                        rows_accepted=0, rows_skipped=len(report.row_errors),
+                        duplicate_observations=report.duplicate_input_rows,
+                        new_observations=0, corrected_revisions=0,
+                        warnings_count=report.warnings_count,
+                        row_errors_total=len(report.row_errors),
+                    )
+            except Exception as error:
+                result = _finish_failed(db_path=db_path, batch_id=batch_id, report=report)
+                raise OzonSearchVisibilityImportFailure(
+                    error=SearchVisibilityImportPersistenceError(), result=result
+                ) from error
             raise OzonSearchVisibilityImportFailure(
                 error=SearchVisibilityNoUsableRows(), result=_result(summary, report.row_errors)
             )
@@ -197,29 +228,12 @@ def import_ozon_search_visibility_xlsx(*, upload: BinaryIO, original_name: str,
             if final_owned and final_path is not None:
                 final_path.unlink(missing_ok=True)
                 final_owned = False
-            with transaction(db_path) as conn:
-                summary = LineageRepository(conn).finish_ozon_search_visibility_import(
-                    batch_id, status=ImportStatus.FAILED, observed_at=report.observed_at,
-                    query_text=report.query_text, cluster_name=report.cluster_name,
-                    declared_rows=report.declared_rows, rows_seen=report.rows_seen,
-                    rows_accepted=len(report.rows), rows_skipped=len(report.row_errors),
-                    duplicate_observations=report.duplicate_input_rows,
-                    new_observations=0, corrected_revisions=0,
-                    warnings_count=report.warnings_count,
-                    row_errors_total=len(report.row_errors),
-                )
+            result = _finish_failed(db_path=db_path, batch_id=batch_id, report=report)
             raise OzonSearchVisibilityImportFailure(
-                error=SearchVisibilityImportPersistenceError(), result=_result(summary, report.row_errors)
+                error=SearchVisibilityImportPersistenceError(), result=result
             ) from error
     except OzonSearchVisibilityImportFailure:
         raise
-    except Exception as error:
-        result = None if batch_id is None else _finish_failed(
-            db_path=db_path, batch_id=batch_id
-        )
-        raise OzonSearchVisibilityImportFailure(
-            error=SearchVisibilityImportPersistenceError(), result=result
-        ) from error
     finally:
         if staged_path is not None:
             staged_path.unlink(missing_ok=True)
