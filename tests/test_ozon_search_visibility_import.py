@@ -201,6 +201,31 @@ def test_early_persistence_failure_is_mapped_and_cleans_stage(monkeypatch, tmp_p
     IMPORT_LOCK.release()
 
 
+def test_unexpected_parser_error_is_preserved_and_compensated(monkeypatch, tmp_path):
+    db, data = tmp_path / "scoz.db", tmp_path / "data"
+    initialize_database(db)
+    monkeypatch.setattr(
+        service, "parse_ozon_search_visibility_xlsx",
+        lambda path: (_ for _ in ()).throw(RuntimeError("unexpected parser bug")),
+    )
+
+    with pytest.raises(RuntimeError, match="unexpected parser bug"):
+        import_ozon_search_visibility_xlsx(
+            upload=BytesIO(build_ozon_search_visibility_workbook()),
+            original_name="x.xlsx", db_path=db, data_dir=data,
+        )
+
+    with connect(db) as conn:
+        status = conn.execute(
+            "SELECT status FROM import_batches WHERE import_kind = ?",
+            ("ozon_search_visibility_xlsx",),
+        ).fetchone()[0]
+    assert status == ImportStatus.FAILED.value
+    assert not list((data / "imports").glob("*"))
+    assert IMPORT_LOCK.acquire(blocking=False)
+    IMPORT_LOCK.release()
+
+
 def test_recovery_is_kind_scoped_and_protects_global_archive_references(tmp_path):
     db, data = tmp_path / "scoz.db", tmp_path / "data"
     imports = data / "imports"
