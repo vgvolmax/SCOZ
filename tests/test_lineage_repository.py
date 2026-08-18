@@ -1,11 +1,12 @@
 import sqlite3
 from dataclasses import fields
-from datetime import timezone
+from datetime import datetime, timezone
 
 import pytest
 
 from backend.domain.lineage import (
     ImportBatch,
+    ImportHistoryItem,
     ImportBatchNotFound,
     ImportStatus,
     InvalidImportStatusTransition,
@@ -155,3 +156,59 @@ def test_narrow_boundary_and_no_rows_leak(repository):
     assert [f.name for f in fields(SourceArtifact)] == ["id", "import_batch_id", "artifact_kind", "original_name", "content_sha256", "byte_size", "stored_relpath", "created_at"]
     assert connection.in_transaction
     connection.rollback()
+
+
+def test_search_visibility_finish_and_unified_history(repository):
+    repo, _ = repository
+    batch = repo.create_import_batch(source="ozon", import_kind="ozon_search_visibility_xlsx")
+    artifact = repo.add_source_artifact(
+        batch.id, artifact_kind="ozon_search_visibility_xlsx",
+        original_name="visibility.xlsx", content_sha256="c" * 64, byte_size=42,
+        stored_relpath="imports/visibility.xlsx",
+    )
+    observed_at = datetime(2026, 8, 17, 9, 30, tzinfo=timezone.utc)
+    summary = repo.finish_ozon_search_visibility_import(
+        batch.id, status=ImportStatus.PARTIAL_SUCCESS, observed_at=observed_at,
+        query_text="синтетический запрос", cluster_name="Москва",
+        declared_rows=3, rows_seen=3, rows_accepted=2, rows_skipped=1,
+        duplicate_observations=0, new_observations=2,
+        corrected_revisions=0, warnings_count=0, row_errors_total=1,
+    )
+    assert summary.observed_at == observed_at
+    assert summary.query_text == "синтетический запрос"
+    assert summary.cluster_name == "Москва" and summary.declared_rows == 3
+    assert summary.source_artifact == artifact
+    assert repo.count_ozon_search_visibility_imports() == 1
+    history = repo.list_import_history(limit=10, offset=0)
+    assert len(history) == 1 and isinstance(history[0], ImportHistoryItem)
+    assert history[0].report_type == "OZON_SEARCH_VISIBILITY"
+    assert history[0].report_generated_on is None
+    assert history[0].observed_at == observed_at
+    assert repo.list_referenced_archive_paths() == {"imports/visibility.xlsx"}
+    with pytest.raises(InvalidImportStatusTransition):
+        repo.finish_ozon_search_visibility_import(
+            batch.id, status=ImportStatus.SUCCESS, observed_at=observed_at,
+            query_text="q", cluster_name="c", declared_rows=1, rows_seen=1,
+            rows_accepted=1, rows_skipped=0, duplicate_observations=0,
+            new_observations=1, corrected_revisions=0, warnings_count=0,
+            row_errors_total=0,
+        )
+
+
+def test_unified_history_filters_unknown_and_global_archive_references(repository):
+    repo, connection = repository
+    products = repo.create_import_batch(source="ozon", import_kind="ozon_products_xlsx")
+    unknown = repo.create_import_batch(source="other", import_kind="future")
+    repo.add_source_artifact(products.id, artifact_kind="xlsx", original_name=None,
+                             content_sha256="d" * 64, byte_size=1,
+                             stored_relpath="imports/products.xlsx")
+    repo.add_source_artifact(unknown.id, artifact_kind="xlsx", original_name=None,
+                             content_sha256="e" * 64, byte_size=1,
+                             stored_relpath="outside/future.xlsx")
+    assert repo.count_import_history() == 1
+    assert repo.list_import_history(limit=10, offset=0)[0].report_type == "OZON_PRODUCTS"
+    assert repo.list_referenced_archive_paths() == {"imports/products.xlsx"}
+    assert repo.fail_running_ozon_search_visibility_imports(
+        finished_at=datetime.now(timezone.utc)
+    ) == 0
+    assert connection.in_transaction

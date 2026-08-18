@@ -1,8 +1,9 @@
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
+from typing import Literal
 
 
 type JSONPrimitive = None | bool | int | float | str
@@ -38,6 +39,32 @@ class SourceArtifact:
     created_at: datetime
 
 
+@dataclass(frozen=True)
+class ImportHistoryItem:
+    import_batch_id: int
+    source: str
+    import_kind: str
+    report_type: Literal["OZON_PRODUCTS", "OZON_SEARCH_VISIBILITY"]
+    status: ImportStatus
+    report_generated_on: date | None
+    report_window_days: int | None
+    observed_at: datetime | None
+    query_text: str | None
+    cluster_name: str | None
+    declared_rows: int | None
+    rows_seen: int
+    rows_accepted: int
+    rows_skipped: int
+    duplicate_observations: int
+    new_observations: int
+    corrected_revisions: int
+    warnings_count: int
+    row_errors_total: int
+    started_at: datetime
+    finished_at: datetime | None
+    source_artifact: SourceArtifact | None
+
+
 class ImportBatchNotFound(LookupError):
     pass
 
@@ -57,7 +84,7 @@ class InvalidStoredRelativePath(ValueError):
 __all__ = [
     "ImportBatch", "ImportBatchNotFound", "ImportStatus",
     "InvalidImportStatusTransition", "InvalidSourceArtifactMetadata",
-    "InvalidStoredRelativePath", "SourceArtifact", "utc_now",
+    "InvalidStoredRelativePath", "SourceArtifact", "ImportHistoryItem", "utc_now",
     "datetime_to_db", "datetime_from_db", "normalized_payload_sha256",
 ]
 

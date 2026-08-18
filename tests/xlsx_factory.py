@@ -39,6 +39,69 @@ OZON_PRODUCTS_HEADERS = (
     "Дата создания карточки товара",
 )
 
+OZON_SEARCH_VISIBILITY_HEADERS = (
+    "Позиция", "ID товара", "Название товара", "Имя селлера", "Сводная оценка",
+    "Статус", "Ставка\nОплата за клик", "Стратегия",
+    "Ставка\nОплата за заказ", "Соответствие запросу", "Отзывы",
+    "Цена для покупателя", "Популярность общая", "Акции от Ozon",
+    "Срок доставки", "Индекс цен",
+)
+
+
+def _default_search_visibility_row() -> dict[str, object]:
+    return dict(zip(OZON_SEARCH_VISIBILITY_HEADERS, (
+        "1", 100000001, "Синтетический товар", "Синтетический продавец", "0,526",
+        "Продвигается", "10,50 ₽", "Автостратегия", "5%", "99,1",
+        "4,8 (1 234 шт.)", "1 999 ₽", "42,2", "Да", "1-2 дня", "10,0%",
+    ), strict=True))
+
+
+def build_ozon_search_visibility_workbook(
+    *, query: str = "тестовый запрос", cluster: str = "г. Тестоград, Россия",
+    date: str = "17/08/2026", time: str = "03:55 +00",
+    declared_rows: int | None = None,
+    rows: Sequence[Mapping[str, object]] | None = None,
+    headers: Sequence[str] = OZON_SEARCH_VISIBILITY_HEADERS,
+    extra_sheet: bool = False, merged_cells: Sequence[str] = (),
+    formula_cells: Mapping[str, str] | None = None,
+    q_z_values: Mapping[str, object] | None = None,
+    row_6_values: Mapping[int, object] | None = None,
+    row_8_values: Mapping[int, object] | None = None,
+    row_9_values: Mapping[int, object] | None = None,
+) -> bytes:
+    workbook = Workbook()
+    sheet = workbook.active
+    source_rows = rows if rows is not None else (_default_search_visibility_row(),)
+    declared = len(source_rows) if declared_rows is None else declared_rows
+    for coordinate, value in {
+        "A1": f"Дата: {date}", "A2": f"Запрос: {query}",
+        "A3": f"Время: {time}", "A4": f"Регион: {cluster}",
+        "A5": f"Сколько позиций в выдаче: {declared}",
+    }.items():
+        sheet[coordinate] = value
+    for column, header in enumerate(headers, 1):
+        sheet.cell(7, column, header)
+    for column, value in (row_6_values or {}).items(): sheet.cell(6, column, value)
+    for column, value in (row_8_values or {}).items(): sheet.cell(8, column, value)
+    help_values = row_9_values or {1: "Синтетическая поясняющая строка"}
+    for column, value in help_values.items(): sheet.cell(9, column, value)
+    for row_number, row in enumerate(source_rows, 10):
+        for column, header in enumerate(headers, 1):
+            value = row.get(header)
+            # openpyxl serializes 1.0 as the integer lexical form ``1``. Preserve
+            # this deliberately invalid mutation so parser tests can distinguish it.
+            if header == "ID товара" and isinstance(value, float):
+                value = str(value)
+            sheet.cell(row_number, column, value)
+    for coordinate, value in (q_z_values or {}).items(): sheet[coordinate] = value
+    for coordinate, value in (formula_cells or {}).items(): sheet[coordinate] = value
+    for cell_range in merged_cells: sheet.merge_cells(cell_range)
+    if extra_sheet: workbook.create_sheet()
+    output = BytesIO()
+    workbook.save(output)
+    workbook.close()
+    return output.getvalue()
+
 
 def _default_row(category_level_3: str) -> dict[str, object]:
     return dict(zip(OZON_PRODUCTS_HEADERS, (

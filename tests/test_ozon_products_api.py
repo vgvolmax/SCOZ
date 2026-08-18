@@ -114,11 +114,11 @@ def test_post_too_large_and_concurrent_lock(monkeypatch, tmp_path):
         too_large = _post(client, b"x" * (service.MAX_UPLOAD_BYTES + 1))
         assert too_large.status_code == 413
         assert too_large.json()["result"] is None
-        service._IMPORT_LOCK.acquire()
+        service.IMPORT_LOCK.acquire()
         try:
             conflict = _post(client, build_ozon_products_workbook())
         finally:
-            service._IMPORT_LOCK.release()
+            service.IMPORT_LOCK.release()
     assert conflict.status_code == 409
     assert conflict.json()["result"] is None
 
