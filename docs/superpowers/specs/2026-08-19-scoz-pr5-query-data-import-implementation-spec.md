@@ -856,7 +856,27 @@ imported_at
 
 `OzonQueryMetricsImportFailure` follows the same failure/result rule. No `generated_at` is invented. Do not return the ten market metric payload fields in the import response.
 
-### 21.3. Lineage repository methods
+### 21.3. Frozen import-counter semantics
+
+The following semantics are identical for both PR5 source verticals and are evaluated for a structurally valid parsed report:
+
+- `rows_seen` is the number of all candidate observation rows that the parser classified as data rows. It includes valid rows, recoverably invalid rows, and additional identical in-file duplicate rows. It excludes metadata, headers, help rows, structurally ignored rows, and completely semantically blank trailing rows.
+- `rows_accepted` is the number of unique valid normalized observations after identical in-file duplicate deduplication. An additional identical row does not increase `rows_accepted`. This counter is fixed before repository revision classification, so an accepted observation later classified as `SnapshotWriteKind.DUPLICATE` still counts in `rows_accepted`.
+- `rows_skipped` is the number of candidate rows rejected recoverably because of row-level validation errors. It excludes identical in-file duplicates, repository-level `DUPLICATE` observations, and structural fatal failures.
+- `duplicate_input_rows` is an internal parser counter for additional identical in-file duplicate rows removed during normalization/deduplication. It remains part of each parsed-report DTO and is not a new public API or import-history field.
+- `duplicate_observations` is the public import-result/history counter equal to `duplicate_input_rows` plus the number of accepted normalized observations that the persistence repository classifies as `SnapshotWriteKind.DUPLICATE`. A repository-level duplicate therefore remains in `rows_accepted`, does not enter `rows_skipped`, and additionally increments `duplicate_observations`.
+
+For every structurally valid parsed report:
+
+```text
+rows_seen = rows_accepted + rows_skipped + duplicate_input_rows
+```
+
+Do not impose `rows_seen = rows_accepted + rows_skipped`; that equation is false when identical in-file duplicates exist. Conflicting in-file duplicates are fatal and never reach a normal `SUCCESS` or `PARTIAL_SUCCESS` result.
+
+Example: 10 candidate rows comprising one recoverably invalid row, two additional identical duplicates, and seven unique valid normalized observations produce `rows_seen=10`, `rows_accepted=7`, `rows_skipped=1`, and internal `duplicate_input_rows=2`. If persistence classifies those seven accepted observations as four `NEW`, one `CORRECTED`, and two `DUPLICATE`, then `new_observations=4`, `corrected_revisions=1`, and `duplicate_observations=2 + 2 = 4`; `rows_accepted` remains 7.
+
+### 21.4. Lineage repository methods
 
 Extend `LineageRepository` with source-specific methods rather than a generic finish callback:
 
@@ -869,7 +889,7 @@ fail_running_ozon_query_metrics_imports(...)
 
 Source-specific finish methods validate their expected `import_kind`, status transition, non-negative counters, canonical period/context, and return the corresponding summary DTO.
 
-### 21.4. Unified `ImportHistoryItem`
+### 21.5. Unified `ImportHistoryItem`
 
 Extend `ImportHistoryItem.report_type` to:
 
@@ -893,6 +913,22 @@ sort_context
 Existing PR3/PR4-specific fields remain and are null for non-applicable report types. PR5 fields are null for PR3/PR4 where not applicable.
 
 `LineageRepository.list_import_history()` and count include all four import kinds, ordered newest-first by `started_at DESC, id DESC`, with existing pagination semantics.
+
+Extend the existing `GET /api/imports` response-level contract so the backend returns global source availability separately from the paginated history items:
+
+```text
+items: [...]
+total: int
+source_availability:
+  own_product_queries: bool
+  query_metrics: bool
+```
+
+Existing pagination request/response fields remain unchanged. `source_availability.own_product_queries` is true exactly when the full durable import lineage contains at least one batch with `import_kind=ozon_seller_queries_xlsx` and `status IN (SUCCESS, PARTIAL_SUCCESS)`. `source_availability.query_metrics` follows the same rule for `import_kind=ozon_query_metrics_xlsx`. Otherwise the corresponding value is false.
+
+Availability is computed by the backend through `LineageRepository` or the existing lineage boundary over the complete durable history. It is invariant across `offset` and `limit`, independent of the current page's `items`, and is not reset by a later `FAILED` or otherwise erroneous import. Routes and frontend must not contain business SQL, the frontend must not scan every history page, and PR5 must not add a readiness table, readiness service, or endpoint.
+
+This contract means only that at least one source import was saved successfully or partially successfully. It does not assert analytical readiness and does not evaluate period compatibility, freshness, query relevance, coverage completeness, or demand quality.
 
 ## 22. FastAPI endpoints and error envelopes
 
@@ -963,13 +999,13 @@ Extend history rendering for the two new report types:
 - seller-queries: label `Запросы моего товара`; context includes Ozon product ID, exact source period, and accepted/skipped counts;
 - Query Metrics: label `Метрики поисковых запросов`; context includes exact source period, sort context in detail, and accepted/skipped counts.
 
-Minimal PR5 readiness is derived from unified import history rather than a new readiness service:
+Minimal PR5 readiness labels consume the response-level `source_availability` returned by `GET /api/imports`; they are not derived by searching the paginated `items`:
 
-- most recent successful/partial `OZON_OWN_PRODUCT_QUERIES` import → `Запросы своего товара — данные есть`;
-- most recent successful/partial `OZON_QUERY_METRICS` import → `Рыночные метрики запросов — данные есть`;
-- otherwise show what report is missing.
+- `source_availability.own_product_queries=true` → `Запросы своего товара — данные есть`;
+- `source_availability.query_metrics=true` → `Рыночные метрики запросов — данные есть`;
+- a false value shows that the corresponding source is missing.
 
-A later failed import does not erase previously persisted source availability. This readiness is source availability only. Do not evaluate period compatibility, query relevance, demand quality, or analytical readiness in PR5.
+History remains paginated and its renderer uses `items`; readiness labels use the separate global `source_availability`. A later failed import does not erase previously persisted source availability. This readiness is source availability only. Do not evaluate period compatibility, freshness, query relevance, coverage completeness, demand quality, or analytical readiness in PR5, and do not expand PR5 into a full readiness subsystem.
 
 Use the existing committed HTML/CSS/JavaScript model and canonical Visual Design System. No npm/build step or framework is introduced.
 
@@ -1017,6 +1053,7 @@ At minimum add tests for:
 - formulas in structural rows fatal; formulas in data rows recoverable;
 - wrong PR3/PR4/Query Metrics report → wrong report type;
 - identical in-file query duplicate warning/dedupe;
+- counter fixture mixing unique valid, recoverably invalid, and identical duplicate rows proves `rows_seen = rows_accepted + rows_skipped + duplicate_input_rows`;
 - conflicting in-file duplicate fatal;
 - zero usable rows returned by parser for application handling.
 
@@ -1041,6 +1078,7 @@ At minimum add tests for:
 - merged cells and L+ business values fatal;
 - wrong PR3/PR4/seller report → wrong report type;
 - identical duplicate query warning/dedupe;
+- counter fixture mixing unique valid, recoverably invalid, and identical duplicate rows proves `rows_seen = rows_accepted + rows_skipped + duplicate_input_rows`;
 - conflicting duplicate fatal;
 - fewer than 10,000 rows valid;
 - absent query creates no synthetic zero observation.
@@ -1068,6 +1106,7 @@ Seller import service tests:
 - partial success;
 - zero usable no Product/SearchQuery/snapshot mutation;
 - duplicate/corrected/reperiod behavior;
+- synthetic counter scenario combining unique valid rows, one recoverably invalid row, one identical in-file duplicate, and a repository-level duplicate asserts exact `rows_seen`, `rows_accepted`, `rows_skipped`, `duplicate_observations`, `new_observations`, and `corrected_revisions` values;
 - shared lock conflict with PR3/PR4/other PR5 import;
 - staging size/extension/filesystem failures;
 - archive compensation;
@@ -1081,6 +1120,7 @@ Query Metrics import service tests:
 - valid/partial import;
 - zero usable no SearchQuery/snapshot mutation;
 - duplicate/corrected/reperiod behavior;
+- synthetic counter scenario combining unique valid rows, one recoverably invalid row, one identical in-file duplicate, and a repository-level duplicate asserts exact `rows_seen`, `rows_accepted`, `rows_skipped`, `duplicate_observations`, `new_observations`, and `corrected_revisions` values;
 - no Product rows created or mutated;
 - shared lock conflicts cross-kind;
 - package compatibility failure classification;
@@ -1117,6 +1157,10 @@ Additional HTTP integration:
 
 - `GET /api/imports` contains mixed PR3/PR4/seller/Query Metrics history newest-first;
 - pagination and total remain correct;
+- after a successful or partial PR5 import of either kind, add more than 50 newer history rows and request the first paginated page: the older qualifying batch is absent from `items`, while its corresponding `source_availability` value remains true;
+- a later `FAILED` import of that kind does not change an already true availability value;
+- a kind with no historical `SUCCESS` or `PARTIAL_SUCCESS` has false availability;
+- `source_availability` is identical for different `offset`/`limit` values;
 - non-applicable context fields are null, not cross-populated;
 - seller ownership change is visible for an existing PR3-backed Product through `/api/products`;
 - seller-only Product is not catalog-visible;
@@ -1133,7 +1177,7 @@ Update static frontend contract tests to prove:
 - seller period/Product context and Query Metrics period/sort context are rendered through escaped text;
 - successful seller import refreshes imports + products;
 - Query Metrics import refreshes imports;
-- minimal source readiness text is present;
+- minimal source readiness text is present and driven by `source_availability`, while history rendering is driven by paginated `items`;
 - no Query Opportunity, relevant-query selection, benchmark, competitor, heatmap, or future analytics UI appears in PR5.
 
 ## 29. Windows portable acceptance
@@ -1252,6 +1296,6 @@ The following decisions are frozen for PR5 unless the user explicitly reopens th
 13. shared file-lifecycle extraction is mechanical only and existing PR3/PR4 services are not refactored for cosmetic consistency;
 14. import_batches stores only minimal PR5 period/generated/product/sort context needed for durable failed-history explanation;
 15. two explicit POST endpoints plus unified GET history; no generic dispatcher;
-16. readiness in PR5 means source availability only, derived from import history;
+16. readiness in PR5 means global source availability only, computed by the backend from complete durable import history and returned separately from paginated `items`;
 17. no PR6+ analytics or selection workflow enters PR5;
 18. no new dependencies or frontend build system.
