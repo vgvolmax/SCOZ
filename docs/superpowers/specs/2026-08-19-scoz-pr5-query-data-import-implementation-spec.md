@@ -439,7 +439,7 @@ parse_ozon_seller_queries_xlsx(path: Path) -> ParsedSellerQueriesReport
 
 Use the approved seller-queries Source Contract exactly. Do not detect by filename or worksheet name and do not fuzzy-match headers. It must preserve exact LF/NBSP header code points.
 
-Use `openpyxl` directly with `data_only=False`. Normal workbook mode is preferred over read-only mode because this verified source is small and PR5 needs deterministic merged-cell/formula inspection. No new dependency is permitted.
+Use `openpyxl` with `data_only=False` in normal workbook mode. Because application staging uses `.upload-<uuid>.part`, open the staged path as a binary file-like object and pass that stream to `openpyxl`; do not rely on the `.part` pathname extension. Keep the binary handle alive through `workbook.close()`. Normal mode is preferred because this verified source is small and PR5 needs deterministic merged-cell/formula inspection. No new dependency is permitted.
 
 The parser must distinguish readable clearly different reports as `WRONG_REPORT_TYPE`; expected seller-queries markers with incompatible seller layout are `INCOMPATIBLE_REPORT_SCHEMA`; unreadable/non-XLSX remains `UNSUPPORTED_WORKBOOK`.
 
@@ -582,9 +582,11 @@ Create `backend/ingestion/ozon_query_metrics_xlsx.py`:
 parse_ozon_query_metrics_xlsx(path: Path) -> ParsedQueryMetricsReport
 ```
 
-It receives the transient read-compatible copy, not the original archived artifact path.
+It receives the transient `.readcopy-<uuid>.xlsx`, not the original archived artifact path, so normal openpyxl filename validation is valid. Use `data_only=False` and normal workbook mode to make formula/merged-cell inspection deterministic.
 
-Implement the Query Metrics Source Contract exactly: one worksheet, period in A1, exact supported sort line in A2, exact A:K header row 3, row 4 help ignored as observations, data rows from 5 onward, no merged cells, no formulas accepted as business facts, no non-empty business values in L onward, and no requirement that the report contain exactly 10,000 rows.
+Implement the Query Metrics Source Contract exactly: one worksheet, period in A1, exact supported sort line in A2, exact A:K header row 3, row 4 help ignored as observations, data rows from 5 onward, no merged cells, no non-empty business values in L onward, and no requirement that the report contain exactly 10,000 rows.
+
+Formula policy is exact: formulas in structural rows 1–4 are fatal incompatible schema; a formula in candidate row A:K makes that candidate row recoverably invalid. Cached formula values are never accepted as source literals.
 
 Do not trust stored worksheet dimension `A1`. Determine candidate rows from actual cell references/content. Completely semantically blank trailing rows are ignored.
 
@@ -748,11 +750,35 @@ Do not create a background cleanup service.
 
 ## 21. Import summary/result DTOs and unified history
 
-Freeze source-specific summary/result/failure DTOs in their domain modules, following the PR4 shape.
+Freeze source-specific summary/result/failure DTOs in their domain modules.
 
-### 21.1. Seller result
+### 21.1. Seller summary/result
 
-`OzonSellerQueriesImportResult` contains:
+`OzonSellerQueriesImportSummary` contains exactly:
+
+```text
+import_batch_id
+source
+import_kind
+status
+generated_at | null
+period_start | null
+period_end | null
+product_ozon_id | null
+rows_seen
+rows_accepted
+rows_skipped
+duplicate_observations
+new_observations
+corrected_revisions
+warnings_count
+row_errors_total
+started_at
+finished_at | null
+source_artifact | null
+```
+
+`OzonSellerQueriesImportResult` contains exactly:
 
 ```text
 import_batch_id
@@ -776,11 +802,36 @@ source_artifact
 imported_at
 ```
 
+`OzonSellerQueriesImportFailure` carries `error` plus `result | None`. Before a durable ImportBatch exists, `result=None`. Once a durable failed summary exists, return the FAILED result. `imported_at` in result follows the existing PR4 convention: `finished_at` when available, otherwise `started_at`.
+
 Do not include the eight per-query metric values or query-row arrays in the import response.
 
-### 21.2. Query Metrics result
+### 21.2. Query Metrics summary/result
 
-`OzonQueryMetricsImportResult` contains:
+`OzonQueryMetricsImportSummary` contains exactly:
+
+```text
+import_batch_id
+source
+import_kind
+status
+period_start | null
+period_end | null
+sort_context | null
+rows_seen
+rows_accepted
+rows_skipped
+duplicate_observations
+new_observations
+corrected_revisions
+warnings_count
+row_errors_total
+started_at
+finished_at | null
+source_artifact | null
+```
+
+`OzonQueryMetricsImportResult` contains exactly:
 
 ```text
 import_batch_id
@@ -803,9 +854,22 @@ source_artifact
 imported_at
 ```
 
-No `generated_at` is invented. Do not return the ten market metric payload fields in the import response.
+`OzonQueryMetricsImportFailure` follows the same failure/result rule. No `generated_at` is invented. Do not return the ten market metric payload fields in the import response.
 
-### 21.3. Unified `ImportHistoryItem`
+### 21.3. Lineage repository methods
+
+Extend `LineageRepository` with source-specific methods rather than a generic finish callback:
+
+```text
+finish_ozon_seller_queries_import(...)
+finish_ozon_query_metrics_import(...)
+fail_running_ozon_seller_queries_imports(...)
+fail_running_ozon_query_metrics_imports(...)
+```
+
+Source-specific finish methods validate their expected `import_kind`, status transition, non-negative counters, canonical period/context, and return the corresponding summary DTO.
+
+### 21.4. Unified `ImportHistoryItem`
 
 Extend `ImportHistoryItem.report_type` to:
 
@@ -901,11 +965,11 @@ Extend history rendering for the two new report types:
 
 Minimal PR5 readiness is derived from unified import history rather than a new readiness service:
 
-- latest SUCCESS/PARTIAL_SUCCESS `OZON_OWN_PRODUCT_QUERIES` → `Запросы своего товара — данные есть`;
-- latest SUCCESS/PARTIAL_SUCCESS `OZON_QUERY_METRICS` → `Рыночные метрики запросов — данные есть`;
+- most recent successful/partial `OZON_OWN_PRODUCT_QUERIES` import → `Запросы своего товара — данные есть`;
+- most recent successful/partial `OZON_QUERY_METRICS` import → `Рыночные метрики запросов — данные есть`;
 - otherwise show what report is missing.
 
-This is source availability only. Do not evaluate period compatibility, query relevance, demand quality, or analytical readiness in PR5.
+A later failed import does not erase previously persisted source availability. This readiness is source availability only. Do not evaluate period compatibility, query relevance, demand quality, or analytical readiness in PR5.
 
 Use the existing committed HTML/CSS/JavaScript model and canonical Visual Design System. No npm/build step or framework is introduced.
 
@@ -973,7 +1037,8 @@ At minimum add tests for:
 - revenue underlying precision preserved;
 - no-action share >100 percentage points accepted;
 - no cross-field arithmetic constraints/recomputation;
-- formulas, merged cells, L+ business values;
+- formulas in structural rows fatal and formulas in candidate rows recoverable;
+- merged cells and L+ business values fatal;
 - wrong PR3/PR4/seller report → wrong report type;
 - identical duplicate query warning/dedupe;
 - conflicting duplicate fatal;
@@ -1035,6 +1100,7 @@ For both POST endpoints cover:
 - wrong report → 422 `WRONG_REPORT_TYPE`;
 - incompatible expected schema → 422 `INCOMPATIBLE_REPORT_SCHEMA`;
 - invalid period → 422;
+- seller invalid generated_at/product context → 422 with source-specific code;
 - conflicting rows → 422;
 - no usable rows → 422 with durable FAILED result/context;
 - shared lock → 409 and `result:null`;
