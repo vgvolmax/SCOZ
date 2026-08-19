@@ -64,10 +64,12 @@ Run these commands **from the repository root in the Codex terminal before Task 
 ```bash
 git status --short
 git rev-parse HEAD
+PR5_BASE_SHA="$(git rev-parse HEAD)"
+printf 'PR5_BASE_SHA=%s\n' "$PR5_BASE_SHA"
 python -c "from pathlib import Path; p=Path('docs/superpowers/specs/2026-08-19-scoz-pr5-query-data-import-implementation-spec.md'); t=p.read_text(encoding='utf-8'); assert '**Status:** Approved implementation specification' in t; print('PR5 spec approved')"
 ```
 
-Require a clean starting tree. Record the initial implementation-branch HEAD as `PR5_BASE_SHA` in the task log. All PR-wide scope audits at the end compare `PR5_BASE_SHA..HEAD`; do not use fragile `HEAD~N` assumptions.
+Require a clean starting tree. Record the printed initial implementation-branch SHA as `PR5_BASE_SHA` in the task log and preserve the variable in the current execution shell session. Task 13 must use `$PR5_BASE_SHA`. If the execution environment loses shell state between tasks, restore `PR5_BASE_SHA` from that recorded factual SHA before running the audits. All PR-wide scope audits at the end compare `$PR5_BASE_SHA..HEAD`; never replace the recorded base with a fragile `HEAD~N` assumption.
 
 ## File Map
 
@@ -365,14 +367,14 @@ class ProductQuerySnapshotRepository:
 - [ ] **Step 1: Write RED NEW/DUPLICATE/CORRECTED tests.** Revision 1 NEW inserts once; same key/hash returns DUPLICATE with no insert; changed payload/hash appends revision 2 and points `supersedes_snapshot_id` to prior current row; prior row remains immutable.
 - [ ] **Step 2: Write RED key-independence tests.** Changing Product, SearchQuery, `period_start`, or `period_end` yields an independent revision-1 observation.
 - [ ] **Step 3: Write RED state/Decimal tests.** `KNOWN` requires positive integer position; `SOURCE_ZERO` requires null position; Decimal percentage points/revenue round-trip as canonical text with no float.
-- [ ] **Step 4: Write RED validation tests.** Reject end-before-start, naive `imported_at`, invalid SHA, missing/extra payload keys, negative counts, invalid state/position combination before SQL mutation.
+- [ ] **Step 4: Write RED validation tests.** Reject end-before-start, naive `imported_at`, invalid SHA, missing/extra payload keys, negative counts, invalid state/position combination, `search_to_card_conversion_pct` or `search_to_order_conversion_pct` below 0 or above 100, `ordered_revenue_rub` below 0, and NaN/Infinity/-Infinity for every Decimal field. Preserve valid boundary values: both conversions may equal 0 or 100, and revenue may equal 0. Assert every rejection occurs before SQL mutation.
 - [ ] **Step 5: Run RED.**
 
   ```bash
   python -m pytest tests/test_product_query_snapshot_repository.py tests/test_observation_revision_convention.py -q
   ```
 
-- [ ] **Step 6: Implement repository mapping and revision resolution.** `find_current` orders `revision DESC LIMIT 1`; compare canonical payload SHA only; store Decimal with `canonical_decimal_text`; reconstruct enum/Decimal/date/datetime exactly.
+- [ ] **Step 6: Implement repository mapping and revision resolution.** `find_current` orders `revision DESC LIMIT 1`; compare canonical payload SHA only; store Decimal with `canonical_decimal_text`; reconstruct enum/Decimal/date/datetime exactly. Validate the canonical domain invariants from Step 4 before any SQL mutation.
 - [ ] **Step 7: Rerun GREEN + adjacent repositories.**
 
   ```bash
@@ -422,14 +424,14 @@ class QueryMetricSnapshotRepository:
 - [ ] **Step 1: Write RED revision tests.** NEW/DUPLICATE/CORRECTED behavior mirrors the frozen convention but uses only SearchQuery + period pair as logical key.
 - [ ] **Step 2: Write RED exact value tests.** Nullable dynamics round-trip as `None`; very large/negative dynamics persist; market conversions/revenue/no-action share retain exact Decimal text, including share >100 percentage points.
 - [ ] **Step 3: Write RED anti-dimension tests.** Repository signature/table has no Product or Cluster argument/column; numeric query identity is only `search_query_id`.
-- [ ] **Step 4: Write RED validation tests.** Reject invalid SHA, end-before-start, naive imported time, negative count fields, missing/extra payload fields. Do not reject large dynamics or no-action share >100.
+- [ ] **Step 4: Write RED validation tests.** Reject invalid SHA, end-before-start, naive imported time, negative count fields, missing/extra payload fields; `market_cart_conversion_pct` or `market_order_conversion_pct` below 0 or above 100; `ordered_revenue_rub` below 0; `no_action_share_pct` below 0; and NaN/Infinity/-Infinity for every Decimal field. Preserve as valid: market conversions equal to 0 or 100, revenue equal to 0, no-action share equal to 0 or above 100, large positive or negative dynamics, and `None` dynamics. Do not impose an artificial upper bound on `dynamics_28d_pct`, `dynamics_7d_pct`, or `no_action_share_pct`.
 - [ ] **Step 5: Run RED.**
 
   ```bash
   python -m pytest tests/test_query_metric_snapshot_repository.py tests/test_observation_revision_convention.py -q
   ```
 
-- [ ] **Step 6: Implement minimal repository and exact reconstruction.** No cross-field recomputation or relationship checks.
+- [ ] **Step 6: Implement minimal repository and exact reconstruction.** Enforce the canonical Decimal bounds from Step 4 before any SQL mutation. No cross-field recomputation or relationship checks.
 - [ ] **Step 7: Rerun GREEN + adjacent repositories.**
 
   ```bash
@@ -464,10 +466,10 @@ def parse_ozon_seller_queries_xlsx(path: Path) -> ParsedSellerQueriesReport: ...
 
 **Steps:**
 
-- [ ] **Step 1: Write RED exact-structure tests.** One worksheet; rows 1–4 exact markers/formats; row 5 blank; row 6 exact 11 headers including source LF/NBSP code points; row 7 blank; row 8 A:C required/D:K blank; no merges; nonempty L+ incompatible.
+- [ ] **Step 1: Write RED exact-structure tests.** One worksheet; rows 1–4 exact markers/formats; row 5 blank; row 6 exact 11 headers including source LF/NBSP code points; row 7 blank; row 8 A:C required/D:K blank; no merges; nonempty L+ incompatible. For row 9 onward, require A:C to be semantically blank whenever D:K contains observation facts: a valid D:K observation with nonblank A, B, or C is `SellerQueriesIncompatibleReportSchema`; blank D:K with nonblank A, B, or C is not an ordinary trailing blank and is also incompatible with exact v1 schema; a wholly semantically blank trailing A:K row is ignored. “Semantically blank” remains exactly `None` or exact `""`; whitespace-only strings are not semantically blank.
 - [ ] **Step 2: Write RED deterministic report-classification tests.** PR3 Products, PR4 Search Visibility, and Query Metrics fixtures are `SellerQueriesWrongReportType`; partial seller markers/schema are `SellerQueriesIncompatibleReportSchema`; unreadable/non-XLSX is `SellerQueriesUnsupportedWorkbook`.
 - [ ] **Step 3: Write RED metadata/product-context tests.** Parse generated UTC from rows 1–2 only (`+00`), period dates from rows 3–4 only, require start ≤ end, require positive decimal-digit A8 Ozon ID and nonempty B8 article/C8 title. Filename/mtime must not substitute.
-- [ ] **Step 4: Write RED field tests for D:K.** Query edge cleanup only; grouped nonnegative integer text; `seen_users > searched_users` accepted; position 0 → `SOURCE_ZERO`+None, positive positions including >1000 → `KNOWN`; blank position invalid; percentage text → Decimal percentage points; ordered units integer; whole-ruble source revenue → Decimal.
+- [ ] **Step 4: Write RED field tests for D:K.** Query edge cleanup only; grouped nonnegative integer text; `seen_users > searched_users` remains accepted; position 0 → `SOURCE_ZERO`+None, positive positions including >1000 → `KNOWN`; blank position invalid. For H/I percentages, 0% and 100% are valid, while negative and >100% values make the row invalid. Ordered units remain integer. For K revenue, 0 ₽ and positive grouped whole-ruble values are valid; negative revenue and fractional rubles/cents make the row invalid.
 - [ ] **Step 5: Write RED formula/error tests.** Formula in structural/product-context cells is fatal incompatible schema; formula in query metric row yields the most specific recoverable row error and is never evaluated.
 - [ ] **Step 6: Write RED duplicate/counter tests.** Identical canonical query + identical eight-field payload warns/dedupes; conflicting payload is fatal; enforce `rows_seen = len(rows)+len(row_errors)+duplicate_input_rows` for structurally valid reports.
 - [ ] **Step 7: Run RED.**
@@ -520,7 +522,7 @@ def parse_ozon_query_metrics_xlsx(path: Path) -> ParsedQueryMetricsReport: ...
 - [ ] **Step 4: Write RED exact raw numeric tests.** Override underlying `<v>` text for B:K with values such as `0.1612`, `0.403`, `1234.5678`; assert canonical domain receives Decimal percentage points/revenue from exact text, not a binary float rendering.
 - [ ] **Step 5: Write RED structural/detection tests.** Exact A1 `Период: DD.MM.YYYY - DD.MM.YYYY`, exact A2 sort, exact row-3 A:K headers, row 4 ignored, one sheet, no merges, no L+ business values, structural formula fatal; PR3/PR4/seller fixtures → wrong report type; damaged expected shape → incompatible; unreadable ZIP/XML → unsupported.
 - [ ] **Step 6: Write RED candidate-row tests.** Row 5+ with any nonblank A:K is candidate; semantic blank trailing rows ignored; fewer than 10,000 rows valid; absent query creates no synthetic observation.
-- [ ] **Step 7: Write RED field tests.** Nonnegative integer native numerics with bool rejected; dynamics exact numeric ×100 or exact string `-`→None; market conversions raw fraction 0..1 ×100; exact Decimal revenue; no-action share nonnegative and allowed >100 percentage points; numeric-only query remains query text; no cross-field relationship checks.
+- [ ] **Step 7: Write RED field and boundary tests.** Nonnegative integer native numerics with bool rejected; numeric-only query remains query text. For market cart/order conversion raw XLSX fractions, 0 is valid and becomes `Decimal("0")`, 1 is valid and becomes `Decimal("100")`, and values below 0 or above 1 make the row invalid. Revenue 0 is valid; a positive Decimal with 1–4 or more source decimal places is valid with its precision preserved; a negative value makes the row invalid. No-action share 0 is valid, 1 is valid and becomes 100 percentage points, values above 1 remain valid and are preserved above 100 percentage points, and negative values make the row invalid. Dynamics exact numeric values are multiplied by 100: exact string `"-"` becomes `None`, while negative numeric, zero, large positive, and large negative values remain valid; any non-finite numeric representation is invalid. Do not introduce cross-field arithmetic constraints.
 - [ ] **Step 8: Write RED formulas/duplicates/counters.** Candidate-row formula is recoverably invalid even if cached `<v>` exists; identical query+payload dedupes; conflicting duplicate fatal; parser counter invariant matches Task 1 semantics.
 - [ ] **Step 9: Run RED.**
 
@@ -585,14 +587,14 @@ Filesystem `OSError`/`FileExistsError` remain mechanical errors for source-speci
 
 - [ ] **Step 1: Write RED safe staging tests.** `.xlsx` accepted case-insensitively, non-XLSX rejected before durable DB work; safe basename handles POSIX/Windows/UNC names; stream writes `.upload-<uuid>.part`, hashes ORIGINAL bytes, records exact size, flushes/fsyncs.
 - [ ] **Step 2: Write RED size/error cleanup tests.** >25 MiB raises `XlsxUploadTooLarge` and removes partial stage; staging filesystem error surfaces without a fake source-schema error.
-- [ ] **Step 3: Write RED archive tests.** Filename matches existing `ARCHIVE_RE`; exact SHA is embedded; path is reserved exclusively; returned relative path is `imports/<name>`; staged original bytes become final archive; collision raises filesystem/persistence failure rather than overwrite ambiguity.
+- [ ] **Step 3: Write RED archive tests.** Filename matches existing `ARCHIVE_RE`; exact SHA is embedded; path is reserved exclusively; returned relative path is `imports/<name>`; staged original bytes become final archive; collision raises filesystem/persistence failure rather than overwrite ambiguity. Also cover failure after successful archive-path reservation: when move/replace raises `OSError`, the helper propagates the error, best-effort removes the helper-owned reserved final archive, leaves staged ownership unambiguous, and never deletes another pre-existing archive.
 - [ ] **Step 4: Run RED.**
 
   ```bash
   python -m pytest tests/test_import_runtime.py -q
   ```
 
-- [ ] **Step 5: Implement only mechanical helpers.** No parser callbacks, report registry, Product/SearchQuery access, ImportBatch creation, source-specific exceptions, or analytics.
+- [ ] **Step 5: Implement only mechanical helpers.** `publish_staged_archive()` owns any final path it successfully created/reserved until successful staged-file publication. If publication fails, it must best-effort remove only that helper-owned reservation before propagating the mechanical error. Keep staged ownership unambiguous and never remove another existing archive. No parser callbacks, report registry, Product/SearchQuery access, ImportBatch creation, source-specific exceptions, analytics, or source-specific lifecycle management.
 - [ ] **Step 6: Keep PR3/PR4 application services untouched.** Run their regressions to prove helper extraction did not alter existing flows.
 
   ```bash
@@ -992,9 +994,11 @@ submitQueryMetricsImport(file)
 - [ ] **Step 7: Run diff/whitespace audit.**
 
   ```bash
-  git diff --check PR5_BASE_SHA..HEAD
-  git diff --name-status PR5_BASE_SHA..HEAD
-  git diff --stat PR5_BASE_SHA..HEAD
+  test -n "${PR5_BASE_SHA:-}"
+  git rev-parse --verify "$PR5_BASE_SHA^{commit}"
+  git diff --check "$PR5_BASE_SHA"..HEAD
+  git diff --name-status "$PR5_BASE_SHA"..HEAD
+  git diff --stat "$PR5_BASE_SHA"..HEAD
   ```
 
   Confirm every changed path belongs to the File Map and no protected dependency/runtime/spec/source-contract file changed.
@@ -1015,8 +1019,10 @@ print(bad); raise SystemExit(bool(bad))"
 - [ ] **Step 9: Run dependency/scope audits.**
 
   ```bash
-  git diff --exit-code PR5_BASE_SHA..HEAD -- requirements.txt requirements-dev.txt .github/workflows/ci.yml launcher.py RUN_SERVER.cmd start.bat backend/config.py backend/persistence/connection.py
-  git diff --name-only PR5_BASE_SHA..HEAD | python -c "import sys; bad=[p.strip() for p in sys.stdin if p.strip().lower().endswith('.xlsx')]; print(bad); raise SystemExit(bool(bad))"
+  test -n "${PR5_BASE_SHA:-}"
+  git rev-parse --verify "$PR5_BASE_SHA^{commit}"
+  git diff --exit-code "$PR5_BASE_SHA"..HEAD -- requirements.txt requirements-dev.txt .github/workflows/ci.yml launcher.py RUN_SERVER.cmd start.bat backend/config.py backend/persistence/connection.py
+  git diff --name-only "$PR5_BASE_SHA"..HEAD | python -c "import sys; bad=[p.strip() for p in sys.stdin if p.strip().lower().endswith('.xlsx')]; print(bad); raise SystemExit(bool(bad))"
   ```
 
   Require no real XLSX tracked and no protected-file diff.
@@ -1052,16 +1058,20 @@ print(bad); raise SystemExit(bool(bad))"
 | ProductQuerySnapshot exact grain/payload/revisions | Tasks 1, 2, 3, 9 |
 | QueryMetricSnapshot exact grain/payload/revisions | Tasks 1, 2, 4, 10 |
 | Seller `KNOWN` / `SOURCE_ZERO` only | Tasks 1, 3, 5 |
+| Seller exact numeric bounds | Tasks 3, 5 |
+| Seller observation-row structural boundary A:C/D:K | Task 5 |
 | Seller positive ownership; no ProductSnapshot fabrication | Task 9; HTTP integration Task 11 |
 | Query Metrics no Product/Cluster dependency | Tasks 4, 6, 10 |
 | Query Metrics original artifact + transient read-copy | Tasks 6, 10 |
 | Capitalized style compatibility | Tasks 1, 6, 10, 13 |
 | False dimension ignored as coverage | Tasks 1, 6, 13 |
 | Exact raw OOXML Decimal numeric source | Tasks 1, 4, 6 |
+| Query Metrics canonical Decimal bounds | Tasks 4, 6 |
 | Market CR distinct from own-product CR | Tasks 1, 3, 4, 5, 6 |
 | Missing market coverage never zero-filled | Tasks 6, 10 |
 | Import counter semantics incl. input + DB duplicates | Tasks 5, 6, 9, 10 |
 | Shared mechanical staging only, no generic import framework | Task 7 |
+| Archive reservation failure cleanup | Task 7 |
 | Durable PR5 lineage context | Tasks 2, 8 |
 | Unified four-kind history | Tasks 8, 11, 12 |
 | Global source availability independent of pagination | Tasks 8, 11, 12 |
@@ -1073,6 +1083,7 @@ print(bad); raise SystemExit(bool(bad))"
 | Synthetic fixture/no real report policy | Tasks 1, 5, 6, 13 |
 | Windows portable acceptance | Task 13 |
 | No new dependencies/npm/framework | Global Constraints + Task 13 audit |
+| Executable `PR5_BASE_SHA` scope gate | Implementation Run Baseline + Task 13 |
 | Full regression/compile/diff/independent review gates | Task 13 |
 
 ## Plan Self-Review Gate
@@ -1088,7 +1099,8 @@ Before using this plan for implementation, the plan author/reviewer must verify:
 7. no task introduces PR6+ entities/analytics;
 8. no protected dependency/runtime file is in the implementation map;
 9. no unresolved placeholder wording exists;
-10. implementation begins only after this plan is reviewed/merged.
+10. all shell variables referenced by verification commands are actually initialized or explicitly restored from recorded values;
+11. implementation begins only after this plan is reviewed/merged.
 
 A textual placeholder scan may construct tokens to avoid matching the scan command itself:
 
