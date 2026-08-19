@@ -1,6 +1,6 @@
 # SCOZ PR5 — Query Metrics & Own Product Queries — Implementation Spec
 
-**Status:** Proposed implementation specification — pending final user approval
+**Status:** Approved implementation specification
 
 **Date:** 2026-08-19
 
