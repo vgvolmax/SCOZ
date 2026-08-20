@@ -44,7 +44,10 @@ class ImportHistoryItem:
     import_batch_id: int
     source: str
     import_kind: str
-    report_type: Literal["OZON_PRODUCTS", "OZON_SEARCH_VISIBILITY"]
+    report_type: Literal[
+        "OZON_PRODUCTS", "OZON_SEARCH_VISIBILITY",
+        "OZON_OWN_PRODUCT_QUERIES", "OZON_QUERY_METRICS",
+    ]
     status: ImportStatus
     report_generated_on: date | None
     report_window_days: int | None
@@ -52,6 +55,11 @@ class ImportHistoryItem:
     query_text: str | None
     cluster_name: str | None
     declared_rows: int | None
+    period_start: date | None
+    period_end: date | None
+    report_generated_at: datetime | None
+    report_product_ozon_id: str | None
+    sort_context: str | None
     rows_seen: int
     rows_accepted: int
     rows_skipped: int

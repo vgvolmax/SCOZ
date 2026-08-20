@@ -16,6 +16,8 @@ from backend.application.ozon_search_visibility_import import (
     import_ozon_search_visibility_xlsx,
     recover_interrupted_ozon_search_visibility_imports,
 )
+from backend.application.ozon_seller_queries_import import import_ozon_seller_queries_xlsx, recover_interrupted_ozon_seller_queries_imports
+from backend.application.ozon_query_metrics_import import import_ozon_query_metrics_xlsx, recover_interrupted_ozon_query_metrics_imports
 from backend.config import APP_NAME, DATA_DIR, FRONTEND_DIR, FRONTEND_INDEX, VERSION, resolve_db_path
 from backend.domain.product import ProductNotFound
 from backend.domain.product_snapshot import *
@@ -33,6 +35,8 @@ from backend.domain.search_visibility import (
     SearchVisibilityUploadTooLarge,
     SearchVisibilityWrongReportType,
 )
+from backend.domain.product_query import *
+from backend.domain.query_metric import *
 from backend.persistence.connection import transaction
 from backend.persistence.repositories.lineage import LineageRepository
 from backend.persistence.repositories.products import ProductRepository
@@ -50,6 +54,8 @@ def _json(value):
 async def lifespan(app: FastAPI):
     recover_interrupted_ozon_products_imports(db_path=resolve_db_path(),data_dir=DATA_DIR)
     recover_interrupted_ozon_search_visibility_imports(db_path=resolve_db_path(),data_dir=DATA_DIR)
+    recover_interrupted_ozon_seller_queries_imports(db_path=resolve_db_path(),data_dir=DATA_DIR)
+    recover_interrupted_ozon_query_metrics_imports(db_path=resolve_db_path(),data_dir=DATA_DIR)
     yield
 
 app = FastAPI(title=APP_NAME, docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -73,6 +79,8 @@ SEARCH_VISIBILITY_ERRORS={
     SearchVisibilityUnsupportedUploadMediaType:(415,"UNSUPPORTED_UPLOAD_MEDIA_TYPE","Выберите XLSX-файл."),
     SearchVisibilityImportPersistenceError:(500,"IMPORT_PERSISTENCE_ERROR","Не удалось сохранить импорт. Данные не изменены."),
 }
+SELLER_QUERIES_ERRORS={SellerQueriesUnsupportedWorkbook:(422,"UNSUPPORTED_WORKBOOK","Не удалось прочитать XLSX-файл."),SellerQueriesWrongReportType:(422,"WRONG_REPORT_TYPE","Выберите отчёт Ozon «Запросы моего товара»."),SellerQueriesIncompatibleReportSchema:(422,"INCOMPATIBLE_REPORT_SCHEMA","Версия или структура отчёта не поддерживается."),SellerQueriesInvalidGeneratedAt:(422,"INVALID_GENERATED_AT","Не удалось прочитать дату формирования отчёта."),SellerQueriesInvalidReportPeriod:(422,"INVALID_REPORT_PERIOD","Не удалось прочитать период отчёта."),SellerQueriesInvalidProductContext:(422,"INVALID_PRODUCT_CONTEXT","Не удалось прочитать данные товара."),SellerQueriesConflictingObservationRows:(422,"CONFLICTING_OBSERVATION_ROWS","В отчёте есть противоречивые строки одного запроса."),SellerQueriesNoUsableRows:(422,"NO_USABLE_ROWS","В отчёте нет пригодных строк запросов."),SellerQueriesConcurrentImportConflict:(409,"CONCURRENT_IMPORT_CONFLICT","Другой импорт уже выполняется. Дождитесь его завершения."),SellerQueriesUploadTooLarge:(413,"UPLOAD_TOO_LARGE","Размер файла превышает 25 МиБ."),SellerQueriesUnsupportedUploadMediaType:(415,"UNSUPPORTED_UPLOAD_MEDIA_TYPE","Выберите XLSX-файл."),SellerQueriesImportPersistenceError:(500,"IMPORT_PERSISTENCE_ERROR","Не удалось сохранить импорт. Данные не изменены.")}
+QUERY_METRICS_ERRORS={QueryMetricsUnsupportedWorkbook:(422,"UNSUPPORTED_WORKBOOK","Не удалось прочитать XLSX-файл."),QueryMetricsWrongReportType:(422,"WRONG_REPORT_TYPE","Выберите отчёт Ozon с метриками поисковых запросов."),QueryMetricsIncompatibleReportSchema:(422,"INCOMPATIBLE_REPORT_SCHEMA","Версия или структура отчёта не поддерживается."),QueryMetricsInvalidReportPeriod:(422,"INVALID_REPORT_PERIOD","Не удалось прочитать период отчёта."),QueryMetricsConflictingObservationRows:(422,"CONFLICTING_OBSERVATION_ROWS","В отчёте есть противоречивые строки одного запроса."),QueryMetricsNoUsableRows:(422,"NO_USABLE_ROWS","В отчёте нет пригодных строк запросов."),QueryMetricsConcurrentImportConflict:(409,"CONCURRENT_IMPORT_CONFLICT","Другой импорт уже выполняется. Дождитесь его завершения."),QueryMetricsUploadTooLarge:(413,"UPLOAD_TOO_LARGE","Размер файла превышает 25 МиБ."),QueryMetricsUnsupportedUploadMediaType:(415,"UNSUPPORTED_UPLOAD_MEDIA_TYPE","Выберите XLSX-файл."),QueryMetricsImportPersistenceError:(500,"IMPORT_PERSISTENCE_ERROR","Не удалось сохранить импорт. Данные не изменены.")}
 
 @app.post("/api/imports/ozon-products")
 async def post_ozon_products_import(request: Request) -> dict[str,object]:
@@ -107,10 +115,31 @@ async def post_ozon_search_visibility_import(request: Request) -> dict[str,objec
     finally:
         await file.close()
 
+async def _post_query_import(request: Request, *, service, errors, media_error):
+    if not request.headers.get("content-type", "").lower().startswith("multipart/form-data"):
+        status,code,message=errors[media_error]
+        return JSONResponse(status_code=status,content={"error":{"code":code,"message":message},"result":None})
+    form=await request.form(); file=form.get("file")
+    if not isinstance(file,UploadFile): raise HTTPException(status_code=422,detail="Multipart field 'file' is required")
+    try:
+        return _json(service(upload=file.file,original_name=file.filename or "",db_path=resolve_db_path(),data_dir=DATA_DIR))
+    except (OzonSellerQueriesImportFailure,OzonQueryMetricsImportFailure) as failure:
+        status,code,message=errors.get(type(failure.error),(500,"IMPORT_PERSISTENCE_ERROR","Не удалось сохранить импорт. Данные не изменены."))
+        return JSONResponse(status_code=status,content={"error":{"code":code,"message":message},"result":_json(failure.result)})
+    finally: await file.close()
+
+@app.post("/api/imports/ozon-seller-queries")
+async def post_ozon_seller_queries_import(request: Request):
+    return await _post_query_import(request,service=import_ozon_seller_queries_xlsx,errors=SELLER_QUERIES_ERRORS,media_error=SellerQueriesUnsupportedUploadMediaType)
+
+@app.post("/api/imports/ozon-query-metrics")
+async def post_ozon_query_metrics_import(request: Request):
+    return await _post_query_import(request,service=import_ozon_query_metrics_xlsx,errors=QUERY_METRICS_ERRORS,media_error=QueryMetricsUnsupportedUploadMediaType)
+
 @app.get("/api/imports")
 def get_imports(limit: int=Query(50,ge=1,le=100),offset: int=Query(0,ge=0)) -> dict[str,object]:
     with transaction() as conn:
-        repo=LineageRepository(conn); return {"items":_json(repo.list_import_history(limit=limit,offset=offset)),"total":repo.count_import_history()}
+        repo=LineageRepository(conn); return {"items":_json(repo.list_import_history(limit=limit,offset=offset)),"total":repo.count_import_history(),"source_availability":repo.get_pr5_source_availability()}
 
 @app.get("/api/products")
 def get_products(limit: int=Query(100,ge=1,le=100),offset: int=Query(0,ge=0)) -> dict[str,object]:

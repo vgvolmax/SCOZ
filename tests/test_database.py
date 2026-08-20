@@ -97,8 +97,9 @@ def test_initialize_database_creates_only_parent_and_migrated_database(tmp_path)
         ).fetchall() == [
             (1, "core_foundation"),
             (2, "ozon_products_import"),
-            (3, "ozon_search_visibility_import"),
-        ]
+                (3, "ozon_search_visibility_import"),
+                (4, "pr5_query_data"),
+            ]
 
 
 def test_initialize_database_is_idempotent_and_resolves_environment_late(
@@ -121,4 +122,5 @@ def test_initialize_database_is_idempotent_and_resolves_environment_late(
                 (1, "core_foundation"),
                 (2, "ozon_products_import"),
                 (3, "ozon_search_visibility_import"),
+                (4, "pr5_query_data"),
             ]

@@ -59,7 +59,7 @@ def test_pr3_frontend_state_contract():
 def test_pr4_search_visibility_import_and_history_contract():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
-    assert html.count('type="file" accept=".xlsx"') == 2
+    assert html.count('type="file" accept=".xlsx"') == 4
     for value in (
         "Отчёт «Товары на Ozon»", "Поисковая видимость Ozon",
         'id="ozon-search-visibility-file"', 'id="search-visibility-file-name"',
@@ -86,3 +86,27 @@ def test_pr4_does_not_leak_future_analytics_ui():
         "анализ запросов", "карточки конкурентов", "оценка кластера",
     ):
         assert forbidden not in combined
+
+
+def test_pr5_query_imports_and_global_readiness_contract():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    for hook in (
+        "ozon-seller-queries-file", "seller-queries-file-name",
+        "seller-queries-submit", "seller-queries-status", "seller-queries-readiness",
+        "ozon-query-metrics-file", "query-metrics-file-name",
+        "query-metrics-submit", "query-metrics-status", "query-metrics-readiness",
+    ):
+        assert f'id="{hook}"' in html
+    for value in (
+        "submitSellerQueriesImport", "submitQueryMetricsImport",
+        "/api/imports/ozon-seller-queries", "/api/imports/ozon-query-metrics",
+        'item.report_type==="OZON_OWN_PRODUCT_QUERIES"',
+        'item.report_type==="OZON_QUERY_METRICS"',
+        "report_product_ozon_id", "period_start", "period_end", "sort_context",
+        "data.source_availability.own_product_queries",
+        "data.source_availability.query_metrics",
+        "textContent", "PARTIAL_SUCCESS", "loadProducts()", "loadImports()",
+    ):
+        assert value in js
+    assert "data.items.some" not in js
