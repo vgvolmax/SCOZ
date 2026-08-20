@@ -93,7 +93,7 @@ def import_ozon_query_metrics_xlsx(*, upload: BinaryIO, original_name: str,
                     original_name=staged.original_name, content_sha256=staged.sha256,
                     byte_size=staged.byte_size)
             batch_id, artifact_id = batch.id, artifact.id
-        except Exception as error:
+        except (sqlite3.Error, OSError) as error:
             raise OzonQueryMetricsImportFailure(
                 error=QueryMetricsImportPersistenceError(), result=None) from error
         read_copy = data_dir / "imports" / f".readcopy-{uuid.uuid4()}.xlsx"

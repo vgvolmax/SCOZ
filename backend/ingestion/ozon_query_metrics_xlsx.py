@@ -2,9 +2,10 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
 import re
-from zipfile import ZipFile
+from zipfile import BadZipFile, ZipFile
 from xml.etree import ElementTree as ET
 from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
 from backend.domain.query_metric import *
 HEADERS=("Запрос","Популярность запроса","Динамика за 28 дней","Динамика за 7 дней","Добавлений в корзину","Конверсия в корзину","Уникальные покупатели с заказами","Конверсия в заказ","Заказано на сумму по запросам, ₽","Запросы без действий","Доля запросов без действий")
 SORT='Сортировка: По убыванию в Популярность запроса'
@@ -41,6 +42,13 @@ def _number(raw):
  d=Decimal(raw)
  if not d.is_finite():raise ValueError
  return d
+def _native_number(cell, raw):
+ # The OOXML lexical value preserves Decimal precision, while openpyxl's
+ # metadata proves that the source cell was genuinely numeric.  In
+ # particular, booleans use lexical 0/1 too and must not pass as numbers.
+ if cell.data_type!='n' or isinstance(cell.value,bool) or cell.is_date:
+  raise ValueError
+ return _number(raw)
 def _integer(raw):
  d=_number(raw)
  if d<0 or d!=d.to_integral_value():raise ValueError
@@ -59,7 +67,8 @@ def parse_ozon_query_metrics_xlsx(path:Path)->ParsedQueryMetricsReport:
  try:
   raw,candidates=_raw(path)
   with path.open('rb') as f:wb=load_workbook(f,data_only=False,read_only=False)
- except Exception as e:raise QueryMetricsUnsupportedWorkbook('Не удалось прочитать XLSX.') from e
+ except (BadZipFile, KeyError, ET.ParseError, InvalidFileException, OSError, ValueError) as e:
+  raise QueryMetricsUnsupportedWorkbook('Не удалось прочитать XLSX.') from e
  try:
   if len(wb.worksheets)!=1:raise QueryMetricsIncompatibleReportSchema('Ожидается один лист.')
   ws=wb.active
@@ -92,13 +101,15 @@ def parse_ozon_query_metrics_xlsx(path:Path)->ParsedQueryMetricsReport:
      if c.data_type=='f':raise ValueError
      coord=c.coordinate
      if i==0:x=_query(c.value)
-     elif i in (1,4,6,9):x=_integer(raw.get(coord))
-     elif i in (2,3):x=None if c.value=='-' else _number(raw.get(coord))*100
-     elif i in (5,7):x=_fraction(raw.get(coord))
+     elif i in (1,4,6,9):x=_integer(str(_native_number(c,raw.get(coord))))
+     elif i in (2,3):
+      if c.data_type=='s' and c.value=='-':x=None
+      else:x=_native_number(c,raw.get(coord))*100
+     elif i in (5,7):x=_fraction(str(_native_number(c,raw.get(coord))))
      elif i==8:
-      x=_number(raw.get(coord))
+      x=_native_number(c,raw.get(coord))
       if x<0:raise ValueError
-     else:x=_fraction(raw.get(coord),upper=False)
+     else:x=_fraction(str(_native_number(c,raw.get(coord))),upper=False)
      parsed.append(x)
     except (ValueError,InvalidOperation):bad=i;break
    if bad is not None:errors.append(QueryMetricRowError(rn,*messages[bad]));continue
