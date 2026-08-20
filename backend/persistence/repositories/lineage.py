@@ -148,6 +148,9 @@ class LineageRepository:
             counts=(rows_seen, rows_accepted, rows_skipped, duplicate_observations,
                     new_observations, corrected_revisions, warnings_count, row_errors_total),
         )
+        successful = status in (ImportStatus.SUCCESS, ImportStatus.PARTIAL_SUCCESS)
+        if successful and (generated_at is None or product_ozon_id is None):
+            raise ValueError("successful seller import requires complete context")
         if generated_at is not None:
             datetime_to_db(generated_at)
         if product_ozon_id is not None and (
@@ -187,6 +190,8 @@ class LineageRepository:
                     new_observations, corrected_revisions, warnings_count, row_errors_total),
         )
         supported_sort = "Сортировка: По убыванию в Популярность запроса"
+        if status in (ImportStatus.SUCCESS, ImportStatus.PARTIAL_SUCCESS) and sort_context is None:
+            raise ValueError("successful query metrics import requires sort context")
         if sort_context is not None and sort_context != supported_sort:
             raise ValueError("unsupported sort context")
         cursor = self._conn.execute(
@@ -351,6 +356,8 @@ class LineageRepository:
             raise ValueError("counts must be non-negative")
         if (period_start is None) != (period_end is None):
             raise ValueError("period bounds must both be present or absent")
+        if status in (ImportStatus.SUCCESS, ImportStatus.PARTIAL_SUCCESS) and period_start is None:
+            raise ValueError("successful import requires a report period")
         if period_start is not None and period_start > period_end:
             raise ValueError("period start must not follow period end")
 

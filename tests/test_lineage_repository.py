@@ -259,6 +259,50 @@ def test_pr5_finish_rejects_invalid_context_and_wrong_kind(repository, kind):
         else:
             repo.finish_ozon_query_metrics_import(batch.id, sort_context=None, **common)
 
+@pytest.mark.parametrize("status", [ImportStatus.SUCCESS, ImportStatus.PARTIAL_SUCCESS])
+@pytest.mark.parametrize("missing", ["generated_at", "period_start", "period_end", "product_ozon_id"])
+def test_successful_seller_finish_requires_complete_canonical_context(repository, status, missing):
+    repo, _ = repository
+    batch = repo.create_import_batch(source="ozon", import_kind="ozon_seller_queries_xlsx")
+    values = dict(generated_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+                  period_start=date(2026, 7, 1), period_end=date(2026, 7, 31),
+                  product_ozon_id="123")
+    values[missing] = None
+    with pytest.raises(ValueError):
+        repo.finish_ozon_seller_queries_import(batch.id, status=status,
+            rows_seen=0, rows_accepted=0, rows_skipped=0, duplicate_observations=0,
+            new_observations=0, corrected_revisions=0, warnings_count=0,
+            row_errors_total=0, **values)
+
+@pytest.mark.parametrize("status", [ImportStatus.SUCCESS, ImportStatus.PARTIAL_SUCCESS])
+@pytest.mark.parametrize("missing", ["period_start", "period_end", "sort_context"])
+def test_successful_metrics_finish_requires_complete_canonical_context(repository, status, missing):
+    repo, _ = repository
+    batch = repo.create_import_batch(source="ozon", import_kind="ozon_query_metrics_xlsx")
+    values = dict(period_start=date(2026, 7, 1), period_end=date(2026, 7, 31),
+                  sort_context="Сортировка: По убыванию в Популярность запроса")
+    values[missing] = None
+    with pytest.raises(ValueError):
+        repo.finish_ozon_query_metrics_import(batch.id, status=status,
+            rows_seen=0, rows_accepted=0, rows_skipped=0, duplicate_observations=0,
+            new_observations=0, corrected_revisions=0, warnings_count=0,
+            row_errors_total=0, **values)
+
+def test_failed_pr5_finish_allows_absent_context(repository):
+    repo, _ = repository
+    seller = repo.create_import_batch(source="ozon", import_kind="ozon_seller_queries_xlsx")
+    assert repo.finish_ozon_seller_queries_import(
+        seller.id, status=ImportStatus.FAILED, generated_at=None, period_start=None,
+        period_end=None, product_ozon_id=None, rows_seen=0, rows_accepted=0,
+        rows_skipped=0, duplicate_observations=0, new_observations=0,
+        corrected_revisions=0, warnings_count=0, row_errors_total=0).status is ImportStatus.FAILED
+    metrics = repo.create_import_batch(source="ozon", import_kind="ozon_query_metrics_xlsx")
+    assert repo.finish_ozon_query_metrics_import(
+        metrics.id, status=ImportStatus.FAILED, period_start=None, period_end=None,
+        sort_context=None, rows_seen=0, rows_accepted=0, rows_skipped=0,
+        duplicate_observations=0, new_observations=0, corrected_revisions=0,
+        warnings_count=0, row_errors_total=0).status is ImportStatus.FAILED
+
 
 def test_pr5_availability_is_global_and_failed_later_does_not_reset(repository):
     repo, _ = repository

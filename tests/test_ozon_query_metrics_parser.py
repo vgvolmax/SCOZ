@@ -3,6 +3,7 @@ from decimal import Decimal
 from io import BytesIO
 from zipfile import ZipFile
 from openpyxl import load_workbook
+import pytest
 from backend.domain.query_metric import *
 from tests.xlsx_factory import build_ozon_query_metrics_workbook, OZON_QUERY_METRICS_HEADERS
 
@@ -32,3 +33,30 @@ def test_compatibility_copy_preserves_original(tmp_path):
     prepare_query_metrics_read_copy(source,target)
     assert hashlib.sha256(source.read_bytes()).hexdigest()==before
     load_workbook(target).close()
+
+@pytest.mark.parametrize("coordinate,value", [
+    ("B5", True), ("B5", False), ("B5", "1"), ("F5", "0.5"),
+    ("I5", "text"), ("J5", "#VALUE!"), ("K5", "=1/2"),
+])
+def test_numeric_metrics_require_native_numeric_cells(tmp_path, coordinate, value):
+    from backend.ingestion.ozon_query_metrics_xlsx import parse_ozon_query_metrics_xlsx
+    data = build_ozon_query_metrics_workbook(formula_cells={coordinate: value})
+    path = tmp_path / "metrics.xlsx"
+    path.write_bytes(data)
+    report = parse_ozon_query_metrics_xlsx(path)
+    assert report.rows == ()
+    assert report.rows_seen == 1
+    assert len(report.row_errors) == 1
+
+@pytest.mark.parametrize("coordinate", ["C5", "D5"])
+def test_dynamics_accept_only_numeric_or_exact_dash(tmp_path, coordinate):
+    from backend.ingestion.ozon_query_metrics_xlsx import parse_ozon_query_metrics_xlsx
+    path = tmp_path / "metrics.xlsx"
+    path.write_bytes(build_ozon_query_metrics_workbook(formula_cells={coordinate: "0.5"}))
+    assert parse_ozon_query_metrics_xlsx(path).rows == ()
+
+def test_no_action_share_has_no_upper_bound(tmp_path):
+    from backend.ingestion.ozon_query_metrics_xlsx import parse_ozon_query_metrics_xlsx
+    path = tmp_path / "metrics.xlsx"
+    path.write_bytes(build_ozon_query_metrics_workbook(raw_numeric_overrides={"K5": "1.2"}))
+    assert parse_ozon_query_metrics_xlsx(path).rows[0].snapshot_values["no_action_share_pct"] == Decimal("120")

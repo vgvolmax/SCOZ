@@ -91,7 +91,7 @@ def import_ozon_seller_queries_xlsx(*, upload: BinaryIO, original_name: str,
                     original_name=staged.original_name, content_sha256=staged.sha256,
                     byte_size=staged.byte_size)
             batch_id, artifact_id = batch.id, artifact.id
-        except Exception as error:
+        except (sqlite3.Error, OSError) as error:
             raise OzonSellerQueriesImportFailure(
                 error=SellerQueriesImportPersistenceError(), result=None) from error
         try:
