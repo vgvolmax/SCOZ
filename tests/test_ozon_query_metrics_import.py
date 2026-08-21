@@ -3,16 +3,20 @@ from io import BytesIO
 
 import pytest
 
+import backend.application.ozon_query_metrics_import as query_metrics_service
+from backend.application.import_runtime import IMPORT_LOCK
 from backend.application.ozon_query_metrics_import import (
     import_ozon_query_metrics_xlsx, recover_interrupted_ozon_query_metrics_imports,
 )
 from backend.domain.lineage import ImportStatus
 from backend.domain.query_metric import (
-    OzonQueryMetricsImportFailure, QueryMetricsUnsupportedUploadMediaType,
+    OzonQueryMetricsImportFailure, QueryMetricsImportPersistenceError,
+    QueryMetricsUnsupportedUploadMediaType,
 )
 from backend.persistence.connection import connect, transaction
 from backend.persistence.database import initialize_database
 from backend.persistence.repositories.lineage import LineageRepository
+from backend.persistence.repositories.search_dimensions import SearchDimensionRepository
 from tests.xlsx_factory import build_ozon_query_metrics_workbook
 from tests.xlsx_factory import OZON_QUERY_METRICS_HEADERS as H
 
@@ -113,3 +117,62 @@ def test_recovery_preserves_referenced_archive_and_manual_file(tmp_path):
     manual=data/'imports'/'manual.xlsx';manual.write_bytes(b'manual')
     recover_interrupted_ozon_query_metrics_imports(db_path=db,data_dir=data)
     assert manual.exists() and (data/result.source_artifact.stored_relpath).exists()
+
+
+def test_unexpected_programming_error_is_compensated_and_preserved(monkeypatch, tmp_path):
+    db = tmp_path / "scoz.db"
+    data = tmp_path / "data"
+    initialize_database(db)
+
+    def raise_programming_error(*args, **kwargs):
+        raise RuntimeError("programming-test-sentinel")
+
+    monkeypatch.setattr(
+        SearchDimensionRepository, "resolve_search_query", raise_programming_error
+    )
+    with pytest.raises(RuntimeError, match="programming-test-sentinel"):
+        import_ozon_query_metrics_xlsx(
+            upload=BytesIO(build_ozon_query_metrics_workbook()),
+            original_name="metrics.xlsx",
+            db_path=db,
+            data_dir=data,
+        )
+
+    assert not IMPORT_LOCK.locked()
+    with connect(db) as conn:
+        assert conn.execute(
+            "SELECT status FROM import_batches "
+            "WHERE import_kind='ozon_query_metrics_xlsx' ORDER BY id DESC LIMIT 1"
+        ).fetchone()["status"] == "FAILED"
+        for table in ("search_queries", "query_metric_snapshots"):
+            assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+    imports = data / "imports"
+    assert not list(imports.glob(".upload-*"))
+    assert not list(imports.glob(".readcopy-*"))
+    assert not list(imports.glob("*.xlsx"))
+
+
+def test_archive_failure_cleans_all_helper_owned_files(monkeypatch, tmp_path):
+    db = tmp_path / "scoz.db"
+    data = tmp_path / "data"
+    initialize_database(db)
+
+    def fail_publish(*args, **kwargs):
+        raise OSError("archive-test-sentinel")
+
+    monkeypatch.setattr(query_metrics_service, "publish_staged_archive", fail_publish)
+    with pytest.raises(OzonQueryMetricsImportFailure) as caught:
+        import_ozon_query_metrics_xlsx(
+            upload=BytesIO(build_ozon_query_metrics_workbook()),
+            original_name="metrics.xlsx",
+            db_path=db,
+            data_dir=data,
+        )
+
+    assert isinstance(caught.value.error, QueryMetricsImportPersistenceError)
+    assert caught.value.result.status is ImportStatus.FAILED
+    imports = data / "imports"
+    assert not list(imports.glob(".readcopy-*"))
+    assert not list(imports.glob(".upload-*"))
+    assert not list(imports.glob("*.xlsx"))
+    assert not IMPORT_LOCK.locked()
