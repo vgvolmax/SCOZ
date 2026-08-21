@@ -14,6 +14,7 @@ from backend.persistence.connection import connect, transaction
 from backend.persistence.database import initialize_database
 from backend.persistence.repositories.lineage import LineageRepository
 from tests.xlsx_factory import build_ozon_query_metrics_workbook
+from tests.xlsx_factory import OZON_QUERY_METRICS_HEADERS as H
 
 
 def test_original_is_provenance_and_read_copy_is_transient(tmp_path):
@@ -82,3 +83,33 @@ def test_recovery_cleans_readcopies_and_is_idempotent(tmp_path):
 def test_service_source_has_no_product_repository_dependency():
     from backend.application import ozon_query_metrics_import as service
     assert "ProductRepository" not in open(service.__file__, encoding="utf-8").read()
+
+
+def test_partial_correction_and_new_period_lifecycle(tmp_path):
+    db=tmp_path/'scoz.db';data=tmp_path/'data';initialize_database(db)
+    good=dict(zip(H,('q',1,'-',0,1,0,1,1,1,0,0),strict=True));bad={**good,H[0]:'bad',H[1]:-1}
+    partial=import_ozon_query_metrics_xlsx(upload=BytesIO(build_ozon_query_metrics_workbook(rows=(good,bad))),original_name='a.xlsx',db_path=db,data_dir=data)
+    changed=import_ozon_query_metrics_xlsx(upload=BytesIO(build_ozon_query_metrics_workbook(rows=({**good,H[1]:2},))),original_name='b.xlsx',db_path=db,data_dir=data)
+    period=import_ozon_query_metrics_xlsx(upload=BytesIO(build_ozon_query_metrics_workbook(rows=(good,),period='22.07.2026 - 17.08.2026')),original_name='c.xlsx',db_path=db,data_dir=data)
+    assert partial.status is ImportStatus.PARTIAL_SUCCESS and (partial.rows_accepted,partial.rows_skipped)==(1,1)
+    assert changed.corrected_revisions==1 and period.new_observations==1
+    assert not list((data/'imports').glob('.readcopy-*'))
+    with connect(db) as conn:
+        assert conn.execute('SELECT COUNT(*) FROM products').fetchone()[0]==0
+        assert conn.execute('SELECT COUNT(*) FROM clusters').fetchone()[0]==0
+
+
+@pytest.mark.parametrize('payload', [b'bad', build_ozon_query_metrics_workbook(rows=({H[0]:'q',H[1]:-1},))])
+def test_readcopy_is_cleaned_on_fatal_and_zero_usable(tmp_path,payload):
+    db=tmp_path/'scoz.db';data=tmp_path/'data';initialize_database(db)
+    with pytest.raises(OzonQueryMetricsImportFailure):
+        import_ozon_query_metrics_xlsx(upload=BytesIO(payload),original_name='x.xlsx',db_path=db,data_dir=data)
+    assert not list((data/'imports').glob('.readcopy-*'))
+
+
+def test_recovery_preserves_referenced_archive_and_manual_file(tmp_path):
+    db=tmp_path/'scoz.db';data=tmp_path/'data';initialize_database(db)
+    result=import_ozon_query_metrics_xlsx(upload=BytesIO(build_ozon_query_metrics_workbook()),original_name='x.xlsx',db_path=db,data_dir=data)
+    manual=data/'imports'/'manual.xlsx';manual.write_bytes(b'manual')
+    recover_interrupted_ozon_query_metrics_imports(db_path=db,data_dir=data)
+    assert manual.exists() and (data/result.source_artifact.stored_relpath).exists()
