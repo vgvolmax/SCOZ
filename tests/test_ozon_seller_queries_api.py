@@ -1,10 +1,15 @@
+import sqlite3
+
 from fastapi.testclient import TestClient
 import pytest
 
 import backend.main as main
-import backend.application.ozon_seller_queries_import as service
+import backend.application.import_runtime as import_runtime
 from backend.application.import_runtime import IMPORT_LOCK
+from backend.persistence.connection import connect
 from backend.persistence.database import initialize_database
+from backend.persistence.repositories.lineage import LineageRepository
+from backend.persistence.repositories.search_dimensions import SearchDimensionRepository
 from tests.xlsx_factory import (OZON_SELLER_QUERIES_HEADERS as H,
     build_ozon_products_workbook, build_ozon_seller_queries_workbook)
 
@@ -52,12 +57,49 @@ def test_transport_lock_and_size_matrix(monkeypatch,tmp_path):
         IMPORT_LOCK.acquire()
         try: locked=_post(client,build_ozon_seller_queries_workbook())
         finally: IMPORT_LOCK.release()
-        monkeypatch.setattr(service,'MAX_UPLOAD_BYTES',4);large=_post(client,b'12345')
+        monkeypatch.setattr(import_runtime,'MAX_UPLOAD_BYTES',4);large=_post(client,b'12345')
     assert wrong_type.status_code==wrong_ext.status_code==415;assert missing.status_code==wrong_field.status_code==422
-    assert locked.status_code==409 and locked.json()['result'] is None;assert large.status_code==413 and large.json()['result'] is None
+    assert locked.status_code==409 and locked.json()['result'] is None
+    assert large.status_code==413 and large.json()['error']['code']=='UPLOAD_TOO_LARGE'
+    assert large.json()['result'] is None
+    with connect(tmp_path/'scoz.db') as conn:
+        assert LineageRepository(conn).count_import_history()==0
+    imports=tmp_path/'imports'
+    assert not list(imports.glob('.upload-*')) and not list(imports.glob('*.xlsx'))
 
 def test_expected_persistence_failure_is_500_and_sanitized(monkeypatch,tmp_path):
-    from backend.persistence.repositories.search_dimensions import SearchDimensionRepository
-    monkeypatch.setattr(SearchDimensionRepository,'resolve_search_query',lambda *a,**k:(_ for _ in ()).throw(Exception('programming-test-sentinel')))
+    def raise_persistence_error(*args,**kwargs):
+        raise sqlite3.OperationalError('persistence-test-sentinel')
+    monkeypatch.setattr(SearchDimensionRepository,'resolve_search_query',raise_persistence_error)
     with _client(monkeypatch,tmp_path) as client:r=_post(client,build_ozon_seller_queries_workbook())
-    assert r.status_code==500 and r.json()['error']['code']=='IMPORT_PERSISTENCE_ERROR' and 'sentinel' not in r.text
+    assert r.status_code==500 and r.json()['error']['code']=='IMPORT_PERSISTENCE_ERROR'
+    assert r.json()['result']['status']=='FAILED'
+    assert all(value not in r.text for value in ('persistence-test-sentinel','Traceback','.part','.readcopy'))
+    assert 'sqlite' not in r.text.lower()
+    with connect(tmp_path/'scoz.db') as conn:
+        assert conn.execute('SELECT COUNT(*) FROM products').fetchone()[0]==0
+        assert conn.execute('SELECT COUNT(*) FROM search_queries').fetchone()[0]==0
+        assert conn.execute('SELECT COUNT(*) FROM product_query_snapshots').fetchone()[0]==0
+        batches=conn.execute("SELECT status FROM import_batches WHERE import_kind='ozon_seller_queries_xlsx'").fetchall()
+        assert [row['status'] for row in batches]==['FAILED']
+    imports=tmp_path/'imports'
+    assert not list(imports.glob('.upload-*')) and not list(imports.glob('*.xlsx'))
+    assert not IMPORT_LOCK.locked()
+
+
+@pytest.mark.parametrize(('payload','filename','expected_status'),[
+    (build_ozon_seller_queries_workbook(),'seller-success.xlsx',200),
+    (b'not an xlsx','seller-malformed.xlsx',422),
+])
+def test_route_closes_upload_file_on_success_and_handled_failure(
+        monkeypatch,tmp_path,payload,filename,expected_status):
+    original_close=main.UploadFile.close
+    closed=[]
+    async def tracked_close(self):
+        closed.append(self.filename)
+        await original_close(self)
+    monkeypatch.setattr(main.UploadFile,'close',tracked_close)
+    with _client(monkeypatch,tmp_path) as client:
+        response=_post(client,payload,filename)
+    assert response.status_code==expected_status
+    assert filename in closed
