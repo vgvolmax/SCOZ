@@ -1,7 +1,75 @@
 from io import BytesIO
 from typing import Mapping, Sequence
+from zipfile import ZIP_DEFLATED, ZipFile
+import re
 
 from openpyxl import Workbook
+
+OZON_SELLER_QUERIES_HEADERS = ("SKU", "Артикул", "Название товара", "Запросы товара", "Человек\nискало", "Человек увидело", "Позиция товара", "Конверсия из\u00a0поиска в карточку", "Конверсия из\u00a0поиска в заказ", "Заказано товаров по\u00a0запросам", "Заказано\u00a0на сумму\nпо\u00a0запросам")
+OZON_QUERY_METRICS_HEADERS = ("Запрос", "Популярность запроса", "Динамика за 28 дней", "Динамика за 7 дней", "Добавлений в корзину", "Конверсия в корзину", "Уникальные покупатели с заказами", "Конверсия в заказ", "Заказано на сумму по запросам, ₽", "Запросы без действий", "Доля запросов без действий")
+
+def _save(workbook: Workbook) -> bytes:
+    output = BytesIO(); workbook.save(output); workbook.close(); return output.getvalue()
+
+def build_ozon_seller_queries_workbook(*, rows: Sequence[Mapping[str, object]] | None = None,
+        headers: Sequence[str] = OZON_SELLER_QUERIES_HEADERS, extra_sheet: bool = False,
+        merged_cells: Sequence[str] = (), formula_cells: Mapping[str, str] | None = None,
+        l_plus_values: Mapping[str, object] | None = None,
+        date: str = "18/08/2026", time: str = "04:10 +00", period_start: str = "20/07/2026",
+        period_end: str = "17/08/2026", ozon_id: object = 100000001,
+        article: object = "SYNTH-001", title: object = "Синтетический товар") -> bytes:
+    wb = Workbook(); ws = wb.active
+    ws["A1"] = f"Дата: {date}"; ws["A2"] = f"Время: {time}"
+    ws["A3"] = f"Дата начала: {period_start}"; ws["A4"] = f"Дата конца: {period_end}"
+    for col, header in enumerate(headers, 1): ws.cell(6, col, header)
+    ws.cell(8, 1, ozon_id); ws.cell(8, 2, article); ws.cell(8, 3, title)
+    source = rows if rows is not None else ({headers[3]: "синтетический запрос", headers[4]: "1 000", headers[5]: "900", headers[6]: "1", headers[7]: "10%", headers[8]: "2%", headers[9]: "20", headers[10]: "5 000 ₽"},)
+    for rn, row in enumerate(source, 9):
+        for col, header in enumerate(headers, 1): ws.cell(rn, col, row.get(header))
+    for cell, value in (formula_cells or {}).items(): ws[cell] = value
+    for cell, value in (l_plus_values or {}).items(): ws[cell] = value
+    for area in merged_cells: ws.merge_cells(area)
+    if extra_sheet: wb.create_sheet()
+    return _save(wb)
+
+def build_ozon_query_metrics_workbook(*, rows: Sequence[Mapping[str, object]] | None = None,
+        headers: Sequence[str] = OZON_QUERY_METRICS_HEADERS, period: str = "21.07.2026 - 17.08.2026",
+        sort_context: str = "Сортировка: По убыванию в Популярность запроса",
+        extra_sheet: bool = False, merged_cells: Sequence[str] = (),
+        formula_cells: Mapping[str, str] | None = None, l_plus_values: Mapping[str, object] | None = None,
+        raw_numeric_overrides: Mapping[str, str] | None = None, dimension_ref: str | None = None,
+        horizontal_capitalized: bool = False) -> bytes:
+    wb = Workbook(); ws = wb.active; ws["A1"] = f"Период: {period}"; ws["A2"] = sort_context
+    for col, header in enumerate(headers, 1): ws.cell(3, col, header)
+    ws["A4"] = "—"
+    source = rows if rows is not None else ({headers[0]: "синтетический запрос", headers[1]: 1000, headers[2]: 0.1, headers[3]: "-", headers[4]: 100, headers[5]: 0.1, headers[6]: 50, headers[7]: 0.05, headers[8]: 1234.5, headers[9]: 200, headers[10]: 0.2},)
+    for rn, row in enumerate(source, 5):
+        for col, header in enumerate(headers, 1): ws.cell(rn, col, row.get(header))
+    for cell, value in (formula_cells or {}).items(): ws[cell] = value
+    for cell, value in (l_plus_values or {}).items(): ws[cell] = value
+    for area in merged_cells: ws.merge_cells(area)
+    if horizontal_capitalized:
+        from openpyxl.styles import Alignment
+        ws["A1"].alignment = Alignment(horizontal="left")
+    if extra_sheet: wb.create_sheet()
+    original = _save(wb)
+    if not (raw_numeric_overrides or dimension_ref or horizontal_capitalized): return original
+    source_io, target = BytesIO(original), BytesIO()
+    with ZipFile(source_io) as zin, ZipFile(target, "w", ZIP_DEFLATED) as zout:
+        for info in zin.infolist():
+            data = zin.read(info.filename)
+            if info.filename == "xl/worksheets/sheet1.xml":
+                text = data.decode()
+                if dimension_ref: text = re.sub(r'<dimension ref="[^"]+"', f'<dimension ref="{dimension_ref}"', text, count=1)
+                for coord, raw in (raw_numeric_overrides or {}).items():
+                    pattern = rf'(<c[^>]*\br="{re.escape(coord)}"[^>]*>.*?<v>)[^<]*(</v>)'
+                    text, count = re.subn(pattern, rf'\g<1>{raw}\g<2>', text, count=1)
+                    if not count: raise ValueError(f"cell {coord} has no numeric value")
+                data = text.encode()
+            elif info.filename == "xl/styles.xml" and horizontal_capitalized:
+                data = data.replace(b'horizontal="left"', b'horizontal="Left"').replace(b'horizontal="right"', b'horizontal="Right"')
+            zout.writestr(info, data)
+    return target.getvalue()
 
 
 OZON_PRODUCTS_HEADERS = (

@@ -28,7 +28,7 @@ def test_migration_001_creates_exact_schema_once(tmp_path):
     with sqlite3.connect(db_path) as connection:
         assert connection.execute(
             "SELECT version, name FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(1, "core_foundation"), (2, "ozon_products_import"), (3, "ozon_search_visibility_import")]
+        ).fetchall() == [(1, "core_foundation"), (2, "ozon_products_import"), (3, "ozon_search_visibility_import"), (4, "pr5_query_data")]
         assert _application_tables(connection) == {
             "schema_migrations",
             "products",
@@ -39,6 +39,8 @@ def test_migration_001_creates_exact_schema_once(tmp_path):
             "search_queries",
             "clusters",
             "search_visibility_snapshots",
+            "product_query_snapshots",
+            "query_metric_snapshots",
         }
         columns = {
             table: [tuple(row[1:6]) for row in connection.execute(f"PRAGMA table_info({table})")]
@@ -84,8 +86,13 @@ def test_migration_001_creates_exact_schema_once(tmp_path):
                 ("observed_at", "TEXT", 0, None, 0),
                 ("search_query_text", "TEXT", 0, None, 0),
                 ("cluster_name", "TEXT", 0, None, 0),
-                ("declared_rows", "INTEGER", 0, None, 0),
-            ]
+                    ("declared_rows", "INTEGER", 0, None, 0),
+                    ("period_start", "TEXT", 0, None, 0),
+                    ("period_end", "TEXT", 0, None, 0),
+                    ("report_generated_at", "TEXT", 0, None, 0),
+                    ("report_product_ozon_id", "TEXT", 0, None, 0),
+                    ("sort_context", "TEXT", 0, None, 0),
+                ]
         assert columns["source_artifacts"] == [
             ("id", "INTEGER", 0, None, 1),
             ("import_batch_id", "INTEGER", 1, None, 0),
