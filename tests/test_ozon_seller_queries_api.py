@@ -53,7 +53,12 @@ def test_real_http_parser_error_envelopes_are_sanitized(monkeypatch,tmp_path,pay
 def test_transport_lock_and_size_matrix(monkeypatch,tmp_path):
     with _client(monkeypatch,tmp_path) as client:
         wrong_type=client.post('/api/imports/ozon-seller-queries',content=b'x');wrong_ext=_post(client,b'x','x.xls')
-        missing=client.post('/api/imports/ozon-seller-queries');wrong_field=client.post('/api/imports/ozon-seller-queries',files={'wrong':('x.xlsx',b'x')})
+        missing = client.post(
+            "/api/imports/ozon-seller-queries",
+            content=b"--empty--\r\n--empty----\r\n",
+            headers={"content-type": "multipart/form-data; boundary=empty"},
+        )
+        wrong_field=client.post('/api/imports/ozon-seller-queries',files={'wrong':('x.xlsx',b'x')})
         IMPORT_LOCK.acquire()
         try: locked=_post(client,build_ozon_seller_queries_workbook())
         finally: IMPORT_LOCK.release()

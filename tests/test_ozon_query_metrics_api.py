@@ -35,7 +35,13 @@ def test_http_error_matrix_sanitized(monkeypatch,tmp_path,payload,code):
  assert all(x not in r.text for x in ('Traceback','/tmp/','.part','.readcopy','secret','SQL'))
 def test_transport_lock_and_size(monkeypatch,tmp_path):
  with _client(monkeypatch,tmp_path) as c:
-  wrong=c.post('/api/imports/ozon-query-metrics',content=b'x');ext=_post(c,b'x','x.xls');missing=c.post('/api/imports/ozon-query-metrics');field=c.post('/api/imports/ozon-query-metrics',files={'wrong':('x.xlsx',b'x')})
+  wrong=c.post('/api/imports/ozon-query-metrics',content=b'x');ext=_post(c,b'x','x.xls')
+  missing = c.post(
+      "/api/imports/ozon-query-metrics",
+      content=b"--empty--\r\n--empty----\r\n",
+      headers={"content-type": "multipart/form-data; boundary=empty"},
+  )
+  field=c.post('/api/imports/ozon-query-metrics',files={'wrong':('x.xlsx',b'x')})
   IMPORT_LOCK.acquire()
   try:locked=_post(c,build_ozon_query_metrics_workbook())
   finally:IMPORT_LOCK.release()
