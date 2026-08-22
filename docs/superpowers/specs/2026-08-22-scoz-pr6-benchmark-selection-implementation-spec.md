@@ -508,20 +508,22 @@ For rate limiting, response JSON additionally contains `retry_after_seconds` and
 
 ## 13. Complete local error taxonomy
 
-| Condition | HTTP/code | UI action |
-|---|---|---|
-| Product absent | 404 `PRODUCT_NOT_FOUND` | return to Products/refresh |
-| Product exists but not owned | 409 `PRODUCT_NOT_OWNED` | choose an owned catalog Product |
-| no own-query evidence | GET state; PUT 409 `NO_OWN_QUERY_DATA` | import own-product queries |
-| invalid relevance set | 422 `RELEVANT_QUERY_SELECTION_INVALID` | refresh and select offered rows |
-| deliberately empty relevance | saved current state; candidate GET, manual add, and benchmark save return 409 `RELEVANT_QUERY_SELECTION_EMPTY`; existing benchmark GET remains readable | select and save at least one relevant query before modifying benchmark composition |
-| no candidate evidence | 200 `NO_CANDIDATE_EVIDENCE` state | import Search Visibility or add manually |
-| bad manual ID | 422 `MANUAL_OZON_SKU_INVALID` | enter canonical numeric SKU |
-| own as competitor | 409 `OWN_PRODUCT_CANNOT_BE_COMPETITOR` | choose another SKU |
-| invalid benchmark member | 422 `BENCHMARK_MEMBER_INVALID` | refresh/remove invalid member |
-| empty benchmark | 422 `BENCHMARK_EMPTY` | select at least one competitor |
-| same benchmark set | 200 `NO_CHANGE` result | show revision unchanged |
-| concurrent write unresolved | 409 `BENCHMARK_CONCURRENT_WRITE` | refresh current revision and retry |
+| Condition | HTTP/code | Exact REST `message` | UI action |
+|---|---|---|---|
+| Product absent | 404 `PRODUCT_NOT_FOUND` | `Товар не найден.` | return to Products/refresh |
+| Product exists but not owned | 409 `PRODUCT_NOT_OWNED` | `Выберите свой товар из каталога.` | choose an owned catalog Product |
+| no own-query evidence | GET state; PUT 409 `NO_OWN_QUERY_DATA` | `Нет данных по поисковым запросам этого товара. Импортируйте отчёт «Запросы моего товара».` (PUT error only) | import own-product queries |
+| invalid relevance set | 422 `RELEVANT_QUERY_SELECTION_INVALID` | `Выбран некорректный набор поисковых запросов. Обновите список и повторите.` | refresh and select offered rows |
+| deliberately empty relevance | saved current state; candidate GET, manual add, and benchmark save return 409 `RELEVANT_QUERY_SELECTION_EMPTY`; existing benchmark GET remains readable | `Сначала выберите и сохраните хотя бы один релевантный запрос.` | select and save at least one relevant query before modifying benchmark composition |
+| no candidate evidence | 200 `NO_CANDIDATE_EVIDENCE` state | — (not an error) | import Search Visibility or add manually |
+| bad manual ID | 422 `MANUAL_OZON_SKU_INVALID` | `Введите корректный числовой SKU Ozon без ведущих нулей.` | enter canonical numeric SKU |
+| own as competitor | 409 `OWN_PRODUCT_CANNOT_BE_COMPETITOR` | `Товар не может быть конкурентом самому себе.` | choose another SKU |
+| invalid benchmark member | 422 `BENCHMARK_MEMBER_INVALID` | `Состав конкурентов содержит недоступный или некорректный товар. Обновите список и повторите.` | refresh/remove invalid member |
+| empty benchmark | 422 `BENCHMARK_EMPTY` | `Выберите хотя бы одного конкурента.` | select at least one competitor |
+| same benchmark set | 200 `NO_CHANGE` result | — (not an error) | show revision unchanged |
+| concurrent write unresolved | 409 `BENCHMARK_CONCURRENT_WRITE` | `Состав конкурентов изменился параллельно. Обновите данные и повторите.` | refresh current revision and retry |
+
+For every local PR6 domain error listed in this table, the `message` field in `{"error":{"code":"...","message":"..."}}` MUST equal the table's Exact REST `message` byte-for-byte as Unicode text. Application/domain exceptions themselves do not need to store the Russian message. FastAPI transport validation remains HTTP 422 with standard `detail` and does not use this table. MPStats source errors continue to use the messages frozen in section 12.4.
 
 MPStats errors are defined in section 12. Keystore errors never call the backend: `UNSUPPORTED_KEYSTORE_FORMAT`, `UNSUPPORTED_KEYSTORE_VERSION`, `INVALID_KEYSTORE_ENVELOPE`, and `KEYSTORE_DECRYPT_FAILED`. The last intentionally combines wrong password and corrupt/authentication-failed ciphertext and displays `Не удалось открыть файл: неверный пароль или файл повреждён.` No partial plaintext is displayed.
 
@@ -722,7 +724,7 @@ Using `httpx.MockTransport`, assert POST, host `mpstats.io`, path `/api/analytic
 
 Cover 200, `data=[]`, missing requested ID, null/empty thumb, invalid ID, boolean ID, invalid thumb type/URL, duplicate response ID, ignored extra/unrequested ID, malformed root, missing `data`, non-array `data`, 202, 401→auth, 403→upstream, 429 with safe integer `Retry-After` 0–86400 and invalid values mapping to null, every 5xx class, other status, each timeout/network class, malformed JSON, and no automatic retry. Test connection uses the same endpoint/query/header with no body and treats valid 200—including empty `data`—as AVAILABLE. No test makes a real network request or contains a real token.
 
-Real FastAPI `TestClient` tests—not source grep—cover every route, JSON shape, status/error code, pagination bound, transaction behavior, idempotency, source mapping, and absence of a token sentinel from responses. They distinguish malformed/wrong-type transport failures with standard FastAPI 422 `detail` from valid transport with invalid business values using the PR6 domain envelope. Inspect SQLite, captured safe logs when logs are touched, and served/generated frontend state to prove the sentinel is absent. Photo tests assert only `NOT_REQUESTED`, `AVAILABLE`, and `MISSING`; source failures remain errors rather than per-item statuses.
+Real FastAPI `TestClient` tests—not source grep—cover every route, JSON shape, pagination bound, transaction behavior, idempotency, source mapping, and absence of a token sentinel from responses. For every local PR6 domain error, they assert the exact HTTP status, exact error code, and exact frozen `message` from section 13. They distinguish malformed/wrong-type transport failures with standard FastAPI 422 `detail` from valid transport with a local domain error using the SCOZ error envelope with the exact frozen message. Inspect SQLite, captured safe logs when logs are touched, and served/generated frontend state to prove the sentinel is absent. Photo tests assert only `NOT_REQUESTED`, `AVAILABLE`, and `MISSING`; source failures remain errors rather than per-item statuses.
 
 ### 19.3 Frontend and keystore
 
