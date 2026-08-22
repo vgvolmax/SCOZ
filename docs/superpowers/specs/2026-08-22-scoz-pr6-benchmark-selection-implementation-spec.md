@@ -41,7 +41,7 @@ Only these existing interfaces constrain PR6:
 - runtime requirements are exactly pinned. `requirements-dev.txt` inherits `requirements.txt` and currently adds `pytest` and `httpx`; CI runs Python tests, a Node syntax check when Node is present, and Windows portable smoke.
 - `.gitignore` already ignores `*.enc.json`, `*credentials*.json`, and `*credential*.json`; it covers `scoz_credentials.enc.json`. No `.gitignore` change is required.
 
-The official MPStats documentation could not be reached from the authoring environment because outbound access returned HTTP 403, and the web-search integration returned HTTP 401. The implementation authority therefore uses the public Analytics API contract explicitly supplied for this PR and requires the implementation-plan/review gate to confirm, from official MPStats documentation, that `POST https://mpstats.io/api/analytics/v1/oz/items`, `X-Mpstats-TOKEN`, request `{"ids":[...]}`, response `id`/`thumb`, and the status behavior below remain current. A mismatch is an authority conflict and stops implementation until this spec is corrected and re-approved; it is not permission to substitute an undocumented endpoint.
+The PR6 MPStats contract was verified against the current official MPStats Ozon Analytics API documentation during independent spec review on 2026-08-22. The verified contract is `POST /api/analytics/v1/oz/items`, `ids` as a query-string parameter, `X-Mpstats-TOKEN` as primary authentication, a response envelope containing `data[]`, documented common statuses 200/202/401/429/500, and `Retry-After` semantics for 429. If the official contract changes before implementation and conflicts with this specification, implementation MUST stop and the specification must be corrected and approved separately; this is not permission to substitute an undocumented endpoint.
 
 ## 3. Explicit non-goals
 
@@ -120,7 +120,7 @@ There is one option per query. A latest-period option uses the current snapshot 
 
 If no ProductQuery evidence exists and no valid stale selection can exist, GET returns `readiness="NO_OWN_QUERY_DATA"`, `latest_period=null`, and an empty `items` array with HTTP 200. PUT returns `NO_OWN_QUERY_DATA` with 409. An existing ProductQuery universe with zero selected rows returns `readiness="EMPTY_SELECTION"`; candidate GET returns `RELEVANT_QUERY_SELECTION_EMPTY` with 409. Empty selection is a valid atomic PUT and is the deliberate way to clear the scope.
 
-Selection validation accepts only distinct positive integer query IDs. Every submitted ID must reference an existing `SearchQuery` and must have at least one `ProductQuerySnapshot` for this same own Product in any period. A query evidenced only for another Product is invalid. Duplicate IDs and non-integers are 422. Validation and replacement occur inside one `BEGIN IMMEDIATE` transaction: validate the complete set, delete relations absent from the submitted set, insert newly present relations, retain unchanged relations, then commit. Any failure leaves the old set untouched.
+Selection validation accepts only distinct positive integer query IDs. Every submitted ID must reference an existing `SearchQuery` and must have at least one `ProductQuerySnapshot` for this same own Product in any period. A query evidenced only for another Product is invalid. Duplicate IDs and non-integers are 422. The application opens one `immediate_transaction`, then repository SQL validates the complete set, deletes relations absent from the submitted set, inserts newly present relations, and retains unchanged relations. The helper commits on success; any failure rolls back and leaves the old set untouched.
 
 The query identity contract remains exact after edge trimming performed at ingestion. PR6 does not lowercase, casefold, map `ё` to `е`, stem, lemmatize, correct spelling, collapse internal spaces, fuzzy-match, or semantically match.
 
@@ -196,7 +196,10 @@ class PhotoStatus(str, Enum):
     NOT_REQUESTED = "NOT_REQUESTED"
     AVAILABLE = "AVAILABLE"
     MISSING = "MISSING"
-    UNAVAILABLE = "UNAVAILABLE"
+
+class CandidateReadiness(str, Enum):
+    READY = "READY"
+    NO_CANDIDATE_EVIDENCE = "NO_CANDIDATE_EVIDENCE"
 
 @dataclass(frozen=True)
 class BenchmarkCandidate:
@@ -217,21 +220,31 @@ class BenchmarkCandidate:
 @dataclass(frozen=True)
 class CandidatePage:
     product_id: int
+    readiness: CandidateReadiness
     items: tuple[BenchmarkCandidate, ...]
     total: int
     limit: int
     offset: int
 ```
 
-Local candidate GET always returns `photo_status=NOT_REQUESTED` and `photo_url=null`. A manual candidate without local evidence has null contextual fields, zero counts, and null best position. Brand is absent because no approved local candidate source supplies it. MPStats `name`, `brand`, `seller`, sales, and revenue are ignored.
+Local candidate GET always returns `photo_status=NOT_REQUESTED` and `photo_url=null`. A successful MPStats preview with a photo returns `AVAILABLE`; a successful response with no usable photo returns `MISSING`. Source-level failures remain typed source errors rather than fabricated per-item photo states. A browser image-load failure is a transient UI placeholder/error state, not a backend `PhotoStatus`. A manual candidate without local evidence has null contextual fields, zero counts, and null best position. Brand is absent because no approved local candidate source supplies it. MPStats `name`, `brand`, `seller`, sales, revenue, and all other non-photo fields are ignored.
 
-No Search Visibility evidence yields HTTP 200 with an empty page and `readiness="NO_CANDIDATE_EVIDENCE"`; this is not an error and manual add remains available.
+Non-empty `items` yields `readiness=READY`. Zero candidate evidence yields HTTP 200 with an empty page and `readiness=NO_CANDIDATE_EVIDENCE`; this is not an error and manual add remains available. Empty relevant-query selection remains the separate 409 `RELEVANT_QUERY_SELECTION_EMPTY` domain error.
 
 ## 7. Manual competitor identity flow
 
 The manual request accepts `ozon_product_id` as a JSON string matching `^[0-9]+$`; leading zeroes are rejected by requiring `str(int(value)) == value`, and zero is rejected. This is the canonical numeric representation passed to the existing `ProductRepository.resolve_or_create_ozon_product()`; implementation also tightens that repository method to apply this same canonical rule so there is only one resolver and validator.
 
-Inside one transaction, the service validates the owned Product, resolves/reuses the external Ozon identity, or creates an `is_owned=false` identity-only Product and identity. It rejects resolution to the active own Product. It returns the manual `BenchmarkCandidate`; it creates neither a `ProductSnapshot`, relevance row, candidate history, nor benchmark revision. Photo lookup remains a separate request and failure never rolls back the identity.
+Inside one `immediate_transaction`, the service validates the owned Product and canonical Ozon ID, then calls `find_by_external_identity(...)`. If found, it reuses that Product with `created=false`; otherwise it calls the existing `ProductRepository.resolve_or_create_ozon_product(...)`, which continues to return `Product`, and reports `created=true`. The resolver may tighten its canonical validation to reject zero, leading zeros, and nondigits, but its public return signature MUST NOT change. The service rejects only resolution to the active own Product; another Product with `is_owned=true` remains a valid comparator. It creates neither a `ProductSnapshot`, relevance row, candidate history, nor benchmark revision. Photo lookup remains a separate request and failure never rolls back the identity.
+
+The type-safe application result is:
+
+```python
+@dataclass(frozen=True)
+class ManualCandidateWriteResult:
+    created: bool
+    candidate: BenchmarkCandidate
+```
 
 An identity-only Product can be a `BenchmarkMember` but MUST NOT appear in `/api/products` merely because of identity creation or benchmark membership. No fake snapshot, implicit ownership, or orphan-cleanup subsystem is introduced.
 
@@ -279,9 +292,9 @@ class BenchmarkCompositionWriteResult:
 
 A BenchmarkSet is the stable container uniquely owned by one own Product. Members are ordinary Products and their collection is an unordered set. The first non-empty save creates revision 1. A different set creates `current revision + 1`. Saving the exact same set in any order returns the current revision and `kind="NO_CHANGE"`; no row is inserted. Old revisions and memberships are immutable. Member output is sorted by numeric Ozon ID then Product ID.
 
-An empty member set is invalid and returns `BENCHMARK_EMPTY` (422); it creates no BenchmarkSet. Every member must exist, have exactly one canonical Ozon external identity, differ from the own Product, and be `is_owned=false`; otherwise the complete write returns `BENCHMARK_MEMBER_INVALID` (422). Membership does not require Search Visibility evidence, a ProductSnapshot, or a photo.
+An empty member set is invalid and returns `BENCHMARK_EMPTY` (422); it creates no BenchmarkSet. Every member must exist, have exactly one canonical Ozon external identity, and differ from the active own Product; otherwise the complete write returns `BENCHMARK_MEMBER_INVALID` (422). Another Product with `is_owned=true` may be a member when the user considers it a direct comparator for the active own Product. Membership never changes ownership and does not require Search Visibility evidence, a ProductSnapshot, or a photo. Candidate derivation likewise excludes only the active own Product, not every owned Product.
 
-The repository opens `BEGIN IMMEDIATE` for BenchmarkSet get/create, current revision read, normalized member-set comparison, next revision insert, and all member inserts. The unique constraints serialize the local single-process writer. If a constraint race still occurs, the repository rolls back, starts one fresh `BEGIN IMMEDIATE`, rereads current composition, returns `NO_CHANGE` if equal, or retries the next revision insert once; a second conflict becomes `BENCHMARK_CONCURRENT_WRITE` (409). There are no distributed locks or generic optimistic-lock subsystem. No half revision can commit.
+The application owns the transaction boundary and uses `immediate_transaction` around BenchmarkSet get/create, current revision read, normalized member-set comparison, next revision insert, and all member inserts. `BEGIN IMMEDIATE` serializes local SQLite writers: a second writer waits according to the connection timeout, then reads the committed current state and returns `NO_CHANGE` for the same set or writes `current revision + 1` for a different set. If acquiring the immediate transaction ends with an actual SQLite BUSY/LOCKED condition, the application maps it to 409 `BENCHMARK_CONCURRENT_WRITE`. Other SQLite failures, including unrelated `OperationalError` instances, MUST NOT be mislabeled as concurrency. There is no retry framework, repository reopen/retry loop, distributed lock, or generic optimistic-lock subsystem. UNIQUE constraints remain final invariant protection, and no half revision can commit.
 
 No price, conversion, sales, median, quartile, delta, confidence, source-metric copy, photo, or metric history is stored in these tables.
 
@@ -299,7 +312,7 @@ class BenchmarkSelectionRepository:
     def save_benchmark(self, own_product_id: int, member_product_ids: frozenset[int]) -> BenchmarkCompositionWriteResult: ...
 ```
 
-`replace_relevant_queries` and `save_benchmark` require a connection already inside the service's `BEGIN IMMEDIATE` boundary and never commit. Read methods use the service's normal transaction. Candidate SQL implements the exact current-revision/latest-observation/deduplication rules in section 6, joins current benchmark membership to set the selection flag, and never calls MPStats.
+`BenchmarkSelectionRepository` receives an already-open connection. It MUST NOT issue `BEGIN`, `BEGIN IMMEDIATE`, `COMMIT`, or `ROLLBACK`, reopen the connection, or own transaction lifecycle. `replace_relevant_queries` and `save_benchmark` require a connection already inside the application's immediate boundary. Read methods receive a normal transaction connection. Candidate SQL implements the exact current-revision/latest-observation/deduplication rules in section 6, joins current benchmark membership to set the selection flag, and never calls MPStats.
 
 Manual identity uses the existing `ProductRepository`; there is no second identity repository or resolver.
 
@@ -312,14 +325,25 @@ class BenchmarkSelectionService:
     def get_relevant_queries(self, product_id: int) -> RelevantQuerySelection: ...
     def replace_relevant_queries(self, product_id: int, search_query_ids: tuple[int, ...]) -> RelevantQueryWriteResult: ...
     def get_candidates(self, product_id: int, *, limit: int, offset: int) -> CandidatePage: ...
-    def add_manual_candidate(self, product_id: int, ozon_product_id: str) -> BenchmarkCandidate: ...
+    def add_manual_candidate(self, product_id: int, ozon_product_id: str) -> ManualCandidateWriteResult: ...
     def get_benchmark(self, product_id: int) -> BenchmarkComposition: ...
     def save_benchmark(self, product_id: int, member_product_ids: tuple[int, ...]) -> BenchmarkCompositionWriteResult: ...
     def enrich_mpstats_previews(self, token: SecretStr, ozon_product_ids: tuple[str, ...]) -> tuple[MPStatsProductPreview, ...]: ...
     def test_mpstats(self, token: SecretStr, ozon_product_id: str) -> MPStatsConnectionResult: ...
 ```
 
-The service validates that product-specific workflow methods target an existing `is_owned=true` Product. It coordinates transactions, repository work, identity resolution, and the source adapter. Routes only validate Pydantic transport, call these methods, serialize DTOs, and map typed errors. Candidate and revision rules do not enter `backend/main.py` or JavaScript.
+The service validates that product-specific workflow methods target an existing `is_owned=true` Product. It coordinates transactions, repository work, identity resolution, and the source adapter. For serialized writes it uses `with immediate_transaction(...) as conn:` and passes that connection to repositories; the application chooses transaction type but executes no raw SQL. Routes only validate Pydantic transport, call these methods, serialize DTOs (including `ManualCandidateWriteResult` directly), and map typed errors. Candidate and revision rules do not enter `backend/main.py` or JavaScript.
+
+Add this focused connection helper to `backend/persistence/connection.py`:
+
+```python
+@contextmanager
+def immediate_transaction(
+    db_path: Path | None = None,
+) -> Iterator[sqlite3.Connection]: ...
+```
+
+Its exact mechanics are `connect(...)`, `conn.execute("BEGIN IMMEDIATE")`, yield the connection, commit on success, rollback on exception, and always close. It contains no business SQL. Existing `transaction(...)` behavior is unchanged and remains the helper for reads. PR6 uses `immediate_transaction` for relevant-query replacement, manual identity resolve/create, and benchmark revision save.
 
 ## 11. MPStats adapter and network contract
 
@@ -338,19 +362,16 @@ MPStatsClient(
 
 Production code does not expose a configurable base URL; the constructor override exists only for tests and is rejected outside tests/application wiring if it is not HTTPS. The injected `httpx.Client` makes `httpx.MockTransport` sufficient; no generic HTTP abstraction is added.
 
-`get_ozon_product_previews(token: SecretStr, ids: tuple[str, ...])` performs:
+`get_ozon_product_previews(token: SecretStr, ids: tuple[str, ...])` performs one request per chunk:
 
 ```http
-POST https://mpstats.io/api/analytics/v1/oz/items
+POST https://mpstats.io/api/analytics/v1/oz/items?ids=123,456
 X-Mpstats-TOKEN: <token>
-Content-Type: application/json
-
-{"ids":["123","456"]}
 ```
 
-IDs retain caller order, are unique canonical strings, and batches contain 1–100 IDs. More than 100 is split sequentially into bounded chunks; zero IDs returns locally without a request. There are no automatic retries. Redirect following is disabled. Only HTTPS is allowed.
+`ids` is one comma-delimited query value without spaces. Inputs are already canonical positive Ozon digit strings, retain caller order, and duplicates are rejected before the adapter. Chunks contain 1–100 IDs; more than 100 is split sequentially into chunks of at most 100. An empty tuple returns locally without an HTTP request. The request has no JSON body, no `auth-token` query parameter, no `brands`, `sellers`, `keyword`, `d1`, `d2`, `filterModel`, or `sortModel`, and no automatic retry. Redirect following is disabled. Only HTTPS is allowed.
 
-The adapter consumes only response `id` and `thumb`, rejects duplicate IDs, ignores unrequested IDs and every other field, and returns results in requested order:
+For a 200 response, the JSON root MUST be an object and `data` MUST exist as an array. Pagination metadata may exist but does not become SCOZ domain data; all other root fields are ignored. Each `data[]` item has a required positive JSON integer `id` (a boolean is invalid), normalized to a canonical decimal digit string, and `thumb`. The adapter consumes only `data[].id` and `data[].thumb`; `name`, `brand`, `seller`, `sales`, `revenue`, and every other field are ignored, never enter the DTO, are never persisted, and never become Product attributes or source facts. Duplicate occurrences of the same requested ID make the response malformed; unrequested IDs are ignored. Results are returned in original caller order:
 
 ```python
 @dataclass(frozen=True)
@@ -360,7 +381,7 @@ class MPStatsProductPreview:
     photo_url: str | None
 ```
 
-An item missing from a valid 200 response, or present with null/empty `thumb`, returns `MISSING`; a non-empty thumbnail must be an absolute `https://` URL or the response is malformed. URLs are transient response data and are never written to SQLite, files, or logs.
+A requested ID absent from valid `data`, or present with null/empty-string `thumb`, returns `MISSING`; a non-empty thumbnail must be a string and an approved absolute `https://` photo URL under the PR6 security rule or the response is malformed. Invalid item/id/thumb types are malformed. URLs are transient response data and are never written to SQLite, files, or logs.
 
 ### 11.2 Failure taxonomy and statuses
 
@@ -372,10 +393,10 @@ Mapping is exact:
 |---|---|
 | 200 and valid JSON schema | requested previews, including per-ID `MISSING` |
 | 202 | `MPStatsPendingError` |
-| 401 or 403 | `MPStatsAuthError` |
+| 401 | `MPStatsAuthError` |
 | 429 | `MPStatsRateLimitError`; parse `Retry-After` only when it is an integer 0–86400 seconds, otherwise null |
 | 500–599 | `MPStatsUpstreamError` |
-| any other HTTP status | `MPStatsUpstreamError` |
+| any other HTTP status, including undocumented 403 | `MPStatsUpstreamError` |
 | connect/read/write/pool timeout | `MPStatsTimeoutError` |
 | other `httpx.RequestError` | `MPStatsNetworkError` |
 | invalid JSON, wrong top-level/item shape, invalid id/thumb | `MPStatsMalformedResponseError` |
@@ -384,7 +405,7 @@ Raw response bodies, stack traces, request headers, and exception text are not u
 
 ### 11.3 Test connection probe
 
-The public documentation does not establish a separate auth-only endpoint. Test connection therefore uses the same documented batch endpoint with exactly one explicit `ozon_product_id`. The Settings form requires a numeric probe SKU, prefilled with the numerically smallest Ozon ID among current `/api/products` catalog items when available; without one the user enters a SKU. The request body always contains both token and probe SKU. A valid 200 proves the request was authorized even if that ID is absent or has no thumbnail. 202, auth, rate-limit, temporary, network, and malformed failures remain distinct. No competitor or business-critical SKU is hardcoded.
+The public documentation does not establish a separate auth-only endpoint. Test connection therefore uses the same `POST /api/analytics/v1/oz/items` endpoint with `ids=<one canonical probe SKU>` in the query, `X-Mpstats-TOKEN` in the header, and no JSON body. The Settings form requires a numeric probe SKU, prefilled with the numerically smallest Ozon ID among current `/api/products` catalog items when available; without one the user enters a SKU. The local same-origin request body contains token and probe SKU; the backend translates them to the documented outbound query/header split. A valid 200 proves the authenticated request was accepted even when `data=[]`, that ID is absent, or it has no thumbnail. 202, auth, rate-limit, temporary, network, and malformed failures remain distinct. No competitor or business-critical SKU is hardcoded.
 
 ### 11.4 Dependency decision
 
@@ -392,7 +413,9 @@ The implementation adds `httpx==0.28.1` to `requirements.txt` as the sole outbou
 
 ## 12. Exact REST API
 
-All responses use JSON. Success bodies never contain a credential. All errors use `{"error":{"code":"...","message":"..."}}`; no PR6 error uses FastAPI's default `detail` body. `product_id`, member IDs, `limit`, and `offset` use strict positive/non-negative integer validation; booleans and strings are rejected as integers.
+All responses use JSON. Success bodies never contain a credential. Framework/transport validation failures—such as malformed JSON, a missing required field, a wrong JSON field type, or invalid path/query integer text—remain standard FastAPI HTTP 422 responses with the standard `detail` body. PR6 domain and source errors use `{"error":{"code":"...","message":"..."}}`. PR6 adds no global `RequestValidationError` handler and changes no existing endpoint response contract.
+
+Path and query values are text on the wire and are normally parsed by FastAPI/Pydantic into typed integers: `product_id > 0`, `limit` obeys its bounds, and `offset >= 0`; nonnumeric text and prohibited zero/negative values are rejected. `StrictInt` is not a requirement for URL representation. JSON-body ID collections such as `search_query_ids` and `member_product_ids` use strict integer semantics (or exact equivalent validation): JSON `3` is accepted, while `"3"`, `true`, and `3.0` are rejected.
 
 ### 12.1 Relevant queries
 
@@ -409,7 +432,7 @@ All responses use JSON. Success bodies never contain a credential. All errors us
 - 200: exact GET shape plus `"changed":true|false`. Repeating the same set is `changed=false`.
 - Errors: 404 `PRODUCT_NOT_FOUND`; 409 `PRODUCT_NOT_OWNED`; 409 `NO_OWN_QUERY_DATA`; 422 `RELEVANT_QUERY_SELECTION_INVALID` for duplicates, nonexistent queries, or queries without evidence for this Product.
 - Empty array is valid and clears selection.
-- Transaction: one `BEGIN IMMEDIATE` all-or-nothing replacement.
+- Transaction: one application-owned `immediate_transaction` all-or-nothing replacement.
 
 ### 12.2 Candidates
 
@@ -425,7 +448,7 @@ All responses use JSON. Success bodies never contain a credential. All errors us
 - Request: `{"ozon_product_id":"123456789"}`.
 - 200 for reused identity or 201 for newly created identity: `{"created":true|false,"candidate":<candidate>}`.
 - Errors: 404 `PRODUCT_NOT_FOUND`; 409 `PRODUCT_NOT_OWNED`; 409 `OWN_PRODUCT_CANNOT_BE_COMPETITOR`; 422 `MANUAL_OZON_SKU_INVALID`.
-- Transaction: one identity resolve/create transaction; no benchmark write and no remote call.
+- Transaction: one application-owned `immediate_transaction` for identity resolve/create; no benchmark write and no remote call.
 
 ### 12.3 Benchmark
 
@@ -440,9 +463,9 @@ All responses use JSON. Success bodies never contain a credential. All errors us
 
 - Request: `{"member_product_ids":[9,12]}`; maximum 1,000 distinct positive IDs.
 - 201 for `CREATED`/`CHANGED`, 200 for `NO_CHANGE`: `{"result":"CREATED|CHANGED|NO_CHANGE","benchmark_set":{...},"revision":{...}}`.
-- Errors: 404 `PRODUCT_NOT_FOUND`; 409 `PRODUCT_NOT_OWNED`; 409 `BENCHMARK_CONCURRENT_WRITE`; 422 `BENCHMARK_EMPTY`; 422 `BENCHMARK_MEMBER_INVALID` (duplicate, missing, owned, own, or lacking canonical Ozon identity).
+- Errors: 404 `PRODUCT_NOT_FOUND`; 409 `PRODUCT_NOT_OWNED`; 409 `BENCHMARK_CONCURRENT_WRITE`; 422 `BENCHMARK_EMPTY`; 422 `BENCHMARK_MEMBER_INVALID` (duplicate, missing, the active own Product itself, or lacking canonical Ozon identity). Another owned Product is valid.
 - Idempotency compares the unordered ID set; order is irrelevant.
-- Transaction: exact write boundary in section 8.
+- Transaction: the application-owned `immediate_transaction` boundary in sections 8–10.
 
 ### 12.4 MPStats source operations
 
@@ -497,9 +520,9 @@ MPStats errors are defined in section 12. Keystore errors never call the backend
 
 ## Credential and source-security invariants
 
-Credentials travel only in same-origin JSON POST bodies for the immediate source operation. They MUST NOT be placed in GET parameters, URLs, query strings, localStorage, sessionStorage, IndexedDB, cookies, SQLite, config, source artifacts, generated HTML state, logs, response bodies, error details, or exception text.
+Credentials travel from the local frontend to the SCOZ backend only in same-origin JSON POST bodies for the immediate source operation. They MUST NOT be placed in GET parameters, URLs, query strings, localStorage, sessionStorage, IndexedDB, cookies, SQLite, config, source artifacts, generated HTML state, logs, response bodies, error details, or exception text. The backend sends the Ozon SKU list in MPStats's documented `ids` query parameter; SKU IDs are not credentials.
 
-Implementation MUST NOT log or echo the token; persist plaintext; use MPStats query-parameter authentication; save a decrypted keystore payload; commit encrypted credential files; include a real credential fixture; store the password; or reveal partial decrypted content after failure. MPStats receives the token only as `X-Mpstats-TOKEN`. Application logs redact headers and request bodies rather than attempting value-specific replacement.
+Implementation MUST NOT log or echo the token; persist plaintext; use MPStats `auth-token` query-parameter authentication; save a decrypted keystore payload; commit encrypted credential files; include a real credential fixture; store the password; or reveal partial decrypted content after failure. The backend transfers the transient local token only to outbound `X-Mpstats-TOKEN`; no credential enters the outbound URL. Application logs redact headers and request bodies rather than attempting value-specific replacement.
 
 Photos and their URLs are transient. MPStats commercial fields are discarded at the adapter. A photo outage cannot remove candidates, invalidate membership, roll back local data, or prevent a benchmark save.
 
@@ -595,9 +618,10 @@ All markup/classes use existing committed HTML/CSS and canonical tokens, cards, 
 
 ## 17. Atomicity and failure semantics
 
-- relevance PUT is one validation-and-replacement `BEGIN IMMEDIATE`; it is all-or-nothing;
-- manual identity resolution/creation is one transaction and never creates other facts;
-- benchmark set creation/current read/number allocation/revision/members are one `BEGIN IMMEDIATE`; rollback removes every partial row;
+- the application wraps relevance PUT in one `immediate_transaction`; validation and replacement are all-or-nothing;
+- the application wraps manual identity resolution/creation in one `immediate_transaction`, which never creates other facts;
+- the application wraps benchmark set creation/current read/number allocation/revision/members in one `immediate_transaction`; rollback removes every partial row;
+- the connection helper owns SQLite transaction mechanics, repositories own business SQL and never begin/commit/rollback/reopen;
 - MPStats operations open no database transaction and cannot roll back or mutate local context;
 - encryption/decryption occurs only in the browser and never reaches backend persistence;
 - photo availability is not a validity condition for candidates or benchmark members.
@@ -621,9 +645,9 @@ All markup/classes use existing committed HTML/CSS and canonical tokens, cards, 
 ### Modify
 
 - `backend/domain/__init__.py` — export PR6 domain symbols following current package convention.
-- `backend/application/__init__.py` — export the PR6 service following current package convention.
 - `backend/persistence/repositories/__init__.py` — export the PR6 repository.
-- `backend/persistence/repositories/products.py` — make canonical Ozon-ID validation reusable and return resolve/create status without changing catalog projection.
+- `backend/persistence/repositories/products.py` — tighten/reuse canonical Ozon-ID validation while preserving `resolve_or_create_ozon_product(...) -> Product` and catalog projection.
+- `backend/persistence/connection.py` — add focused `immediate_transaction`, preserving existing `transaction` behavior.
 - `backend/persistence/migrations/runner.py` — register migration 005.
 - `backend/main.py` — Pydantic request models, thin routes, serialization, typed error mapping.
 - `frontend/index.html` — Competitors workspace and MPStats source/keystore controls; load `keystore.js` before `app.js`.
@@ -633,6 +657,7 @@ All markup/classes use existing committed HTML/CSS and canonical tokens, cards, 
 - `requirements-dev.txt` — remove inherited duplicate `httpx` line.
 - `.github/workflows/ci.yml` — syntax-check both JS files and run Node keystore contract without npm.
 - `tests/test_migrations.py` — migration 005 fresh/upgrade/schema preservation assertions.
+- `tests/test_database.py` — immediate transaction commit/rollback/close and lock behavior without changing the normal helper.
 - `tests/test_product_repository.py` — canonical manual-ID and identity-only behavior.
 - `tests/test_frontend_contract.py` — real DOM/static contract and credential-persistence prohibitions.
 - `tests/windows_smoke.ps1` — keep portable smoke and add local PR6 route/UI probes without MPStats network.
@@ -656,19 +681,40 @@ No `.gitignore` modification is planned or allowed by PR6 implementation because
 - multi-cluster and multi-query Product deduplication with distinct counts;
 - representative-row tie-break, own exclusion, deterministic order, total/limit/offset;
 - no evidence state and current-benchmark selection flag;
-- manual existing identity reuse and new identity-only creation; invalid/own rejection;
+- manual existing identity yields `created=false`, new identity-only creation yields `created=true`, invalid/active-own rejection, and `ManualCandidateWriteResult` serialization;
+- existing `resolve_or_create_ozon_product(...) -> Product` contract and catalog boundary remain unchanged;
 - no ProductSnapshot fabricated and identity-only/member Product absent from `/api/products`;
 - first benchmark revision 1; exact composition; unordered same set `NO_CHANGE`; changed set next revision; old revision/members immutable;
-- empty and invalid member rejection; no metric/photo columns or values stored;
-- injected failure rolls back complete revision; simultaneous/constraint retry yields intact contiguous sequence and identical saves do not duplicate.
+- empty and invalid member rejection; active own Product rejected, another Product with `is_owned=true` accepted, and membership does not alter ownership; no metric/photo columns or values stored;
+- `immediate_transaction` commits on success, rolls back on exception, closes always, and leaves normal `transaction` behavior unchanged;
+- injected failure rolls back complete revision; a competing writer cannot allocate a duplicate revision; after the first commit, a same-set second save returns `NO_CHANGE` and a different set gets the next revision;
+- busy/locked timeout maps to `BENCHMARK_CONCURRENT_WRITE`, while an unrelated SQLite failure is not mislabeled as concurrency;
+- zero candidate evidence produces `CandidatePage.readiness=NO_CANDIDATE_EVIDENCE`; a non-empty page produces `READY`.
 
 ### 19.2 MPStats and secrets
 
-Using `httpx.MockTransport`, assert exact HTTPS URL, POST, JSON IDs, disabled redirects, timeout wiring, 100-ID batching, injected client, and token only in `X-Mpstats-TOKEN`—never query/body. Assert only `id`/`thumb` consumption while sentinel name/brand/seller/sales/revenue are ignored.
+Using `httpx.MockTransport`, assert POST, host `mpstats.io`, path `/api/analytics/v1/oz/items`, decoded query `ids == "123,456"`, no `auth-token`, disabled redirects, timeout wiring, sequential chunks of at most 100, caller order, injected client, an empty outbound body, and token only in `X-Mpstats-TOKEN`—never query/body. The representative 200 fixture is an object containing `startRow`, `endRow`, `total`, and `data` with numeric `id`, `thumb`, and sentinel `name`/`brand`/`seller`/other fields. Assert only `data[].id`/`data[].thumb` consumption while all sentinel fields are ignored.
 
-Cover 200, input order, missing item, null/empty thumb, invalid thumbnail URL, extra/unrequested item, duplicate ID, 202, 401, 403, 429 with valid/invalid `Retry-After`, every 5xx class, other status, each timeout/network class, malformed JSON, malformed top-level/items/id/thumb, and no automatic retry. No test makes a real network request or contains a real token.
+```json
+{
+  "startRow": 0,
+  "endRow": 100,
+  "total": 2,
+  "data": [
+    {
+      "id": 123,
+      "name": "sentinel",
+      "brand": {"name": "sentinel"},
+      "seller": {"name": "sentinel"},
+      "thumb": "https://cdn.example.test/photo.jpg"
+    }
+  ]
+}
+```
 
-Real FastAPI `TestClient` tests—not source grep—cover every route, JSON shape, status/error code, pagination bound, transaction behavior, idempotency, source mapping, and absence of a token sentinel from responses. Inspect SQLite, captured safe logs when logs are touched, and served/generated frontend state to prove the sentinel is absent.
+Cover 200, `data=[]`, missing requested ID, null/empty thumb, invalid ID, boolean ID, invalid thumb type/URL, duplicate response ID, ignored extra/unrequested ID, malformed root, missing `data`, non-array `data`, 202, 401→auth, 403→upstream, 429 with safe integer `Retry-After` 0–86400 and invalid values mapping to null, every 5xx class, other status, each timeout/network class, malformed JSON, and no automatic retry. Test connection uses the same endpoint/query/header with no body and treats valid 200—including empty `data`—as AVAILABLE. No test makes a real network request or contains a real token.
+
+Real FastAPI `TestClient` tests—not source grep—cover every route, JSON shape, status/error code, pagination bound, transaction behavior, idempotency, source mapping, and absence of a token sentinel from responses. They distinguish malformed/wrong-type transport failures with standard FastAPI 422 `detail` from valid transport with invalid business values using the PR6 domain envelope. Inspect SQLite, captured safe logs when logs are touched, and served/generated frontend state to prove the sentinel is absent. Photo tests assert only `NOT_REQUESTED`, `AVAILABLE`, and `MISSING`; source failures remain errors rather than per-item statuses.
 
 ### 19.3 Frontend and keystore
 
