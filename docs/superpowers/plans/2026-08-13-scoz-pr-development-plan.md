@@ -30,9 +30,9 @@ Global constraints:
 
 ## 2. Phases
 
-**PR1–PR5 — Foundation & Data Plane.** Portable app, SQLite history, Ozon imports.
+**PR1–PR5 — Foundation & Data Plane.** COMPLETE architectural layer: portable app, canonical identities, immutable source histories, provenance и period/grain semantics.
 
-**PR6–PR10 — Diagnostic MVP.** Relevant-query scope, competitors, benchmark, diagnosis, heatmap, Query Opportunity.
+**PR6–PR10 — Diagnostic MVP / Analytical Plane.** Начинается с user-curated analytical context, затем строит feature-specific derived analytics поверх Data Plane: relevant-query scope, competitors, benchmark, diagnosis, heatmap, Query Opportunity. PR6–PR10 не записывают analytical interpretation обратно в source snapshots PR3–PR5.
 
 **PR11–PR14 — API & Ramp-up.** Official APIs, advertising history, Ramp-up models/scenarios.
 
@@ -128,6 +128,8 @@ Flow:
 7. разрешить ручное добавление competitor по SKU, если нужного товара нет в candidate pool;
 8. сохранить `BenchmarkSet` + `BenchmarkSetRevision` + members.
 
+Relevant-query selection и benchmark composition являются **USER-CURATED ANALYTICAL CONTEXT**. Минимальную persisted model/name для relevant-query scope определит PR6 Implementation Spec против актуального `main`; план не вводит её заранее. PR6 не создаёт derived benchmark metric history: `BenchmarkSetRevision` фиксирует composition, а не копирует competitor metrics.
+
 Scope также включает source settings/test connection и approved portable encrypted keystore from Preflight/UIUX: credentials only in current-tab memory after input/unlock; backend does not persist/log plaintext; lock action.
 
 Acceptance: relevant-query scope сохраняется и повторно открывается; candidate pool использует только выбранные релевантные queries; competitor можно добавить/удалить вручную; keystore save/unlock/error flow works with synthetic credentials; partial photo failures do not block selection; MPStats sales estimates do not enter benchmark model.
@@ -139,6 +141,8 @@ Acceptance: relevant-query scope сохраняется и повторно от
 Result: own vs selected competitors by key metrics.
 
 Scope: median, P25/P75 when valid, sample size, delta, performance status, confidence, metric direction, period compatibility, advertising-intensity addendum, detail view.
+
+Core Benchmark — derived analytic из compatible current source observations и конкретной `BenchmarkSetRevision`. Metric sample определяется независимо для каждой metric; incompatible period/grain означает отсутствие comparable benchmark. Не создавать `BenchmarkSnapshot` как source-of-truth table. Advertising intensity сначала выводится из source facts и лишь затем сравнивается. Exact DTO/config/thresholds принадлежат PR7 Implementation Spec; generic benchmark framework не строится раньше появления реальных feature modules.
 
 Acceptance: deterministic math; small sample not shown as confident; missing values reduce sample; benchmark revision changes result without changing source snapshots.
 

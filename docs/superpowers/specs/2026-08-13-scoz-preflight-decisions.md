@@ -276,15 +276,16 @@ DB migration выполняется автоматически при старт
 
 # 8. SearchQuery и Cluster identity
 
-`SearchQuery` сохраняет raw text и консервативно нормализованный текст.
+Post-PR5 canonical `SearchQuery` identity следует утверждённым PR4/PR5 source contracts:
 
-Для identity допустимы trim, Unicode normalization, lowercase/casefold и схлопывание повторных пробелов.
+1. взять source query text;
+2. убрать только leading/trailing U+0020 ordinary SPACE и U+00A0 NBSP;
+3. потребовать non-empty result;
+4. использовать resulting exact text как identity.
 
-Не объединять запросы по stemming, semantic similarity, перестановке слов или автоматическому исправлению смысла.
+Не выполнять lowercase/casefold, Unicode normalization, `ё→е`, stemming, lemmatization, punctuation removal, spelling или keyboard-layout correction, internal-space collapse, synonym replacement, fuzzy/semantic matching. PR4 и PR5 reuse одну `SearchQuery` row только при exact canonical text equality. Source query ID, если он существует, сохраняется как external identity, но не ослабляет это правило.
 
-Если источник даёт query ID, он сохраняется как external identity.
-
-`Cluster` использует source cluster ID, если он доступен; иначе хранится нормализованное имя + source provenance.
+Для текущего Ozon Search Visibility contract `Cluster` использует source cluster text с тем же единственным U+0020/U+00A0 edge cleanup; resulting exact text идентифицирует `Cluster`. Alias/fuzzy normalization, Cluster alias infrastructure и speculative cross-source cluster resolver не вводятся.
 
 ---
 
@@ -334,6 +335,8 @@ Analytics использует последнюю актуальную revision 
 
 Исторический аналитический результат при необходимости может сослаться на конкретную revision.
 
+`BenchmarkSetRevision` — user-curated analytical context состава, а benchmark values — derived analytics. Member count не является metric sample size: sample формируется отдельно для каждой metric по доступным совместимым observations. `BenchmarkSnapshot` не является source of truth и не должен дублировать source histories.
+
 ---
 
 # 11. Period/grain compatibility
@@ -359,6 +362,8 @@ Analytics использует последнюю актуальную revision 
 - интерполировать отсутствующие дни незаметно для пользователя.
 
 Если данные несовместимы, результат получает `INSUFFICIENT_DATA`, `PERIOD_MISMATCH` или эквивалентное явное состояние.
+
+Несовместимый period/grain блокирует comparable calculation; пониженный confidence не является общим способом обойти этот gate. Analytics не repair/clamp/rewrite source facts: correction возможна только новой source revision с provenance. Если analytical result когда-либо materialized или persistently saved, он должен сохранять воспроизводимый context, включая source observation/revisions, period/grain, benchmark revision и calculation/model version; exact result storage заранее не проектируется.
 
 ---
 
