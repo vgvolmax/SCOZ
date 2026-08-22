@@ -30,9 +30,9 @@ Global constraints:
 
 ## 2. Phases
 
-**PR1–PR5 — Foundation & Data Plane.** COMPLETE architectural layer: portable app, canonical identities, immutable source histories, provenance и period/grain semantics.
+**PR1–PR5 — Foundation & initial Data Plane baseline.** Завершён базовый data foundation: portable app, canonical identities, первые immutable Ozon source histories, provenance и period/grain semantics. Later PRs may extend the Source Facts layer when a real feature first requires a new adapter/snapshot, without changing the architectural boundary between source facts and derived analytics.
 
-**PR6–PR10 — Diagnostic MVP / Analytical Plane.** Начинается с user-curated analytical context, затем строит feature-specific derived analytics поверх Data Plane: relevant-query scope, competitors, benchmark, diagnosis, heatmap, Query Opportunity. PR6–PR10 не записывают analytical interpretation обратно в source snapshots PR3–PR5.
+**PR6–PR10 — Diagnostic MVP / Analytical Plane.** Начинается с user-curated analytical context, затем строит feature-specific derived analytics поверх Data Plane: relevant-query scope, competitors, benchmark, diagnosis, heatmap, Query Opportunity. PR6–PR10 не записывают analytical interpretation обратно в source snapshots PR3–PR5. Analytical-plane PR может также вводить feature-specific source observation, если впервые требует такой source fact (например, `SearchPositionSnapshot` в PR10); такой snapshot остаётся Source Fact, а не Derived Analytic.
 
 **PR11–PR14 — API & Ramp-up.** Official APIs, advertising history, Ramp-up models/scenarios.
 
