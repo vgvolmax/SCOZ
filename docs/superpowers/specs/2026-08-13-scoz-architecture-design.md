@@ -167,6 +167,90 @@ Backfill/coverage реализуются внутри конкретного API
 
 **Ramp-up** строит position-normalized CR, readiness/confidence, verdict, empirical bid-position model, scenarios и organic-support trend. Он работает на максимально детальной **общей** granularity входов. Базово — `SKU × query × time`; cluster добавляется только при совместимых cluster-level inputs. При недостатке данных возвращается `INSUFFICIENT_DATA`.
 
+### 12.1. Post-PR5 boundary: от Data Plane к Analytical Plane
+
+После PR5 dependency/responsibility model имеет следующий вид:
+
+```text
+INFRASTRUCTURE
+    ↓
+CANONICAL IDENTITIES
+    ↓
+SOURCE FACTS + PROVENANCE
+    ↓
+USER-CURATED ANALYTICAL CONTEXT
+    ↓
+DERIVED ANALYTICS
+    ↓
+DIAGNOSTIC / DECISION OUTPUT
+    ↓
+APPLICATION SERVICES
+    ↓
+API / UI
+```
+
+Это модель зависимостей и ответственности, а не требование создать отдельный module или table для каждого прямоугольника. `Product`, `ProductExternalIdentity`, `SearchQuery` и `Cluster` — canonical identities, а не аналитические результаты. `ProductSnapshot`, `SearchVisibilitySnapshot`, `ProductQuerySnapshot` и `QueryMetricSnapshot` — существующие post-PR5 source facts; `ImportBatch`, `SourceArtifact` и snapshot revisions сохраняют их provenance. Будущие `SearchPositionSnapshot` и `AdvertisingSnapshot` появляются только в PR, который впервые реально их использует.
+
+**USER-CURATED ANALYTICAL CONTEXT** — сохранённые решения пользователя, определяющие scope анализа, но не являющиеся ни source observations, ни derived analytics. Сюда по смыслу входят product-specific выбор релевантных queries, состав benchmark и его revision. `BenchmarkSet`, `BenchmarkSetRevision` и `BenchmarkMember` — канонические примеры такого context. Точное persisted имя, schema и interface для relevant-query selection определит PR6 Implementation Spec по фактическому `main`; эта архитектура не вводит заранее новые implementation entities для него.
+
+| Категория | Примеры |
+|---|---|
+| Source fact | Ozon query popularity/frequency; `average_position` из own-product report; `ProductSnapshot` turnover, total DRR и ordered units; фактически сообщённый `no_action_share` |
+| User-curated context | query, включённый/исключённый пользователем как релевантный own SKU; competitor, включённый в `BenchmarkSetRevision` |
+| Derived analytic | benchmark median, P25/P75 и delta; estimated promotion spend; advertising support per sold unit; position gap; Share of Top; performance status; confidence |
+| Diagnostic / decision output | traffic problem; conversion problem; availability-confounded diagnosis; candidate for ramp-up; insufficient data; explainable Query Opportunity verdict |
+
+Смысловой инвариант: **SOURCE FACT ≠ USER-CURATED CONTEXT ≠ DERIVED ANALYTIC ≠ DIAGNOSTIC INTERPRETATION**. UI остаётся presentation layer.
+
+### 12.2. Benchmark definition, inputs и result
+
+Эти три понятия не смешиваются:
+
+1. **Benchmark definition** — `BenchmarkSet`, `BenchmarkSetRevision`, `BenchmarkMember`. Revision фиксирует состав выбранных пользователем прямых competitors; изменение состава создаёт новую immutable revision и не переписывает старую.
+2. **Benchmark inputs** — canonical source facts из соответствующих snapshot histories. Benchmark вычисляется из compatible current snapshot revisions вместе с конкретной `BenchmarkSetRevision` и не создаёт вторую копию source truth. `BenchmarkSnapshot` не является source of truth и не должен становиться дублирующей competitor-metric history. Materialized cache допустим позднее только как техническая оптимизация при доказанной необходимости.
+3. **Benchmark result** — derived analytic. Когда применимо, его семантика выражает own value, median, P25/P75 только при достаточной sample, sample size, delta, metric direction, performance status, confidence, benchmark revision и period/grain context.
+
+Точный Python DTO/class, DB table, API JSON, enum names, thresholds, минимальный N для quantiles, confidence algorithm и обязательный набор delta не фиксируются здесь: это scope PR7 Implementation Spec.
+
+Членство Product в `BenchmarkSetRevision` не означает участие во всех metrics. Для каждого сравнения независимо формируется metric-specific valid sample по availability metric, требуемым dimensions/grain, совместимому period/observation context и valid current source revision. Поэтому **BenchmarkSet member count != metric sample size**: если выбрано 12 competitors, а совместимая CR есть у четырёх, `sample_size` CR равен 4, не 12. Правило действует для price, sales, CR, advertising intensity, Search Visibility factors, positions и других metrics. Search Visibility factor comparison использует только валидные competitor observations для того же query, cluster и совместимого observation context.
+
+Period/grain compatibility — строгий gate:
+
+- compatible period/grain → comparison may be calculated;
+- incompatible period/grain → comparison не рассчитывается как comparable и возвращает явное `INSUFFICIENT_DATA`, `PERIOD_MISMATCH` или feature-specific equivalent.
+
+Частичная совместимость сама по себе не разрешает расчёт с пониженным confidence. Любое aggregation/alignment, объявляющее разные исходные grains совместимыми, должно быть явно обосновано feature analytics spec и покрыто tests. Нельзя молча сопоставлять daily position с 28-day CR row-by-row, копировать query metric на cluster level, считать overlapping-but-different periods идентичными или заменять missing observation нулём.
+
+### 12.3. Чистота source history и воспроизводимость analytics
+
+Analytics MUST NOT mutate, repair, clamp, rewrite или «improve» source snapshots. Необычный source fact может привести к отклонению comparison, снижению confidence, warning или insufficient-data state, но остаётся неизменным вместе с provenance. Исправление source приходит только новой source revision по существующему revision contract; analytics никогда не производит «corrected source revision».
+
+Derived analytics не является source of truth, поэтому persistent result tables не создаются заранее ради гипотетической истории. Если result когда-либо materialized, persistently cached, explicitly saved или используется как reproducible historical result, должен определяться достаточный calculation context: source observation/revision inputs и provenance, где применимо; period/date; benchmark revision; analysis grain/dimensions; calculation/model version; sample size/confidence, где применимо. Изменение формулы не меняет source facts. Exact storage schema для saved results здесь не проектируется.
+
+### 12.4. Feature-specific analytics, не линейный pipeline
+
+```text
+                    Source Facts
+                         +
+              Curated Analytical Context
+                /        |          \
+               ↓         ↓           ↓
+        Core Benchmark  Search    Query Opportunity
+               │       Visibility       │
+               ↓                        │
+          Diagnostics                   │
+                                        ↓
+                                     Ramp-up
+```
+
+Это информационная схема, не exact module-call graph. Analytics modules могут быть sibling consumers source facts/context; один analytical result не обязан становиться source input другого модуля. Feature-specific semantic rules остаются внутри соответствующего analytics module.
+
+YAGNI запрещает заранее вводить универсальные `GenericBenchmarkEngine`, `GenericBenchmarkResult`, `GenericMetricBenchmarkRepository` или аналоги. Проверенные low-level median/quantile helpers можно переиспользовать после появления второго реального use case, но semantic comparison rules остаются feature-specific: product-level core benchmark, Search Visibility factors, advertising intensity и Query Opportunity positions имеют разные grain и semantics. Общая `BenchmarkSetRevision` не превращает их в один generic semantic engine.
+
+Advertising intensity показывает границы слоёв: turnover, total DRR и ordered units — source facts; estimated promotion spend `≈ turnover × total DRR` и advertising support per sold unit `= estimated promotion spend / ordered units` — derived metrics; benchmark сравнивает own derived value с совместимыми competitor derived values в текущей `BenchmarkSetRevision`. Более низкая intensity не автоматически «better»: интерпретация также зависит от position, popularity, traffic и sales/result.
+
+Query Opportunity — отдельный analytical module, не строка Generic Core Benchmark. Он комбинирует Query Demand, Query Quality, Visibility Gap и Position Stability и в будущем PR10 может использовать `QueryMetricSnapshot`, `SearchPositionSnapshot`, `BenchmarkSetRevision`/members и own product/query context. Market query CR характеризует market query intent/quality, а не CR competitor Product. Модуль не создаёт Opportunity Score 0–100; PR10 implementation здесь не проектируется.
+
 ## 13. MPStats position history
 
 До реализации Share of Top PR10 обязан проверить реальный contract истории позиций: порядок массива относительно дат, missing days, `null` semantics и business-date semantics. До подтверждения `null` означает unknown observation.
