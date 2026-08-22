@@ -351,6 +351,7 @@ The worktree must be clean, and HEAD must be the then-current `main` containing 
   ```python
   from typing import Annotated
 
+  from fastapi import FastAPI, HTTPException, Path, Query, Request
   from pydantic import (
       BaseModel,
       Field,
@@ -365,6 +366,7 @@ The worktree must be clean, and HEAD must be the then-current `main` containing 
       Field(gt=0),
   ]
   ```
+  Task 10 extends the existing FastAPI import to the exact line above; `Path` is required by the route annotations and must not be left implicit or imported from another module.
 - [ ] Add these exact request models:
   ```python
   class RelevantQueriesRequest(BaseModel):
@@ -388,8 +390,8 @@ The worktree must be clean, and HEAD must be the then-current `main` containing 
       token: SecretStr
       ozon_product_ids: list[StrictStr] = Field(min_length=1, max_length=500)
   ```
-  Add a focused `field_validator` for each token field that checks `1 <= len(value.get_secret_value()) <= 4096` Unicode characters with no trim or normalization.
-- [ ] Preserve the transport/domain boundary exactly. `RelevantQueriesRequest` has no unique-items validator: duplicates reach Task 9 and become 422 `RELEVANT_QUERY_SELECTION_INVALID`; its empty list is a valid clear. `BenchmarkRevisionRequest` has no `min_length=1` and no uniqueness validator: empty reaches 422 `BENCHMARK_EMPTY`, duplicates reach 422 `BENCHMARK_MEMBER_INVALID`. Pydantic checks only the manual SKU's string type; positive ASCII digits without leading zero remain Task 9 validation and map to `MANUAL_OZON_SKU_INVALID`. A focused preview-ID validator, where no local domain code exists, enforces unique canonical positive ASCII decimal strings and the model enforces 1–500 items. Wrong JSON types remain standard FastAPI 422 `detail`; add no global `RequestValidationError` handler.
+  Add a focused `field_validator` for each token field that checks `1 <= len(value.get_secret_value()) <= 4096` Unicode characters with no trim or normalization. At the transport boundary, validate both `MPStatsTestRequest.ozon_product_id` and every member of `MPStatsPreviewsRequest.ozon_product_ids` as canonical Ozon SKUs: the value must match ASCII `[1-9][0-9]*` exactly (non-empty positive decimal digits, with no leading zero, sign, whitespace, Unicode digits, trim, or normalization). The preview-list validator additionally rejects duplicate strings. These failures remain standard FastAPI 422 `detail`; they do not use `MANUAL_OZON_SKU_INVALID` or any source-error mapping.
+- [ ] Preserve the transport/domain boundary exactly. `RelevantQueriesRequest` has no unique-items validator: duplicates reach Task 9 and become 422 `RELEVANT_QUERY_SELECTION_INVALID`; its empty list is a valid clear. `BenchmarkRevisionRequest` has no `min_length=1` and no uniqueness validator: empty reaches 422 `BENCHMARK_EMPTY`, duplicates reach 422 `BENCHMARK_MEMBER_INVALID`. Pydantic checks only the manual SKU's string type; positive ASCII digits without leading zero remain Task 9 validation and map to `MANUAL_OZON_SKU_INVALID`. Focused MPStats probe/preview validators enforce the canonical transport rule above, and the preview validator also enforces uniqueness while the model enforces 1–500 items. Wrong JSON types and invalid MPStats transport SKUs remain standard FastAPI 422 `detail`; add no global `RequestValidationError` handler.
 - [ ] Add this exact local mapping (messages must match the spec byte-for-byte):
   ```python
   PR6_ERRORS = {
