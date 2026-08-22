@@ -108,11 +108,53 @@ The worktree must be clean, and HEAD must be the then-current `main` containing 
 
 **Interfaces:**
 - Consumes: `date`, `datetime`, `Decimal`, `Enum`, `Literal`.
-- Produces: every type used by Tasks 4–10.
+- Produces: every type used by Tasks 4–10, including the exact local Python exception contract consumed by Tasks 9 and 10.
 
-- [ ] Create `test_pr6_domain_types_are_frozen_and_enum_values_are_exact`; construct each DTO, assert mutation raises `FrozenInstanceError`, and assert exact enum values. Run `python -m pytest tests/test_benchmark_selection_repository.py::test_pr6_domain_types_are_frozen_and_enum_values_are_exact -q`; expected FAIL because the module is absent.
+- [ ] Create `test_pr6_domain_types_are_frozen_and_enum_values_are_exact`; construct each DTO, assert mutation raises `FrozenInstanceError`, assert exact enum values, and explicitly import and assert the exact class names below. Run `python -m pytest tests/test_benchmark_selection_repository.py::test_pr6_domain_types_are_frozen_and_enum_values_are_exact -q`; expected FAIL because the module is absent.
 - [ ] Add the spec-exact enums/dataclasses: `RelevantQueryReadiness`, `SourcePeriod`, `RelevantQueryOption`, `RelevantQuerySelection`, `RelevantQueryWriteResult`, `PhotoStatus`, `CandidateReadiness`, `BenchmarkCandidate`, `CandidatePage`, `ManualCandidateWriteResult`, `BenchmarkSet`, `BenchmarkMember`, `BenchmarkSetRevision`, `BenchmarkComposition`, `BenchmarkWriteKind`, `BenchmarkCompositionWriteResult`, `MPStatsProductPreview`, `MPStatsConnectionStatus`, and `MPStatsConnectionResult`. Preserve all field names/types/order from spec sections 5–8 and 11; use `@dataclass(frozen=True)` and `origin: Literal["SEARCH_VISIBILITY", "MANUAL"]`.
-- [ ] Add typed `MPStatsAuthError`, `MPStatsRateLimitError(retry_after_seconds: int | None)`, `MPStatsPendingError`, `MPStatsTimeoutError`, `MPStatsNetworkError`, `MPStatsMalformedResponseError`, and `MPStatsUpstreamError`; expose the frozen local error codes through focused domain exceptions without embedding HTTP.
+- [ ] Add this exact local marker/domain exception contract:
+  ```python
+  class BenchmarkSelectionError(Exception):
+      pass
+
+
+  class ProductNotOwnedError(BenchmarkSelectionError):
+      pass
+
+
+  class NoOwnQueryDataError(BenchmarkSelectionError):
+      pass
+
+
+  class RelevantQuerySelectionInvalidError(BenchmarkSelectionError):
+      pass
+
+
+  class RelevantQuerySelectionEmptyError(BenchmarkSelectionError):
+      pass
+
+
+  class ManualOzonSkuInvalidError(BenchmarkSelectionError):
+      pass
+
+
+  class OwnProductCannotBeCompetitorError(BenchmarkSelectionError):
+      pass
+
+
+  class BenchmarkEmptyError(BenchmarkSelectionError):
+      pass
+
+
+  class BenchmarkMemberInvalidError(BenchmarkSelectionError):
+      pass
+
+
+  class BenchmarkConcurrentWriteError(BenchmarkSelectionError):
+      pass
+  ```
+  Reuse, and do not redefine, `backend.domain.product.ProductNotFound`. The exact transport mapping is `ProductNotFound → PRODUCT_NOT_FOUND`, `ProductNotOwnedError → PRODUCT_NOT_OWNED`, `NoOwnQueryDataError → NO_OWN_QUERY_DATA`, `RelevantQuerySelectionInvalidError → RELEVANT_QUERY_SELECTION_INVALID`, `RelevantQuerySelectionEmptyError → RELEVANT_QUERY_SELECTION_EMPTY`, `ManualOzonSkuInvalidError → MANUAL_OZON_SKU_INVALID`, `OwnProductCannotBeCompetitorError → OWN_PRODUCT_CANNOT_BE_COMPETITOR`, `BenchmarkEmptyError → BENCHMARK_EMPTY`, `BenchmarkMemberInvalidError → BENCHMARK_MEMBER_INVALID`, and `BenchmarkConcurrentWriteError → BENCHMARK_CONCURRENT_WRITE`.
+- [ ] Keep local exceptions as marker/domain exceptions: no HTTP status, Russian message, raw SQL/upstream text, generic `ErrorCode` enum, or generic error framework. Separately add the typed source errors `MPStatsAuthError`, `MPStatsRateLimitError(retry_after_seconds: int | None)`, `MPStatsPendingError`, `MPStatsTimeoutError`, `MPStatsNetworkError`, `MPStatsMalformedResponseError`, and `MPStatsUpstreamError` exactly as the spec defines them.
 - [ ] Export the symbols through `backend/domain/__init__.py`; add no SQL, HTTP, Pydantic, or mutation logic.
 - [ ] Re-run the focused test, then `python -m pytest tests/test_observation_revision_convention.py tests/test_product_query_snapshot_repository.py tests/test_search_visibility_snapshot_repository.py -q`; expect PASS.
 - [ ] Commit with `git add backend/domain/benchmark_selection.py backend/domain/__init__.py tests/test_benchmark_selection_repository.py && git commit -m "feat(PR6): add benchmark selection domain"`.
@@ -213,35 +255,7 @@ The worktree must be clean, and HEAD must be the then-current `main` containing 
 - [ ] Re-run focused tests, then `python -m pytest tests/test_product_repository.py tests/test_ozon_products_api.py tests/test_ozon_search_visibility_import.py -q`; expect PASS.
 - [ ] Commit with `git add backend/persistence/repositories/products.py tests/test_product_repository.py && git commit -m "feat(PR6): harden manual Ozon product identity"`.
 
-### Task 8: Orchestrate Benchmark Selection in the Application
-
-**Files:**
-- Create: `backend/application/benchmark_selection.py`
-- Test: `tests/test_benchmark_selection_api.py`
-
-**Interfaces:**
-- Consumes: database path, connection helpers, `ProductRepository`, `BenchmarkSelectionRepository`, `MPStatsClient`.
-- Produces: the eight spec-exact `BenchmarkSelectionService` methods.
-
-- [ ] Add service-focused tests `test_service_rejects_missing_and_non_owned_products`, `test_service_uses_immediate_boundaries_for_all_three_writes`, `test_manual_add_checks_relevance_before_identity_mutation`, `test_benchmark_history_survives_relevance_clear_restore`, and `test_only_busy_locked_maps_to_concurrent_write`. The lifecycle test must save relevance → revision 1 → clear → read same history → prove candidate/manual/save blocked and no identity/revision created → restore → same unordered composition returns revision 1 `NO_CHANGE`.
-- [ ] Run `python -m pytest tests/test_benchmark_selection_api.py -k 'service' -q`; expected FAIL because service is absent.
-- [ ] Implement exact signatures:
-  ```python
-  get_relevant_queries(product_id: int) -> RelevantQuerySelection
-  replace_relevant_queries(product_id: int, search_query_ids: tuple[int, ...]) -> RelevantQueryWriteResult
-  get_candidates(product_id: int, *, limit: int, offset: int) -> CandidatePage
-  add_manual_candidate(product_id: int, ozon_product_id: str) -> ManualCandidateWriteResult
-  get_benchmark(product_id: int) -> BenchmarkComposition
-  save_benchmark(product_id: int, member_product_ids: tuple[int, ...]) -> BenchmarkCompositionWriteResult
-  enrich_mpstats_previews(token: SecretStr, ozon_product_ids: tuple[str, ...]) -> tuple[MPStatsProductPreview, ...]
-  test_mpstats(token: SecretStr, ozon_product_id: str) -> MPStatsConnectionResult
-  ```
-- [ ] Centralize owned Product lookup using repositories. Use normal `transaction` for reads, `immediate_transaction` for relevance/manual/benchmark writes; check non-empty relevance before manual identity mutation and benchmark save; within manual transaction find identity first then call the unchanged resolver only when absent. Build manual DTO with null context/zero counts/`MANUAL`.
-- [ ] Catch only SQLite errors whose code is `SQLITE_BUSY` or `SQLITE_LOCKED` around benchmark immediate acquisition/body and map them to `BENCHMARK_CONCURRENT_WRITE`; propagate unrelated operational failures. Add no raw SQL.
-- [ ] Re-run focused tests, then `python -m pytest tests/test_benchmark_selection_api.py tests/test_benchmark_selection_repository.py tests/test_product_repository.py -q`; expect PASS.
-- [ ] Commit with `git add backend/application/benchmark_selection.py tests/test_benchmark_selection_api.py && git commit -m "feat(PR6): add benchmark selection service"`.
-
-### Task 9: Add the MPStats Photo Adapter and Runtime Dependency
+### Task 8: Add the MPStats Photo Adapter and Runtime Dependency
 
 **Files:**
 - Create: `backend/sources/__init__.py`
@@ -252,7 +266,26 @@ The worktree must be clean, and HEAD must be the then-current `main` containing 
 
 **Interfaces:**
 - Consumes: `SecretStr`, injected `httpx.Client`, canonical unique Ozon IDs.
-- Produces: `MPStatsClient(client, *, base_url="https://mpstats.io", timeout=httpx.Timeout(15.0, connect=5.0))`, `get_ozon_product_previews(...)`, connection probe DTO/errors.
+- Produces exactly:
+  ```python
+  MPStatsClient(
+      client: httpx.Client,
+      *,
+      base_url: str = "https://mpstats.io",
+      timeout: httpx.Timeout = httpx.Timeout(15.0, connect=5.0),
+  )
+
+  get_ozon_product_previews(
+      token: SecretStr,
+      ids: tuple[str, ...],
+  ) -> tuple[MPStatsProductPreview, ...]
+
+  test_connection(
+      token: SecretStr,
+      ozon_product_id: str,
+  ) -> MPStatsConnectionResult
+  ```
+  `test_connection` is the exact probe boundary consumed by Task 9: it delegates to the same one-ID preview request and returns `AVAILABLE` for every valid 200, including empty/missing-photo data.
 
 - [ ] Write MockTransport tests named `test_mpstats_request_contract_and_ignored_fields`, `test_mpstats_chunks_at_100_and_preserves_caller_order`, `test_mpstats_empty_ids_make_no_request`, `test_mpstats_missing_thumb_and_id_are_missing`, `test_mpstats_rejects_malformed_response_shapes`, `test_mpstats_maps_every_http_status`, `test_mpstats_maps_timeout_and_network_errors`, and `test_mpstats_probe_accepts_valid_empty_data`. Assert POST/HTTPS/host/path, decoded one `ids=123,456`, empty body, only `X-Mpstats-TOKEN`, no redirects/retry/auth-token, ignored sentinel commercial fields, canonical numeric response IDs, safe `Retry-After` range, and exact typed mapping.
 - [ ] Run `python -m pytest tests/test_mpstats_source.py -q`; expected FAIL because source package/client is absent.
@@ -261,6 +294,47 @@ The worktree must be clean, and HEAD must be the then-current `main` containing 
 - [ ] Move the exact `httpx==0.28.1` pin into runtime requirements and remove only its inherited dev duplicate. Run `python -m pytest tests/test_mpstats_source.py tests/test_runtime_contract.py -q`; expect PASS.
 - [ ] Commit with `git add backend/sources requirements.txt requirements-dev.txt tests/test_mpstats_source.py && git commit -m "feat(PR6): add MPStats photo source"`.
 
+### Task 9: Orchestrate Benchmark Selection in the Application
+
+**Files:**
+- Create: `backend/application/benchmark_selection.py`
+- Test: `tests/test_benchmark_selection_api.py`
+
+**Interfaces:**
+- Consumes: database path, connection helpers, `ProductRepository`, `BenchmarkSelectionRepository`, and Task 8 `MPStatsClient`.
+- Produces: the eight spec-exact `BenchmarkSelectionService` methods consumed by Task 10.
+
+- [ ] Add service-focused tests `test_service_rejects_missing_and_non_owned_products`, `test_service_uses_immediate_boundaries_for_all_three_writes`, `test_manual_add_checks_relevance_before_identity_mutation`, `test_benchmark_history_survives_relevance_clear_restore`, and `test_only_busy_locked_maps_to_concurrent_write`. The lifecycle test must save relevance → revision 1 → clear → read same history → prove candidate/manual/save blocked and no identity/revision created → restore → same unordered composition returns revision 1 `NO_CHANGE`.
+- [ ] Run `python -m pytest tests/test_benchmark_selection_api.py -k 'service' -q`; expected FAIL because service is absent.
+- [ ] Implement this exact constructor boundary and no generic dependency container:
+  ```python
+  class BenchmarkSelectionService:
+      def __init__(
+          self,
+          *,
+          db_path: Path,
+          mpstats_client: MPStatsClient | None = None,
+      ) -> None:
+          ...
+  ```
+  Local Product/relevance/benchmark methods require no remote source. MPStats methods require the injected Task 8 client; calling a source method without it is an internal wiring error, not a user-facing PR6 domain error.
+- [ ] Implement these exact public signatures:
+  ```python
+  get_relevant_queries(product_id: int) -> RelevantQuerySelection
+  replace_relevant_queries(product_id: int, search_query_ids: tuple[int, ...]) -> RelevantQueryWriteResult
+  get_candidates(product_id: int, *, limit: int, offset: int) -> CandidatePage
+  add_manual_candidate(product_id: int, ozon_product_id: str) -> ManualCandidateWriteResult
+  get_benchmark(product_id: int) -> BenchmarkComposition
+  save_benchmark(product_id: int, member_product_ids: tuple[int, ...]) -> BenchmarkCompositionWriteResult
+  enrich_mpstats_previews(token: SecretStr, ozon_product_ids: tuple[str, ...]) -> tuple[MPStatsProductPreview, ...]
+  test_mpstats(token: SecretStr, ozon_product_id: str) -> MPStatsConnectionResult
+  ```
+  The two MPStats methods consume Task 8 `get_ozon_product_previews`/`test_connection` rather than designing source behavior.
+- [ ] Centralize owned Product lookup using repositories. Use normal `transaction` for reads, `immediate_transaction` for relevance/manual/benchmark writes; check non-empty relevance before manual identity mutation and benchmark save; within manual transaction find identity first then call the unchanged resolver only when absent. Build manual DTO with null context/zero counts/`MANUAL`.
+- [ ] Raise the exact Task 2 local exception classes, reuse `ProductNotFound`, and never use string error codes in the service. Catch only SQLite errors whose code is `SQLITE_BUSY` or `SQLITE_LOCKED` around benchmark immediate acquisition/body and map them to `BenchmarkConcurrentWriteError`; propagate unrelated operational failures. Add no raw SQL.
+- [ ] Re-run focused tests, then `python -m pytest tests/test_benchmark_selection_api.py tests/test_benchmark_selection_repository.py tests/test_product_repository.py tests/test_mpstats_source.py -q`; expect PASS.
+- [ ] Commit with `git add backend/application/benchmark_selection.py tests/test_benchmark_selection_api.py && git commit -m "feat(PR6): add benchmark selection service"`.
+
 ### Task 10: Expose Thin PR6 FastAPI Endpoints
 
 **Files:**
@@ -268,14 +342,137 @@ The worktree must be clean, and HEAD must be the then-current `main` containing 
 - Modify: `tests/test_benchmark_selection_api.py`
 
 **Interfaces:**
-- Consumes: all service methods and typed domain/source failures.
+- Consumes: Task 9 `BenchmarkSelectionService` methods and typed Task 2 domain/source failures.
 - Produces: eight exact REST endpoints from spec section 12.
 
-- [ ] Add real TestClient tests `test_relevant_query_get_put_contract`, `test_candidate_get_and_manual_post_contract`, `test_benchmark_get_post_and_no_change_statuses`, `test_mpstats_test_and_preview_contract`, `test_transport_422_detail_is_distinct_from_domain_envelope`, `test_all_pr6_error_codes_and_retry_after_mapping`, `test_secret_sentinel_absent_from_response_database_and_logs`, and `test_manual_identity_and_membership_do_not_enter_products_catalog`. Cover path/query bounds, strict JSON IDs, maxima 10,000/1,000/500, duplicate semantics, 200/201 choices, decimal/datetime strings, and every frozen source message.
+- [ ] Add real TestClient tests `test_relevant_query_get_put_contract`, `test_candidate_get_and_manual_post_contract`, `test_benchmark_get_post_and_no_change_statuses`, `test_mpstats_test_and_preview_contract`, `test_relevance_duplicate_ids_are_domain_422_not_fastapi_detail`, `test_empty_relevance_list_is_valid_clear`, `test_empty_benchmark_is_domain_benchmark_empty`, `test_duplicate_benchmark_member_is_domain_member_invalid`, `test_manual_invalid_sku_is_domain_error_not_transport_detail`, `test_wrong_json_id_type_is_standard_fastapi_422_detail`, `test_every_local_error_has_exact_frozen_message`, `test_mpstats_rate_limit_has_safe_retry_after_only`, `test_secret_sentinel_never_enters_response`, and `test_manual_identity_and_membership_do_not_enter_products_catalog`. Parameterize the exact-message test over all ten local errors. Cover path/query bounds, strict JSON IDs, maxima 10,000/1,000/500, 200/201 choices, decimal/datetime strings, and every frozen source message.
 - [ ] Run `python -m pytest tests/test_benchmark_selection_api.py -q`; expected FAIL with route 404/model absence.
-- [ ] Add Pydantic request models with strict positive integer collections and uniqueness/size constraints: `RelevantQueriesRequest(search_query_ids)`, `ManualCandidateRequest(ozon_product_id)`, `BenchmarkRevisionRequest(member_product_ids)`, `MPStatsTestRequest(token: SecretStr, ozon_product_id)`, `MPStatsPreviewsRequest(token: SecretStr, ozon_product_ids)`. Token length is 1–4096 with no transformation; canonical SKU domain errors remain the SCOZ envelope.
-- [ ] Add thin route skeletons for `GET/PUT /api/products/{product_id}/relevant-queries`, `GET /benchmark-candidates`, `POST /benchmark-candidates/manual`, `GET /benchmark`, `POST /benchmark/revisions`, `POST /api/sources/mpstats/test`, and `POST /api/sources/mpstats/ozon-product-previews`. Each route only calls the exact service method, serializes dataclasses, selects frozen status, and delegates typed mapping; do not add a global validation handler.
-- [ ] Map local/source errors to exact section 12–13 status/code/Russian message envelope. Emit local `Retry-After` and JSON `retry_after_seconds` only for safely parsed rate limits; never forward body/header/token/exception text.
+- [ ] Keep request models beside routes in `backend/main.py` (no transport module), using this exact import/type pattern:
+  ```python
+  from typing import Annotated
+
+  from pydantic import (
+      BaseModel,
+      Field,
+      SecretStr,
+      StrictInt,
+      StrictStr,
+      field_validator,
+  )
+
+  PositiveStrictInt = Annotated[
+      StrictInt,
+      Field(gt=0),
+  ]
+  ```
+- [ ] Add these exact request models:
+  ```python
+  class RelevantQueriesRequest(BaseModel):
+      search_query_ids: list[PositiveStrictInt] = Field(max_length=10_000)
+
+
+  class ManualCandidateRequest(BaseModel):
+      ozon_product_id: StrictStr
+
+
+  class BenchmarkRevisionRequest(BaseModel):
+      member_product_ids: list[PositiveStrictInt] = Field(max_length=1_000)
+
+
+  class MPStatsTestRequest(BaseModel):
+      token: SecretStr
+      ozon_product_id: StrictStr
+
+
+  class MPStatsPreviewsRequest(BaseModel):
+      token: SecretStr
+      ozon_product_ids: list[StrictStr] = Field(min_length=1, max_length=500)
+  ```
+  Add a focused `field_validator` for each token field that checks `1 <= len(value.get_secret_value()) <= 4096` Unicode characters with no trim or normalization.
+- [ ] Preserve the transport/domain boundary exactly. `RelevantQueriesRequest` has no unique-items validator: duplicates reach Task 9 and become 422 `RELEVANT_QUERY_SELECTION_INVALID`; its empty list is a valid clear. `BenchmarkRevisionRequest` has no `min_length=1` and no uniqueness validator: empty reaches 422 `BENCHMARK_EMPTY`, duplicates reach 422 `BENCHMARK_MEMBER_INVALID`. Pydantic checks only the manual SKU's string type; positive ASCII digits without leading zero remain Task 9 validation and map to `MANUAL_OZON_SKU_INVALID`. A focused preview-ID validator, where no local domain code exists, enforces unique canonical positive ASCII decimal strings and the model enforces 1–500 items. Wrong JSON types remain standard FastAPI 422 `detail`; add no global `RequestValidationError` handler.
+- [ ] Add this exact local mapping (messages must match the spec byte-for-byte):
+  ```python
+  PR6_ERRORS = {
+      ProductNotFound: (404, "PRODUCT_NOT_FOUND", "Товар не найден."),
+      ProductNotOwnedError: (409, "PRODUCT_NOT_OWNED", "Выберите свой товар из каталога."),
+      NoOwnQueryDataError: (
+          409,
+          "NO_OWN_QUERY_DATA",
+          "Нет данных по поисковым запросам этого товара. Импортируйте отчёт «Запросы моего товара».",
+      ),
+      RelevantQuerySelectionInvalidError: (
+          422,
+          "RELEVANT_QUERY_SELECTION_INVALID",
+          "Выбран некорректный набор поисковых запросов. Обновите список и повторите.",
+      ),
+      RelevantQuerySelectionEmptyError: (
+          409,
+          "RELEVANT_QUERY_SELECTION_EMPTY",
+          "Сначала выберите и сохраните хотя бы один релевантный запрос.",
+      ),
+      ManualOzonSkuInvalidError: (
+          422,
+          "MANUAL_OZON_SKU_INVALID",
+          "Введите корректный числовой SKU Ozon без ведущих нулей.",
+      ),
+      OwnProductCannotBeCompetitorError: (
+          409,
+          "OWN_PRODUCT_CANNOT_BE_COMPETITOR",
+          "Товар не может быть конкурентом самому себе.",
+      ),
+      BenchmarkEmptyError: (422, "BENCHMARK_EMPTY", "Выберите хотя бы одного конкурента."),
+      BenchmarkMemberInvalidError: (
+          422,
+          "BENCHMARK_MEMBER_INVALID",
+          "Состав конкурентов содержит недоступный или некорректный товар. Обновите список и повторите.",
+      ),
+      BenchmarkConcurrentWriteError: (
+          409,
+          "BENCHMARK_CONCURRENT_WRITE",
+          "Состав конкурентов изменился параллельно. Обновите данные и повторите.",
+      ),
+  }
+
+  PR6_ERROR_TYPES = tuple(PR6_ERRORS)
+
+
+  def _pr6_error_response(error: Exception) -> JSONResponse:
+      status, code, message = PR6_ERRORS[type(error)]
+      return JSONResponse(
+          status_code=status,
+          content={"error": {"code": code, "message": message}},
+      )
+  ```
+  Keep Russian messages out of exception classes and add no generic global error framework.
+- [ ] Add a separate `_mpstats_error_response(error: Exception) -> JSONResponse` for the exact spec section 12.4 source messages. For `MPStatsRateLimitError`, add JSON `retry_after_seconds` only when safely parsed, emit response `Retry-After` only when non-null, and never forward upstream body/header/token/error text.
+- [ ] Add all eight thin routes. Use this complete local route pattern; the other local routes follow it exactly and contain no business rules:
+  ```python
+  @app.put("/api/products/{product_id}/relevant-queries")
+  def put_relevant_queries(
+      product_id: Annotated[int, Path(gt=0)],
+      request: RelevantQueriesRequest,
+  ):
+      service = BenchmarkSelectionService(db_path=resolve_db_path())
+      try:
+          result = service.replace_relevant_queries(
+              product_id,
+              tuple(request.search_query_ids),
+          )
+      except PR6_ERROR_TYPES as error:
+          return _pr6_error_response(error)
+      return _json(result)
+  ```
+- [ ] Wire each MPStats route locally, without FastAPI dependency infrastructure:
+  ```python
+  with httpx.Client(follow_redirects=False) as client:
+      source = MPStatsClient(client)
+      service = BenchmarkSelectionService(
+          db_path=resolve_db_path(),
+          mpstats_client=source,
+      )
+      ...
+  ```
+  Local endpoints do not create an HTTP client; this source construction is wiring, not business logic.
 - [ ] Run focused tests, then `python -m pytest tests/test_backend.py tests/test_ozon_products_api.py tests/test_ozon_query_metrics_api.py tests/test_ozon_search_visibility_api.py tests/test_benchmark_selection_api.py -q`; expect PASS.
 - [ ] Commit with `git add backend/main.py tests/test_benchmark_selection_api.py && git commit -m "feat(PR6): add benchmark selection API"`.
 
@@ -316,10 +513,24 @@ The worktree must be clean, and HEAD must be the then-current `main` containing 
 - Consumes: Products catalog and six local relevance/candidate/benchmark endpoints; `NOT_REQUESTED` photo state.
 - Produces: in-page owned-Product Competitors workspace with saved selection/revision UI.
 
-- [ ] Add contract tests `test_only_owned_products_expose_competitor_entry`, `test_competitor_workspace_has_active_context_and_relevance_states`, `test_candidate_and_selected_panels_have_exact_controls`, `test_stale_no_evidence_error_and_revision_feedback_are_renderable`, and `test_frontend_uses_committed_classic_assets_without_framework`. Assert stable IDs, Russian labels, aria-live/busy/disabled hooks, placeholder, pagination/manual/save controls, no score/PR7 screen.
+- [ ] Add contract tests `test_only_owned_products_expose_competitor_entry`, `test_competitor_workspace_has_active_context_and_relevance_states`, `test_candidate_and_selected_panels_have_exact_controls`, `test_stale_no_evidence_error_and_revision_feedback_are_renderable`, and `test_frontend_uses_committed_classic_assets_without_framework`. Assert the exact IDs and function names below, Russian labels, aria-live/busy/disabled hooks, placeholder, pagination/manual/save controls, and no score/PR7 screen.
 - [ ] Run `python -m pytest tests/test_frontend_contract.py -q`; expected FAIL because PR6 markup/wiring is absent.
 - [ ] Extend product cards with `Выбрать конкурентов` only when `is_owned`; open a view that retains active Product title/Ozon ID. Fetch relevance; render latest period and exact metric columns, selected count, stale `Нет в свежем периоде`, loading skeleton, `NO_OWN_QUERY_DATA` Data link, zero-selection prompt, preserved rows on error, and PUT save/no-change feedback.
-- [ ] Gate competitor controls on persisted non-empty relevance. Fetch benchmark and paged candidates; maintain selected Product IDs as an unordered UI set; render 65–70/30–35 candidate/selected columns, contextual fields/counts/time, placeholders, current flags, manual canonical SKU add, removals, empty validation, revision created/changed/`Состав не изменился — revision N` feedback.
+- [ ] Freeze the single in-memory state shape; do not use `localStorage` or `sessionStorage`:
+  ```javascript
+  const competitorState = {
+    activeProduct: null,
+    relevance: null,
+    candidatePage: null,
+    benchmark: null,
+    selectedProductIds: new Set(),
+    candidateOffset: 0,
+  };
+  ```
+- [ ] Implement the frozen function boundaries `openCompetitorWorkspace(product)`, `loadRelevantQueries(productId)`, `renderRelevantQueries(selection)`, `saveRelevantQueries(productId)`, `loadBenchmark(productId)`, `loadCandidates(productId, offset)`, `renderCandidates(page)`, `addManualCandidate(productId)`, `renderSelectedBenchmark()`, and `saveBenchmark(productId)`.
+- [ ] Add and contract-test these exact stable DOM IDs: `competitors-workspace`, `competitors-context`, `relevant-queries-panel`, `relevant-queries-status`, `relevant-queries-table`, `relevant-queries-save`, `benchmark-candidates-panel`, `benchmark-candidates-status`, `benchmark-candidates-list`, `benchmark-candidates-prev`, `benchmark-candidates-next`, `benchmark-selected-panel`, `benchmark-selected-list`, `manual-ozon-product-id`, `manual-candidate-add`, `benchmark-save`, and `benchmark-save-status`.
+- [ ] Gate candidate/manual/save controls on persisted non-empty relevance. `selectedProductIds` is an unordered `Set`; `candidateOffset` is the only page-offset store. A relevance-save failure preserves the prior rendered state; a candidate-fetch failure does not clear benchmark selection; photo state never controls membership validity; and each pending request disables duplicate submission. Changing the active Product resets all `competitorState` fields before loading the new context.
+- [ ] Fetch benchmark and paged candidates; render 65–70/30–35 candidate/selected columns, contextual fields/counts/time, placeholders, current flags, manual canonical SKU add, removals, empty validation, revision created/changed/`Состав не изменился — revision N` feedback.
 - [ ] Use existing visual tokens/cards/controls/chips/focus styles and stable known layouts; photo failure only changes placeholder. Add no global navigation, framework/build/npm, business scoring, credentials UI, or MPStats commercial fields.
 - [ ] Run `node --check frontend/assets/js/app.js && python -m pytest tests/test_frontend_contract.py tests/test_ozon_products_api.py -q`; expect PASS.
 - [ ] Commit with `git add frontend/index.html frontend/assets/js/app.js frontend/assets/css/app.css tests/test_frontend_contract.py && git commit -m "feat(PR6): add competitor selection UI"`.
@@ -334,13 +545,19 @@ The worktree must be clean, and HEAD must be the then-current `main` containing 
 
 **Interfaces:**
 - Consumes: `ScozKeystore`, MPStats test/preview endpoints, loaded candidates/catalog.
-- Produces: memory-only `credentialState = { mpstats: { token } } | null`, Settings → Sources card, transient previews and Lock.
+- Produces: Settings → Sources card, transient previews and Lock, with exact memory-only state:
+  ```javascript
+  let credentialState = null;
+  ```
+  Its only allowed non-null shape is `{ mpstats: { token: "..." } }`.
 
-- [ ] Add `test_settings_source_controls_and_memory_only_state`, `test_credentials_never_use_browser_persistence_or_urls`, `test_unlock_failure_preserves_old_state_and_clears_password`, `test_save_requires_matching_confirmation`, and `test_lock_clears_credentials_inputs_status_and_preview_urls`. Assert absence of `localStorage`, `sessionStorage`, `indexedDB`, `document.cookie`, token query construction, backend keystore endpoints, and visible token rendering.
+- [ ] Add `test_settings_source_controls_and_memory_only_state`, `test_credentials_never_use_browser_persistence_or_urls`, `test_unlock_failure_preserves_old_state_and_clears_password`, `test_save_requires_matching_confirmation`, and `test_lock_clears_credentials_inputs_status_and_preview_urls`. Assert the exact IDs/function names below and absence of `localStorage`, `sessionStorage`, `indexedDB`, `document.cookie`, token query construction, backend keystore endpoints, and visible token rendering.
 - [ ] Run `python -m pytest tests/test_frontend_contract.py -q`; expected FAIL because Settings and credential state are absent.
-- [ ] Replace Settings empty state with password token, numeric probe, test, status, encrypted save, file/open, password, save-only confirmation, and Lock controls. Prefill probe from numerically smallest catalog Ozon ID; use busy/aria-live and frozen source messages.
+- [ ] Replace Settings empty state with controls having these exact stable IDs: `mpstats-token`, `mpstats-probe-sku`, `mpstats-test`, `mpstats-status`, `mpstats-save-password`, `mpstats-save-password-confirm`, `mpstats-save-keystore`, `mpstats-keystore-file`, `mpstats-open-password`, `mpstats-open-keystore`, and `mpstats-lock`. Prefill the probe from the numerically smallest catalog Ozon ID; use busy/aria-live and frozen source messages.
+- [ ] Implement the frozen function boundaries `testMpstatsSource()`, `loadMpstatsPhotos()`, `saveMpstatsKeystore()`, `openMpstatsKeystore()`, and `lockCredentials()`.
 - [ ] Manual entry validates non-empty token then copies it into `credentialState`. Test/photo POST the token only in same-origin JSON body. Preview results update only photo state/URL in request order; source/image failures preserve candidate identities, selection, and local cards.
-- [ ] Open reads one local file, parses/decrypts, replaces state only after full success, clears password/file inputs, never displays token; failure preserves old state. Save requires memory token and exact password confirmation, downloads through keystore, clears passwords but keeps state. Lock nulls state; clears token/password/confirmation/file/probe-dependent transient statuses and all preview URLs/card photo state.
+- [ ] Open reads one local file, parses/decrypts/validates fully, and only then replaces `credentialState`; failure preserves the previous state. Test-source failure does not clear a valid in-memory token. Preview failure preserves the candidate page, selection, and benchmark. Save requires the in-memory token and exact password confirmation; mismatch performs no encryption/download and leaves state unchanged. A successful save downloads through the keystore, clears passwords, and keeps state.
+- [ ] `lockCredentials()` sets `credentialState = null`; clears token input, save password, save confirmation, file input, open password, MPStats status, and every transient photo URL/status. It must not change active Product identity, relevant-query selection, candidate identities, benchmark composition, or the saved Benchmark revision.
 - [ ] Run `node --check frontend/assets/js/app.js && node --check frontend/assets/js/keystore.js && node tests/keystore_contract.mjs && python -m pytest tests/test_frontend_contract.py -q`; expect PASS.
 - [ ] Commit with `git add frontend/index.html frontend/assets/js/app.js frontend/assets/css/app.css tests/test_frontend_contract.py && git commit -m "feat(PR6): add MPStats source settings"`.
 
@@ -353,28 +570,48 @@ The worktree must be clean, and HEAD must be the then-current `main` containing 
 
 **Interfaces:**
 - Consumes: complete PR6 backend, committed frontend, Node keystore contract, existing portable launcher.
-- Produces: authoritative Linux/Python/Node checks and Windows Full local-only smoke coverage.
+- Produces: Python/Node contract verification plus authoritative Windows portable integration through the existing GitHub Actions Windows job.
 
 - [ ] Add a failing contract assertion `test_ci_runs_both_js_checks_and_keystore_contract_without_npm`; assert exact commands. Extend Windows Full smoke with migration 005 health, served `keystore.js`, local relevant-query/benchmark state/error probes using synthetic SQLite/local TestClient-compatible data, and UI markers; retain every existing scenario and make no MPStats network request.
 - [ ] Run `python -m pytest tests/test_frontend_contract.py -q`; expected before CI edit: FAIL because new CI commands are absent. Update CI to run `python -m pytest -q`, both `node --check` commands, `node tests/keystore_contract.mjs`, and existing Windows `-Mode Full`, with no npm.
-- [ ] Run the fresh full verification gate:
+- [ ] Run the available fresh verification gates, separated by execution environment.
+
+  **A. Codex / POSIX shell**
   ```bash
   python -m pytest -q
   node --check frontend/assets/js/app.js
   node --check frontend/assets/js/keystore.js
   node tests/keystore_contract.mjs
-  powershell.exe \
-    -NoLogo \
-    -NoProfile \
-    -ExecutionPolicy Bypass \
-    -File tests\\windows_smoke.ps1 \
-    -Mode Full
-  rg -n "localStorage|sessionStorage|indexedDB|document\\.cookie|auth-token|token=.*fetch|scoz_credentials" frontend backend tests --glob '!tests/keystore_contract.mjs'
+  rg -n \
+    "localStorage|sessionStorage|indexedDB|document\\.cookie|auth-token|token=.*fetch|scoz_credentials" \
+    frontend backend tests \
+    --glob '!tests/keystore_contract.mjs'
   git diff --check
   git status --short
   ```
-  Expected: all behavioral/syntax/smoke checks PASS; grep output contains only explicit prohibitions, safe filename/UI wiring, or test assertions and is manually classified line-by-line—never credential persistence or URL construction. The grep supplements rather than replaces tests.
-- [ ] Review all 23 spec sections: migration, query universe/stale/current revisions, candidate time/dedupe/readiness/ties, manual/catalog, stable set/immutable/NO_CHANGE/clear-restore/concurrency, MPStats request/status/probe/dependency, exact REST/error split, crypto/transience/Lock/UI states, CI/Windows, and PR7 handoff. Confirm class fields/signatures/JSON keys/error codes match Tasks 2/4/8/10 and no PR7 scope exists.
+  The scan may contain only explicit prohibitions, safe filename/UI wiring, or test assertions and is manually classified line-by-line—never credential persistence or URL construction. It supplements rather than replaces tests.
+
+  **B. Windows PowerShell**
+  ```powershell
+  powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File tests\windows_smoke.ps1 -Mode Full
+  ```
+  If the current Codex environment does not provide `powershell.exe`, this is an environment limitation, not a local implementation failure.
+
+  **C. GitHub Actions**
+
+  The existing Windows workflow MUST pass after push. Windows Full smoke is the authoritative portable integration gate. Do not claim merge-ready until fresh exact-head GitHub Actions succeeds; do not add a Linux CI job.
+- [ ] Perform the final type-consistency review:
+  - [ ] Tasks exactly 1..14.
+  - [ ] Task 8 creates `MPStatsClient`.
+  - [ ] Task 9 consumes Task 8 `MPStatsClient`.
+  - [ ] Task 10 consumes Task 9 `BenchmarkSelectionService`.
+  - [ ] Every local exception used in Tasks 9/10 exists in Task 2; `ProductNotFound` is reused.
+  - [ ] No local exception stores HTTP/message, and local REST messages exactly match the spec.
+  - [ ] FastAPI transport 422 remains standard `detail`; relevant-query duplicates remain a domain error and empty relevance remains a valid clear.
+  - [ ] Empty benchmark reaches `BENCHMARK_EMPTY`; benchmark duplicates reach `BENCHMARK_MEMBER_INVALID`; invalid manual SKU reaches `MANUAL_OZON_SKU_INVALID`.
+  - [ ] Tasks 12/13 use the exact DOM IDs and frozen function names; Lock does not change local analytical context.
+  - [ ] No PR7 scope or generic HTTP/source/error framework exists, and CI wording matches the Windows job.
+- [ ] Review all 23 spec sections: migration, query universe/stale/current revisions, candidate time/dedupe/readiness/ties, manual/catalog, stable set/immutable/NO_CHANGE/clear-restore/concurrency, MPStats request/status/probe/dependency, exact REST/error split, crypto/transience/Lock/UI states, CI/Windows, and PR7 handoff. Confirm class fields/signatures/JSON keys/error codes match Tasks 2/4/9/10 and no PR7 scope exists.
 - [ ] Commit with `git add .github/workflows/ci.yml tests/windows_smoke.ps1 tests/test_frontend_contract.py && git commit -m "test(PR6): complete portable integration"`.
 
 ## Completion and Handoff
