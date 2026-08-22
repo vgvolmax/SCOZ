@@ -27,7 +27,7 @@ The canonical flow is fixed:
 6. save a non-empty unordered composition as an immutable `BenchmarkSetRevision`;
 7. manage the MPStats token in Settings → Sources by manual entry, test, encrypted download, encrypted-file open, and Lock.
 
-## Current main baseline
+## 2. Current main baseline
 
 Only these existing interfaces constrain PR6:
 
@@ -229,11 +229,11 @@ class CandidatePage:
 
 Local candidate GET always returns `photo_status=NOT_REQUESTED` and `photo_url=null`. A successful MPStats preview with a photo returns `AVAILABLE`; a successful response with no usable photo returns `MISSING`. Source-level failures remain typed source errors rather than fabricated per-item photo states. A browser image-load failure is a transient UI placeholder/error state, not a backend `PhotoStatus`. A manual candidate without local evidence has null contextual fields, zero counts, and null best position. Brand is absent because no approved local candidate source supplies it. MPStats `name`, `brand`, `seller`, sales, revenue, and all other non-photo fields are ignored.
 
-Non-empty `items` yields `readiness=READY`. Zero candidate evidence yields HTTP 200 with an empty page and `readiness=NO_CANDIDATE_EVIDENCE`; this is not an error and manual add remains available. Empty relevant-query selection remains the separate 409 `RELEVANT_QUERY_SELECTION_EMPTY` domain error.
+`readiness` is based on the unpaginated `total`, not the current page's `items`: `total > 0` yields `readiness=READY`, including when an out-of-range offset produces an empty page. `total == 0` yields HTTP 200 with an empty page and `readiness=NO_CANDIDATE_EVIDENCE`; this is not an error and manual add remains available. Empty relevant-query selection remains the separate 409 `RELEVANT_QUERY_SELECTION_EMPTY` domain error.
 
 ## 7. Manual competitor identity flow
 
-The manual request accepts `ozon_product_id` as a JSON string matching `^[0-9]+$`; leading zeroes are rejected by requiring `str(int(value)) == value`, and zero is rejected. This is the canonical numeric representation passed to the existing `ProductRepository.resolve_or_create_ozon_product()`; implementation also tightens that repository method to apply this same canonical rule so there is only one resolver and validator.
+The manual request requires a persisted non-empty relevant-query selection for the active own Product; otherwise it returns `RELEVANT_QUERY_SELECTION_EMPTY` (409) before identity lookup or creation. It accepts `ozon_product_id` as a JSON string matching `^[0-9]+$`; leading zeroes are rejected by requiring `str(int(value)) == value`, and zero is rejected. This is the canonical numeric representation passed to the existing `ProductRepository.resolve_or_create_ozon_product()`; implementation also tightens that repository method to apply this same canonical rule so there is only one resolver and validator.
 
 Inside one `immediate_transaction`, the service validates the owned Product and canonical Ozon ID, then calls `find_by_external_identity(...)`. If found, it reuses that Product with `created=false`; otherwise it calls the existing `ProductRepository.resolve_or_create_ozon_product(...)`, which continues to return `Product`, and reports `created=true`. The resolver may tighten its canonical validation to reject zero, leading zeros, and nondigits, but its public return signature MUST NOT change. The service rejects only resolution to the active own Product; another Product with `is_owned=true` remains a valid comparator. It creates neither a `ProductSnapshot`, relevance row, candidate history, nor benchmark revision. Photo lookup remains a separate request and failure never rolls back the identity.
 
@@ -292,7 +292,7 @@ class BenchmarkCompositionWriteResult:
 
 A BenchmarkSet is the stable container uniquely owned by one own Product. Members are ordinary Products and their collection is an unordered set. The first non-empty save creates revision 1. A different set creates `current revision + 1`. Saving the exact same set in any order returns the current revision and `kind="NO_CHANGE"`; no row is inserted. Old revisions and memberships are immutable. Member output is sorted by numeric Ozon ID then Product ID.
 
-An empty member set is invalid and returns `BENCHMARK_EMPTY` (422); it creates no BenchmarkSet. Every member must exist, have exactly one canonical Ozon external identity, and differ from the active own Product; otherwise the complete write returns `BENCHMARK_MEMBER_INVALID` (422). Another Product with `is_owned=true` may be a member when the user considers it a direct comparator for the active own Product. Membership never changes ownership and does not require Search Visibility evidence, a ProductSnapshot, or a photo. Candidate derivation likewise excludes only the active own Product, not every owned Product.
+A benchmark revision save requires a persisted non-empty relevant-query selection for the active own Product; otherwise it returns `RELEVANT_QUERY_SELECTION_EMPTY` (409) before creating a BenchmarkSet or revision. An empty member set is invalid and returns `BENCHMARK_EMPTY` (422); it creates no BenchmarkSet. Every member must exist, have exactly one canonical Ozon external identity, and differ from the active own Product; otherwise the complete write returns `BENCHMARK_MEMBER_INVALID` (422). Another Product with `is_owned=true` may be a member when the user considers it a direct comparator for the active own Product. Membership never changes ownership and does not require Search Visibility evidence, a ProductSnapshot, or a photo. Candidate derivation likewise excludes only the active own Product, not every owned Product.
 
 The application owns the transaction boundary and uses `immediate_transaction` around BenchmarkSet get/create, current revision read, normalized member-set comparison, next revision insert, and all member inserts. `BEGIN IMMEDIATE` serializes local SQLite writers: a second writer waits according to the connection timeout, then reads the committed current state and returns `NO_CHANGE` for the same set or writes `current revision + 1` for a different set. If acquiring the immediate transaction ends with an actual SQLite BUSY/LOCKED condition, the application maps it to 409 `BENCHMARK_CONCURRENT_WRITE`. Other SQLite failures, including unrelated `OperationalError` instances, MUST NOT be mislabeled as concurrency. There is no retry framework, repository reopen/retry loop, distributed lock, or generic optimistic-lock subsystem. UNIQUE constraints remain final invariant protection, and no half revision can commit.
 
@@ -379,6 +379,13 @@ class MPStatsProductPreview:
     ozon_product_id: str
     photo_status: PhotoStatus
     photo_url: str | None
+
+class MPStatsConnectionStatus(str, Enum):
+    AVAILABLE = "AVAILABLE"
+
+@dataclass(frozen=True)
+class MPStatsConnectionResult:
+    status: MPStatsConnectionStatus
 ```
 
 A requested ID absent from valid `data`, or present with null/empty-string `thumb`, returns `MISSING`; a non-empty thumbnail must be a string and an approved absolute `https://` photo URL under the PR6 security rule or the response is malformed. Invalid item/id/thumb types are malformed. URLs are transient response data and are never written to SQLite, files, or logs.
@@ -447,7 +454,7 @@ Path and query values are text on the wire and are normally parsed by FastAPI/Py
 
 - Request: `{"ozon_product_id":"123456789"}`.
 - 200 for reused identity or 201 for newly created identity: `{"created":true|false,"candidate":<candidate>}`.
-- Errors: 404 `PRODUCT_NOT_FOUND`; 409 `PRODUCT_NOT_OWNED`; 409 `OWN_PRODUCT_CANNOT_BE_COMPETITOR`; 422 `MANUAL_OZON_SKU_INVALID`.
+- Errors: 404 `PRODUCT_NOT_FOUND`; 409 `PRODUCT_NOT_OWNED`; 409 `RELEVANT_QUERY_SELECTION_EMPTY`; 409 `OWN_PRODUCT_CANNOT_BE_COMPETITOR`; 422 `MANUAL_OZON_SKU_INVALID`.
 - Transaction: one application-owned `immediate_transaction` for identity resolve/create; no benchmark write and no remote call.
 
 ### 12.3 Benchmark
@@ -463,7 +470,7 @@ Path and query values are text on the wire and are normally parsed by FastAPI/Py
 
 - Request: `{"member_product_ids":[9,12]}`; maximum 1,000 distinct positive IDs.
 - 201 for `CREATED`/`CHANGED`, 200 for `NO_CHANGE`: `{"result":"CREATED|CHANGED|NO_CHANGE","benchmark_set":{...},"revision":{...}}`.
-- Errors: 404 `PRODUCT_NOT_FOUND`; 409 `PRODUCT_NOT_OWNED`; 409 `BENCHMARK_CONCURRENT_WRITE`; 422 `BENCHMARK_EMPTY`; 422 `BENCHMARK_MEMBER_INVALID` (duplicate, missing, the active own Product itself, or lacking canonical Ozon identity). Another owned Product is valid.
+- Errors: 404 `PRODUCT_NOT_FOUND`; 409 `PRODUCT_NOT_OWNED`; 409 `RELEVANT_QUERY_SELECTION_EMPTY`; 409 `BENCHMARK_CONCURRENT_WRITE`; 422 `BENCHMARK_EMPTY`; 422 `BENCHMARK_MEMBER_INVALID` (duplicate, missing, the active own Product itself, or lacking canonical Ozon identity). Another owned Product is valid.
 - Idempotency compares the unordered ID set; order is irrelevant.
 - Transaction: the application-owned `immediate_transaction` boundary in sections 8–10.
 
@@ -518,7 +525,7 @@ For rate limiting, response JSON additionally contains `retry_after_seconds` and
 
 MPStats errors are defined in section 12. Keystore errors never call the backend: `UNSUPPORTED_KEYSTORE_FORMAT`, `UNSUPPORTED_KEYSTORE_VERSION`, `INVALID_KEYSTORE_ENVELOPE`, and `KEYSTORE_DECRYPT_FAILED`. The last intentionally combines wrong password and corrupt/authentication-failed ciphertext and displays `Не удалось открыть файл: неверный пароль или файл повреждён.` No partial plaintext is displayed.
 
-## Credential and source-security invariants
+## 14. Credential and source-security invariants
 
 Credentials travel from the local frontend to the SCOZ backend only in same-origin JSON POST bodies for the immediate source operation. They MUST NOT be placed in GET parameters, URLs, query strings, localStorage, sessionStorage, IndexedDB, cookies, SQLite, config, source artifacts, generated HTML state, logs, response bodies, error details, or exception text. The backend sends the Ozon SKU list in MPStats's documented `ids` query parameter; SKU IDs are not credentials.
 
@@ -626,7 +633,7 @@ All markup/classes use existing committed HTML/CSS and canonical tokens, cards, 
 - encryption/decryption occurs only in the browser and never reaches backend persistence;
 - photo availability is not a validity condition for candidates or benchmark members.
 
-## Proposed file map
+## 18. Proposed file map
 
 ### Create
 
@@ -681,15 +688,15 @@ No `.gitignore` modification is planned or allowed by PR6 implementation because
 - multi-cluster and multi-query Product deduplication with distinct counts;
 - representative-row tie-break, own exclusion, deterministic order, total/limit/offset;
 - no evidence state and current-benchmark selection flag;
-- manual existing identity yields `created=false`, new identity-only creation yields `created=true`, invalid/active-own rejection, and `ManualCandidateWriteResult` serialization;
+- manual add rejects an empty persisted relevant-query selection before identity lookup/creation; with a non-empty selection, an existing identity yields `created=false`, new identity-only creation yields `created=true`, invalid/active-own rejection, and `ManualCandidateWriteResult` serialization;
 - existing `resolve_or_create_ozon_product(...) -> Product` contract and catalog boundary remain unchanged;
 - no ProductSnapshot fabricated and identity-only/member Product absent from `/api/products`;
-- first benchmark revision 1; exact composition; unordered same set `NO_CHANGE`; changed set next revision; old revision/members immutable;
+- benchmark save rejects an empty persisted relevant-query selection without creating a set/revision; with a non-empty selection, first benchmark revision 1; exact composition; unordered same set `NO_CHANGE`; changed set next revision; old revision/members immutable;
 - empty and invalid member rejection; active own Product rejected, another Product with `is_owned=true` accepted, and membership does not alter ownership; no metric/photo columns or values stored;
 - `immediate_transaction` commits on success, rolls back on exception, closes always, and leaves normal `transaction` behavior unchanged;
 - injected failure rolls back complete revision; a competing writer cannot allocate a duplicate revision; after the first commit, a same-set second save returns `NO_CHANGE` and a different set gets the next revision;
 - busy/locked timeout maps to `BENCHMARK_CONCURRENT_WRITE`, while an unrelated SQLite failure is not mislabeled as concurrency;
-- zero candidate evidence produces `CandidatePage.readiness=NO_CANDIDATE_EVIDENCE`; a non-empty page produces `READY`.
+- zero candidate evidence produces `CandidatePage.readiness=NO_CANDIDATE_EVIDENCE`; any positive unpaginated total produces `READY`, including an empty page caused by an out-of-range offset.
 
 ### 19.2 MPStats and secrets
 
