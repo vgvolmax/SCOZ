@@ -514,7 +514,7 @@ For rate limiting, response JSON additionally contains `retry_after_seconds` and
 | Product exists but not owned | 409 `PRODUCT_NOT_OWNED` | choose an owned catalog Product |
 | no own-query evidence | GET state; PUT 409 `NO_OWN_QUERY_DATA` | import own-product queries |
 | invalid relevance set | 422 `RELEVANT_QUERY_SELECTION_INVALID` | refresh and select offered rows |
-| deliberately empty relevance | saved state; candidate 409 `RELEVANT_QUERY_SELECTION_EMPTY` | select and save at least one query |
+| deliberately empty relevance | saved current state; candidate GET, manual add, and benchmark save return 409 `RELEVANT_QUERY_SELECTION_EMPTY`; existing benchmark GET remains readable | select and save at least one relevant query before modifying benchmark composition |
 | no candidate evidence | 200 `NO_CANDIDATE_EVIDENCE` state | import Search Visibility or add manually |
 | bad manual ID | 422 `MANUAL_OZON_SKU_INVALID` | enter canonical numeric SKU |
 | own as competitor | 409 `OWN_PRODUCT_CANNOT_BE_COMPETITOR` | choose another SKU |
@@ -692,6 +692,7 @@ No `.gitignore` modification is planned or allowed by PR6 implementation because
 - existing `resolve_or_create_ozon_product(...) -> Product` contract and catalog boundary remain unchanged;
 - no ProductSnapshot fabricated and identity-only/member Product absent from `/api/products`;
 - benchmark save rejects an empty persisted relevant-query selection without creating a set/revision; with a non-empty selection, first benchmark revision 1; exact composition; unordered same set `NO_CHANGE`; changed set next revision; old revision/members immutable;
+- benchmark history survives relevance clear/restore: after saving revision 1, clearing relevant queries through PUT `[]` leaves GET benchmark readable with the same revision and member set while candidate GET, manual add, and benchmark save return 409 `RELEVANT_QUERY_SELECTION_EMPTY`; manual add creates no identity/Product, benchmark save creates no revision, and restoring a non-empty relevant scope then saving the same unordered member set returns `NO_CHANGE` with revision 1 and no new `BenchmarkSetRevision` rows;
 - empty and invalid member rejection; active own Product rejected, another Product with `is_owned=true` accepted, and membership does not alter ownership; no metric/photo columns or values stored;
 - `immediate_transaction` commits on success, rolls back on exception, closes always, and leaves normal `transaction` behavior unchanged;
 - injected failure rolls back complete revision; a competing writer cannot allocate a duplicate revision; after the first commit, a same-set second save returns `NO_CHANGE` and a different set gets the next revision;
