@@ -345,7 +345,24 @@ The worktree must be clean, and HEAD must be the then-current `main` containing 
 - Consumes: Task 9 `BenchmarkSelectionService` methods and typed Task 2 domain/source failures.
 - Produces: eight exact REST endpoints from spec section 12.
 
-- [ ] Add real TestClient tests `test_relevant_query_get_put_contract`, `test_candidate_get_and_manual_post_contract`, `test_benchmark_get_post_and_no_change_statuses`, `test_mpstats_test_and_preview_contract`, `test_relevance_duplicate_ids_are_domain_422_not_fastapi_detail`, `test_empty_relevance_list_is_valid_clear`, `test_empty_benchmark_is_domain_benchmark_empty`, `test_duplicate_benchmark_member_is_domain_member_invalid`, `test_manual_invalid_sku_is_domain_error_not_transport_detail`, `test_wrong_json_id_type_is_standard_fastapi_422_detail`, `test_every_local_error_has_exact_frozen_message`, `test_mpstats_rate_limit_has_safe_retry_after_only`, `test_secret_sentinel_never_enters_response`, and `test_manual_identity_and_membership_do_not_enter_products_catalog`. Parameterize the exact-message test over all ten local errors. Cover path/query bounds, strict JSON IDs, maxima 10,000/1,000/500, 200/201 choices, decimal/datetime strings, and every frozen source message.
+- [ ] Add real TestClient tests `test_relevant_query_get_put_contract`, `test_candidate_get_and_manual_post_contract`, `test_benchmark_get_post_and_no_change_statuses`, `test_mpstats_test_and_preview_contract`, `test_mpstats_probe_sku_requires_canonical_transport_id`, `test_mpstats_preview_ids_require_unique_canonical_transport_ids`, `test_relevance_duplicate_ids_are_domain_422_not_fastapi_detail`, `test_empty_relevance_list_is_valid_clear`, `test_empty_benchmark_is_domain_benchmark_empty`, `test_duplicate_benchmark_member_is_domain_member_invalid`, `test_manual_invalid_sku_is_domain_error_not_transport_detail`, `test_wrong_json_id_type_is_standard_fastapi_422_detail`, `test_every_local_error_has_exact_frozen_message`, `test_mpstats_rate_limit_has_safe_retry_after_only`, `test_secret_sentinel_never_enters_response`, and `test_manual_identity_and_membership_do_not_enter_products_catalog`. Parameterize the exact-message test over all ten local errors. Cover path/query bounds, strict JSON IDs, maxima 10,000/1,000/500, 200/201 choices, decimal/datetime strings, and every frozen source message. In the existing transport-422 coverage, request both `GET /api/products/0/relevant-queries` and `GET /api/products/-1/relevant-queries`; each returns HTTP 422 with standard `detail`, does not call the service method, and is not a SCOZ domain error.
+- [ ] Freeze `test_mpstats_probe_sku_requires_canonical_transport_id` with at least these parameterized invalid strings:
+  ```python
+  [
+      "0",
+      "00",
+      "01",
+      "00123",
+      "-1",
+      "+1",
+      "abc",
+      " 123",
+      "123 ",
+      "１２３",
+  ]
+  ```
+  For every value, post `{"token": "secret", "ozon_product_id": "<invalid>"}` to `/api/sources/mpstats/test` and assert HTTP 422, a JSON `detail`, no `error.code`, no MPStats client/source-adapter call, and zero outbound requests. The valid control `"123"` passes transport validation; use an adapter/client mock or stub after the validation boundary rather than a real network call.
+- [ ] Freeze `test_mpstats_preview_ids_require_unique_canonical_transport_ids` with at least these invalid lists: `["0"]`, `["01"]`, `["abc"]`, `["123", "01"]`, and `["123", "123"]`. For each, post to `/api/sources/mpstats/ozon-product-previews` and assert HTTP 422, standard `detail`, no SCOZ `error.code`, no MPStats client/source-adapter call, and zero outbound requests. The valid control `["456", "123"]` passes transport and reaches the stub in exactly that caller order (`456`, then `123`), never sorted as `123`, `456`.
 - [ ] Run `python -m pytest tests/test_benchmark_selection_api.py -q`; expected FAIL with route 404/model absence.
 - [ ] Keep request models beside routes in `backend/main.py` (no transport module), using this exact import/type pattern:
   ```python
@@ -365,12 +382,23 @@ The worktree must be clean, and HEAD must be the then-current `main` containing 
       StrictInt,
       Field(gt=0),
   ]
+
+
+  def _is_canonical_ozon_product_id(value: str) -> bool:
+      return (
+          value.isascii()
+          and value.isdigit()
+          and int(value) > 0
+          and str(int(value)) == value
+      )
   ```
   Task 10 extends the existing FastAPI import to the exact line above; `Path` is required by the route annotations and must not be left implicit or imported from another module.
 - [ ] Add these exact request models:
   ```python
   class RelevantQueriesRequest(BaseModel):
-      search_query_ids: list[PositiveStrictInt] = Field(max_length=10_000)
+      search_query_ids: list[PositiveStrictInt] = Field(
+          max_length=10_000,
+      )
 
 
   class ManualCandidateRequest(BaseModel):
@@ -378,19 +406,79 @@ The worktree must be clean, and HEAD must be the then-current `main` containing 
 
 
   class BenchmarkRevisionRequest(BaseModel):
-      member_product_ids: list[PositiveStrictInt] = Field(max_length=1_000)
+      member_product_ids: list[PositiveStrictInt] = Field(
+          max_length=1_000,
+      )
 
 
   class MPStatsTestRequest(BaseModel):
       token: SecretStr
       ozon_product_id: StrictStr
 
+      @field_validator("token")
+      @classmethod
+      def validate_token(cls, value: SecretStr) -> SecretStr:
+          if not 1 <= len(value.get_secret_value()) <= 4096:
+              raise ValueError(
+                  "token length must be between 1 and 4096 characters"
+              )
+          return value
+
+      @field_validator("ozon_product_id")
+      @classmethod
+      def validate_ozon_product_id(
+          cls,
+          value: str,
+      ) -> str:
+          if not _is_canonical_ozon_product_id(value):
+              raise ValueError(
+                  "invalid canonical Ozon product ID"
+              )
+          return value
+
 
   class MPStatsPreviewsRequest(BaseModel):
       token: SecretStr
-      ozon_product_ids: list[StrictStr] = Field(min_length=1, max_length=500)
+      ozon_product_ids: list[StrictStr] = Field(
+          min_length=1,
+          max_length=500,
+      )
+
+      @field_validator("token")
+      @classmethod
+      def validate_token(cls, value: SecretStr) -> SecretStr:
+          if not 1 <= len(value.get_secret_value()) <= 4096:
+              raise ValueError(
+                  "token length must be between 1 and 4096 characters"
+              )
+          return value
+
+      @field_validator("ozon_product_ids")
+      @classmethod
+      def validate_ozon_product_ids(
+          cls,
+          values: list[str],
+      ) -> list[str]:
+          if any(
+              not _is_canonical_ozon_product_id(value)
+              for value in values
+          ):
+              raise ValueError(
+                  "invalid canonical Ozon product ID"
+              )
+
+          if len(set(values)) != len(values):
+              raise ValueError(
+                  "duplicate Ozon product ID"
+              )
+
+          return values
   ```
-  Add a focused `field_validator` for each token field that checks `1 <= len(value.get_secret_value()) <= 4096` Unicode characters with no trim or normalization. At the transport boundary, validate both `MPStatsTestRequest.ozon_product_id` and every member of `MPStatsPreviewsRequest.ozon_product_ids` as canonical Ozon SKUs: the value must match ASCII `[1-9][0-9]*` exactly (non-empty positive decimal digits, with no leading zero, sign, whitespace, Unicode digits, trim, or normalization). The preview-list validator additionally rejects duplicate strings. These failures remain standard FastAPI 422 `detail`; they do not use `MANUAL_OZON_SKU_INVALID` or any source-error mapping.
+  This is the exact implementation skeleton, not one possible variant. `_is_canonical_ozon_product_id` lives only in `backend/main.py`, is used only by the MPStats transport request models, and must not move into domain, application, repository, a generic validators module, or `ManualCandidateRequest`.
+- [ ] Freeze token validation exactly as shown: use `SecretStr`; require 1–4,096 Unicode characters measured through `get_secret_value()`; perform no trim or normalization; and return the `SecretStr`, never its plaintext value. Transport-validation errors remain standard FastAPI 422 `detail`. The small validator is intentionally duplicated between the two request models; do not introduce a token helper or framework.
+- [ ] Freeze the MPStats SKU transport contract. Accepted examples are `1`, `9`, `123`, and `123456789`. Rejected examples are `0`, `00`, `01`, `00123`, `-1`, `+1`, `" 123"`, `"123 "`, `12.3`, `abc`, and `１２３`. The canonical condition is exactly ASCII `[1-9][0-9]*`: no trim, normalization, case conversion, Unicode-digit conversion, or int-to-string rewriting. Preview lists contain 1–500 canonical IDs, reject duplicate strings, preserve original caller order, and perform neither sorting nor deduplication.
+- [ ] Preserve `ManualCandidateRequest` exactly as the two-line class above, with no `@field_validator("ozon_product_id")`. Manual competitor input intentionally passes strict-string transport validation to Task 9, where invalid values `0`, `01`, and `abc` become HTTP 422 `{"error": {"code": "MANUAL_OZON_SKU_INVALID", "message": "Введите корректный числовой SKU Ozon без ведущих нулей."}}`, not FastAPI `detail`.
+- [ ] Invalid MPStats probe/preview SKUs instead return HTTP 422 with standard FastAPI/Pydantic `{"detail": [...]}`. Do not use `MANUAL_OZON_SKU_INVALID`, `MPSTATS_INVALID_SKU`, `SOURCE_INPUT_INVALID`, or any other SCOZ error code, and do not add a domain/source exception. Validation must occur before `MPStatsClient` is instantiated or called as part of the source operation; no outbound HTTP request is made.
 - [ ] Preserve the transport/domain boundary exactly. `RelevantQueriesRequest` has no unique-items validator: duplicates reach Task 9 and become 422 `RELEVANT_QUERY_SELECTION_INVALID`; its empty list is a valid clear. `BenchmarkRevisionRequest` has no `min_length=1` and no uniqueness validator: empty reaches 422 `BENCHMARK_EMPTY`, duplicates reach 422 `BENCHMARK_MEMBER_INVALID`. Pydantic checks only the manual SKU's string type; positive ASCII digits without leading zero remain Task 9 validation and map to `MANUAL_OZON_SKU_INVALID`. Focused MPStats probe/preview validators enforce the canonical transport rule above, and the preview validator also enforces uniqueness while the model enforces 1–500 items. Wrong JSON types and invalid MPStats transport SKUs remain standard FastAPI 422 `detail`; add no global `RequestValidationError` handler.
 - [ ] Add this exact local mapping (messages must match the spec byte-for-byte):
   ```python
