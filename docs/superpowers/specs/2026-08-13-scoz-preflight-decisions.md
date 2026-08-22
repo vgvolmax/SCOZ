@@ -530,7 +530,7 @@ SCOZ использует только:
 
 **PR1** — portable bootstrap, local runtime, startup status/logging, health check, same-origin loopback app, frontend shell и Windows smoke. Без auth/session/security framework.
 
-**PR2** — domain/storage/history, минимальный `ProductExternalIdentity`, logical observation keys, revisions, `BenchmarkSetRevision`, period/grain metadata и простой source resolver contract. Без capability/job frameworks.
+**PR2** — domain/storage/history, минимальный `ProductExternalIdentity`, logical observation/revision conventions и period/grain metadata conventions. Без `BenchmarkSet*` и без source-resolution implementation/framework до первого реального multi-source use case. Без capability/job frameworks.
 
 **PR3–PR5** — imports + revisions + period/unit semantics.
 
@@ -578,7 +578,7 @@ Internal Ozon API adapter не входит ни в обязательный, н
 ```text
 start.bat
   → portable Python
-  → FastAPI + built React
+  → FastAPI + committed HTML/CSS/JavaScript
   → SQLite
   → Source adapters
   → normalized snapshots/history
