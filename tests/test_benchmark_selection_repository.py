@@ -136,3 +136,46 @@ def test_benchmark_revisions_are_immutable_unordered_and_no_change(tmp_path):
     with pytest.raises(BenchmarkMemberInvalidError): repo.save_benchmark(own.id,frozenset({own.id}))
     assert repo.get_benchmark(own.id).current_revision.revision==2
     conn.close()
+
+
+def test_benchmark_rejects_member_with_multiple_canonical_ozon_identities_atomically(tmp_path):
+    _, conn, repo, own, competitor, _ = _repo_case(tmp_path)
+    first = repo.save_benchmark(own.id, frozenset({competitor.id}))
+    now = "2026-02-02T00:00:00+00:00"
+    conn.execute(
+        """INSERT INTO product_external_identities
+        (product_id,source,identity_type,identity_value,source_account_scope,created_at)
+        VALUES (?,'ozon','ozon_product_id','21','',?)""",
+        (competitor.id, now),
+    )
+
+    with pytest.raises(BenchmarkMemberInvalidError):
+        repo.save_benchmark(own.id, frozenset({competitor.id}))
+
+    assert conn.execute("SELECT COUNT(*) FROM benchmark_set_revisions").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM benchmark_members").fetchone()[0] == 1
+    assert conn.execute(
+        "SELECT revision FROM benchmark_set_revisions WHERE id=?", (first.revision.id,)
+    ).fetchone()[0] == 1
+    with pytest.raises(BenchmarkMemberInvalidError):
+        repo.get_benchmark(own.id)
+    conn.close()
+
+
+def test_candidates_exclude_product_with_ambiguous_ozon_identity(tmp_path):
+    _, conn, repo, own, competitor, query = _repo_case(tmp_path)
+    repo.replace_relevant_queries(own.id, frozenset({query.id}))
+    _visibility(conn, competitor.id, query.id)
+    conn.execute(
+        """INSERT INTO product_external_identities
+        (product_id,source,identity_type,identity_value,source_account_scope,created_at)
+        VALUES (?,'ozon','ozon_product_id','21','',?)""",
+        (competitor.id, "2026-02-02T00:00:00+00:00"),
+    )
+
+    page = repo.list_candidates(own.id, limit=50, offset=0)
+
+    assert page.items == ()
+    assert page.total == 0
+    assert page.readiness is CandidateReadiness.NO_CANDIDATE_EVIDENCE
+    conn.close()

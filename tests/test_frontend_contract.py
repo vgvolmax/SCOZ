@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -222,3 +224,29 @@ def test_lock_clears_credentials_inputs_status_and_preview_urls():
                   "mpstats-keystore-file", "mpstats-open-password", "mpstats-status"):
         assert value in js
     assert 'item.photo_url=null' in js and 'item.photo_status="NOT_REQUESTED"' in js
+
+
+def test_windows_smoke_pr6_python_snippets_use_literal_here_strings():
+    smoke = Path("tests/windows_smoke.ps1").read_text(encoding="utf-8")
+
+    assert "$schemaCode = @'" in smoke
+    assert "$seed = @'" in smoke
+    assert 'c.execute(\\"SELECT' not in smoke
+    assert 'c.execute(\\"INSERT' not in smoke
+
+
+def test_competitor_state_behavioral_contract():
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is unavailable")
+    result = subprocess.run(
+        [node, "tests/competitor_state_contract.mjs"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "competitor state contract: PASS" in result.stdout
