@@ -5,10 +5,10 @@
 **Status:** Proposed, awaiting independent review and approval. This document is the PR-specific authority for the future implementation of **PR7 — Core Benchmark & Advertising Intensity**. It is not an Implementation Plan and does not authorize PR8 work.
 
 ```text
-PR7_SPEC_BASE_SHA=3cedb9e9b9f3a3769a37b1e22c1f58d0ff84faff
+PR7_SPEC_BASE_SHA=9cf7da8f73a24a4cd31b467d8c8b1765f6390891
 ```
 
-The repository was inspected on branch `work`, whose clean HEAD was the SHA above. The SHA records the factual analysis base; it is not a request to reset a later branch.
+The repository was re-inspected on branch `work`, whose clean HEAD was the SHA above. The SHA records the factual analysis base for this final spec validation; it is not a request to reset a later branch.
 
 This spec is subordinate to the approved product contracts, Architecture Design, Preflight Decisions, UI/UX Design, Visual Design System, and latest PR Development Plan. For PR7 scope and sequencing, the latest plan controls. No conflict was found among those sources or the inspected PR6 implementation.
 
