@@ -22,7 +22,7 @@ The current application style is dataclass/enum domain contracts, repositories o
 
 ## 3. Goal
 
-For one owned SKU, calculate a transparent, current, derived comparison against the members of its current benchmark revision using only metric-specific, period-compatible current Ozon ProductSnapshot facts. Return own value, competitor values, median, optional quartiles, absolute delta, sample size, position relative to the median, metric direction, and confidence. Include the required derived advertising-intensity metrics.
+For one owned SKU, calculate a transparent, current, derived comparison against the members of its current benchmark revision using only metric-specific, period-compatible current Ozon ProductSnapshot facts. Return own value, median, optional quartiles, absolute delta, sample size, factual performance status (position relative to the median), metric direction, confidence, and an aggregate explanation of sample reduction. Include the required derived advertising-intensity metrics.
 
 PR7 answers **“How does this SKU compare with the selected benchmark on compatible facts?”** It does not answer why the SKU performs that way or what the user should do.
 
@@ -71,7 +71,7 @@ The benchmark dependency is the current `BenchmarkSetRevision` and its immutable
 
 ### 6.1 Hard boundary from PR6 candidate evidence
 
-PR6 candidate data is selection evidence, not a PR7 source fact. `BenchmarkCandidate.contextual_price_rub`, `best_position`, `representative_observed_at`, `source_title`, `seller_name`, matched-query/cluster counts, photos, MPStats preview data, frontend state, and transient manual-candidate metadata **must never** be read, copied, or used as fallback by Core Benchmark. In particular, candidate price cannot fill a missing `ProductSnapshot.average_price_rub` or a missing compatible snapshot.
+PR6 candidate data is selection evidence, not a PR7 analytical source fact. `BenchmarkCandidate.contextual_price_rub`, `best_position`, `representative_observed_at`, `source_title`, `seller_name`, matched-query/cluster counts, photos, MPStats preview data, frontend state, and transient manual-candidate metadata **must never** be used as a metric input or fallback by Core Benchmark. In particular, candidate price cannot fill a missing `ProductSnapshot.average_price_rub` or a missing compatible snapshot.
 
 The only handoff from selection to measurement is persisted composition:
 
@@ -83,6 +83,8 @@ BenchmarkSet -> current BenchmarkSetRevision -> BenchmarkMember.product_id
 ```
 
 Every saved member is authoritative even when its brand, category, title, seller, photo, candidate rank, price similarity, query count, cluster count, or Search Visibility position looks unusual. PR7 does not rerank or remove it. Availability filtering is runtime, metric-specific analysis only: it neither changes nor creates a `BenchmarkSetRevision` and never changes source facts.
+
+Presentation metadata is a separate concern. If Benchmark Detail displays a competitor label/context, it may read persisted canonical `ProductSnapshot.title`, `seller_name`, `brand`, or `product_url` from a real source observation solely for display; none of those fields participates in benchmark mathematics. When canonical presentation metadata is absent, the stable fallback is `ozon_product_id` and, if needed, internal `product_id`. The UI must not reconstruct identity or detail from transient PR6 candidate/frontend state. A manually saved member that has `Product`, `ProductExternalIdentity`, and `BenchmarkMember` but no `ProductSnapshot` remains in the revision, is excluded from ProductSnapshot-based metric samples, and may still be labeled by Ozon product ID; PR7 never deletes it automatically.
 
 Source lineage remains on each snapshot through `id`, `revision`, `source_artifact_id`, `import_batch_id`, and `imported_at`. PR7 exposes the observation and import context required for transparency without exposing local artifact paths or raw files.
 
@@ -99,6 +101,8 @@ owned Product
 
 The benchmark member count is composition size. Every metric independently derives its `sample_size` after availability/derivation checks; no metric may reuse member count or another metric's sample size.
 
+The own anchor is selected before and independently of the benchmark composition. `BenchmarkSetRevision`, competitor observations, compatible-member count, metric availability, sample size, confidence, median/quantiles, or any attempt to maximize N **must not influence it**. One response uses that single own observation context for all 13 product-level metrics; metric-specific availability may change only the metric sample/readiness/statistics, never select another own date or window.
+
 Only the current benchmark revision is calculated. After PR6 saves a new composition revision, the next request uses it. Old composition and source rows remain immutable, but PR7 offers no query parameter or endpoint for recalculating an old revision. The response revision identity is sufficient for current-result provenance; a historical CJM is not established.
 
 ## 8. Exact source-observation selection
@@ -106,17 +110,17 @@ Only the current benchmark revision is calculated. After PR6 saves a new composi
 The application service executes the following deterministic algorithm in one read transaction:
 
 1. Load `Product` by path ID. Missing is an error; non-owned is an error.
-2. Load the PR6 `BenchmarkComposition` for that own product.
+2. Select the own anchor from **own ProductSnapshot history and current revisions only**. Group own snapshots by their logical key and retain the greatest revision in each group; order those current rows by `report_generated_on DESC`, then `report_window_days DESC`, then `revision DESC`, then `id DESC`; take the first. Thus the newest report-generation date wins, and a same-date tie deterministically prefers the longer reported window. No benchmark or competitor data has been read for this decision, no metric gets a separate anchor, and no user-selectable period is introduced in PR7.
+3. Load the PR6 `BenchmarkComposition` for that own product.
    - no `BenchmarkSet` or no `current_revision` returns `NO_BENCHMARK`;
    - a persisted set without a current revision is treated as the same normal readiness state, not repaired by analytics.
-3. Select the own anchor from **current revisions only**. Group own snapshots by their logical key and retain the greatest revision in each group; order those current rows by `report_generated_on DESC`, then `report_window_days DESC`, then `revision DESC`, then `id DESC`; take the first. Thus the newest report-generation date wins, and a same-date tie deterministically prefers the longer reported window. No user-selectable period is introduced in PR7.
 4. If no own anchor exists, return `NO_OWN_SOURCE_DATA`, with benchmark context present and no metrics.
 5. For every member, resolve only `find_current(product_id=member.product_id, report_generated_on=anchor.report_generated_on, report_window_days=anchor.report_window_days)`. The greatest revision at that exact key is the current fact.
 6. A member without that exact observation is excluded from every metric as `NO_COMPATIBLE_OBSERVATION`, even if an earlier/later or differently windowed snapshot is the member's latest snapshot.
-7. From each compatible snapshot, extract or derive each metric independently. A missing nullable source value or an unavailable derived value excludes that member only from that metric as `METRIC_UNAVAILABLE`.
+7. From each compatible snapshot, extract or derive each metric independently. A missing nullable source field excludes that member only from that metric as `SOURCE_METRIC_UNAVAILABLE`; source facts that cannot yield a valid derived value exclude it as `DERIVED_VALUE_UNAVAILABLE`.
 8. Corrections take effect naturally: a higher revision at the own anchor key replaces the superseded own payload; a higher revision at a competitor's exact compatible key replaces its superseded payload. Superseded rows are never additional sample members.
 
-The own-anchor policy is analytical policy, not an accidental reuse of repository ordering. Its semantic basis is: use the freshest source-generated observation; where that source date exposes multiple valid report windows, use the longest window because PR7 has no user-selected window and the longer observation is the least volatile comparison context. Repository SQL must implement this declared rule and tests must prove incidental row/insertion order cannot change it.
+The own-anchor policy is analytical policy, not an accidental reuse of repository ordering. Its semantic basis is: use the freshest source-generated observation; where that source date exposes multiple valid report windows, use the longest window because PR7 has no user-selected window and the longer observation is the least volatile comparison context. Repository SQL must implement this declared rule and tests must prove incidental row/insertion order, benchmark revision/composition, compatible sample size, metric availability, and confidence cannot change it.
 
 Normative examples:
 
@@ -129,6 +133,8 @@ Normative examples:
 | E | revisions 1 and 2 for the chosen `2026-08-23 / 28 days` key | revision 2 of `2026-08-23 / 28 days`; revision 1 is superseded, not a sample row |
 
 These keys remain source context only. None of the examples creates or implies `period_start` or `period_end`.
+
+Observation-context selection and revision selection are two distinct steps. First, the member lookup requires the exact logical context `(product_id, anchor.report_generated_on, anchor.report_window_days)`; an overall newer but incompatible observation is irrelevant. Second, only the current (greatest) revision inside that exact context may be used. An older exact-compatible context may therefore be selected instead of a newer incompatible context, but a superseded revision of the selected logical observation may never be selected or added to the sample.
 
 The own metric may itself be unavailable (`buyout_share_pct`, or advertising support with zero ordered units). That metric returns an unavailable own/comparison result while other metrics remain independent. Competitor availability is still summarized for transparency, but no median/delta/status is presented for a metric whose own value is unavailable.
 
@@ -185,7 +191,7 @@ No percentage-point source value is converted on extraction: source `7.7` means 
 
 `LOWER_IS_BETTER` is deliberately not included because no PR7 metric has that unconditional meaning. Average price, DRR, estimated spend, and support per unit are contextual. In particular, lower advertising intensity must never map to good/win/green semantics.
 
-Direction is metadata separate from `ComparisonPosition`. The frontend may label “ниже/на уровне/выше медианы”; it must not label PR7 outputs “good”, “bad”, “win”, “loss”, “problem”, or “recommendation”.
+Direction is metadata semantically separate from factual relative position. The smallest PR7 DTO represents those two required concepts as `direction` plus `comparison_position`; it does not add a third performance-interpretation field or enum. The frontend may label “ниже/на уровне/выше медианы”; it must not label PR7 outputs “good”, “bad”, “win”, “loss”, “problem”, or “recommendation”.
 
 The three contracts are frozen separately:
 
@@ -195,7 +201,7 @@ The three contracts are frozen separately:
 | metric direction | `MetricDirection` | stable semantic metadata for possible later interpretation |
 | performance interpretation | **not calculated and not present in PR7 DTO/API** | PR8+ may combine multiple facts into a verdict under a separately approved contract |
 
-Consequently `ABOVE_BENCHMARK` is not `GOOD`, `BELOW_BENCHMARK` is not `BAD`, and direction does not invert or decorate comparison position. A `CONTEXTUAL` metric can have an available comparison and delta but can never receive an automatic business/performance verdict. The latest plan's generic phrase “performance status” is satisfied in PR7 only by factual comparison/readiness; diagnostic judgment remains explicitly sequenced to PR8.
+Consequently `ABOVE_BENCHMARK` is not `GOOD`, `BELOW_BENCHMARK` is not `BAD`, and direction does not invert or decorate comparison position. A `CONTEXTUAL` metric can have an available comparison and delta but can never receive an automatic business/performance verdict. The latest plan's generic phrase “performance status” is satisfied by the factual `comparison_position`, while `direction` supplies the separately required metric direction; a third DTO field would add no PR7 information. Diagnostic judgment remains explicitly sequenced to PR8.
 
 ## 12. Statistical contract
 
@@ -333,17 +339,6 @@ BenchmarkRevisionContext
   benchmark_revision_number: int
   benchmark_member_count: int
 
-CompetitorMetricValue
-  product_id: int
-  ozon_product_id: str
-  value: Decimal
-  observation: ObservationContext
-
-ExcludedBenchmarkMember
-  product_id: int
-  ozon_product_id: str
-  reason: NO_COMPATIBLE_OBSERVATION | METRIC_UNAVAILABLE
-
 CoreBenchmarkMetric
   metric_id: CoreBenchmarkMetricId
   label: str
@@ -359,8 +354,10 @@ CoreBenchmarkMetric
   sample_size: int
   comparison_position: ComparisonPosition
   confidence: BenchmarkConfidence
-  competitor_values: tuple[CompetitorMetricValue, ...]
-  excluded_members: tuple[ExcludedBenchmarkMember, ...]
+  exclusion_summary: mapping[
+    NO_COMPATIBLE_OBSERVATION | SOURCE_METRIC_UNAVAILABLE | DERIVED_VALUE_UNAVAILABLE,
+    int
+  ]
 
 CoreBenchmarkResult
   product_id: int
@@ -370,11 +367,11 @@ CoreBenchmarkResult
   metrics: tuple[CoreBenchmarkMetric, ...]
 ```
 
-`CoreBenchmarkMetricId` is exactly the ordered 13 keys in section 10. `MetricUnit` is exactly `RUB`, `UNITS`, `COUNT`, `PERCENTAGE_POINTS`, `RUB_PER_ORDERED_UNIT`. Other enums are exactly those defined in sections 11 and 15–20. Labels are returned by the backend contract rather than independently redefined in UI.
+`CoreBenchmarkMetricId` is exactly the ordered 13 keys in section 10. `MetricUnit` is exactly `RUB`, `UNITS`, `COUNT`, `PERCENTAGE_POINTS`, `RUB_PER_ORDERED_UNIT`. `MetricExclusionReason` has exactly the three keys shown above. Other enums are exactly those defined in sections 11 and 15–20. Labels are returned by the backend contract rather than independently redefined in UI.
 
 For `NO_BENCHMARK`, `benchmark`, `observation`, and `metrics` are respectively `null`, `null`, and `[]`. For `NO_OWN_SOURCE_DATA`, benchmark is present, observation is `null`, and metrics is `[]`. Once an own anchor exists, all 13 metrics are returned in catalog order even when unavailable.
 
-Response detail ordering is identity-based and independent of metric value and member insertion order: included values and exclusions are each sorted by `(int(ozon_product_id) ASC, product_id ASC)`. Canonical Ozon product IDs are numeric strings under the existing identity contract; `product_id` is the deterministic tie-breaker. Statistical helpers separately sort a fresh Decimal value list numerically for median/quantiles. Equal values therefore cannot make identity order affect statistics. A member appears exactly once in either `competitor_values` or `excluded_members` for each metric. This explains why composition N differs from metric N without bloating a separate summary.
+`exclusion_summary` is an aggregate analytical explanation, not per-member exclusion history. It always contains the three stable reason keys with non-negative integer counts, including zero counts. For every metric, `sample_size + sum(exclusion_summary.values()) == benchmark_member_count`. `NO_COMPATIBLE_OBSERVATION` means no snapshot at the exact anchor context; `SOURCE_METRIC_UNAVAILABLE` means that observation exists but its nullable source field is absent; `DERIVED_VALUE_UNAVAILABLE` means compatible source facts exist but the derived value is invalid (for example support per unit when `ordered_units == 0`). Exclusion never creates a zero, removes a member from the revision, creates a new revision, or changes a source snapshot. PR7 deliberately does not add per-member exclusion DTO/history: aggregate counts explain why composition N differs from metric N and the approved Benchmark Detail CJM does not require a second member-by-metric audit product.
 
 ## 22. Persistence read requirements
 
@@ -463,33 +460,17 @@ HTTP 200, JSON keys exactly:
       "sample_size": 7,
       "comparison_position": "BELOW_BENCHMARK",
       "confidence": "MEDIUM",
-      "competitor_values": [
-        {
-          "product_id": 52,
-          "ozon_product_id": "987654321",
-          "value": "5.1",
-          "observation": {
-            "report_generated_on": "2026-08-23",
-            "report_window_days": 7,
-            "snapshot_id": 202,
-            "snapshot_revision": 1,
-            "imported_at": "2026-08-24T10:20:00+00:00"
-          }
-        }
-      ],
-      "excluded_members": [
-        {
-          "product_id": 63,
-          "ozon_product_id": "123456789",
-          "reason": "NO_COMPATIBLE_OBSERVATION"
-        }
-      ]
+      "exclusion_summary": {
+        "NO_COMPATIBLE_OBSERVATION": 2,
+        "SOURCE_METRIC_UNAVAILABLE": 1,
+        "DERIVED_VALUE_UNAVAILABLE": 0
+      }
     }
   ]
 }
 ```
 
-The example abbreviates arrays; an actual anchored response contains all 13 metrics and every member in each metric's included/excluded partition. Every Decimal, including integer-valued metric values and statistics, is a canonical JSON string. IDs, revisions, windows, sample sizes, and member counts are JSON integers. Dates/datetimes are ISO 8601; datetimes retain timezone offset. Unavailable numeric fields are JSON `null`, never `""`, zero, `NaN`, or infinity.
+The example abbreviates `metrics`; an actual anchored response contains all 13 metrics. It does not return per-member values or exclusions. Every Decimal, including integer-valued metric values and statistics, is a canonical JSON string. IDs, revisions, windows, sample sizes, member counts, and exclusion counts are JSON integers. Dates/datetimes are ISO 8601; datetimes retain timezone offset. Unavailable numeric fields are JSON `null`, never `""`, zero, `NaN`, or infinity.
 
 Readiness response shapes follow section 21 with the same top-level keys. HTTP 200 is used for all five analytical readiness values.
 
@@ -513,8 +494,10 @@ The future PR7 UI extends the existing competitor workspace, using the establish
 2. Opening it starts a visible loading state and fetches the single endpoint.
 3. The panel shows the exact observation phrase and benchmark revision/member context.
 4. In catalog order, every anchored metric row shows label, own, median, P25/P75 when non-null, absolute delta, metric-specific `N`, comparison position, confidence, and unit-correct formatting.
-5. An accessible disclosure per metric shows included competitors with Ozon SKU/value and observation/import context, followed by excluded members with human labels `Нет совместимого наблюдения` or `Показатель недоступен`.
+5. When `N` is smaller than benchmark member count, an accessible disclosure shows aggregate exclusion counts with human labels `Нет совместимого наблюдения`, `Нет исходного значения показателя`, and `Нельзя вычислить производный показатель`. It does not require a per-member exclusion list.
 6. Reload after composition save refetches; no stale result is retained against a new revision.
+
+The existing composition UI remains the member-identity surface. If this panel also displays competitor presentation metadata, it may use only persisted canonical ProductSnapshot title/seller/brand/URL and must fall back to Ozon product ID (then internal `product_id`) when absent. Such labels never enter a metric calculation, and no transient candidate state is used to rebuild them.
 
 Required visible states:
 
@@ -585,7 +568,8 @@ Only the future implementation PR may touch these files:
 - missing one metric never removes a competitor from other metrics;
 - own value is never included in competitor sample;
 - equal competitor values remain distinct observations;
-- included plus excluded members exactly equals revision composition for every metric.
+- sample size plus all aggregate exclusion counts exactly equals revision composition for every metric;
+- compatible nullable source absence is counted as `SOURCE_METRIC_UNAVAILABLE`, while a zero denominator for support per unit is counted as `DERIVED_VALUE_UNAVAILABLE`; neither becomes zero.
 
 ### Compatibility and selection
 
@@ -594,8 +578,12 @@ Only the future implementation PR may touch these files:
 - different report window rejected;
 - latest incompatible competitor snapshot not silently selected;
 - when a competitor's overall latest snapshot is incompatible but an older-date logical key exactly matches the own anchor, the current revision at that exact matching key is used; the newer incompatible key neither replaces nor suppresses it;
+- competitor `2026-08-23 / 7 days / revision 1` and revision 2 at the exact own `2026-08-23 / 7 days` context uses only revision 2; revision 1 is superseded, not an “older compatible observation” fallback;
+- competitor observations `2026-08-24 / 7 days` and `2026-08-23 / 28 days` against own `2026-08-23 / 7 days` yield `NO_COMPATIBLE_OBSERVATION`, never nearest/latest fallback;
 - latest own current observation ordering includes deterministic same-date window tie;
 - own-anchor cases A–E in section 8, including same-date 7/28-day choice and freshest-date-before-window precedence;
+- with own `D / 7 days` and `D / 28 days`, revision A having more compatible 7-day members and revision B having more compatible 28-day members both select the same own-only anchor required by section 8;
+- when the 7-day context has more sales availability and the 28-day context has more conversion availability, every metric still uses the one common own anchor; metric availability cannot select per-metric contexts;
 - shuffled repository insertion/return order cannot change the declared own-anchor policy;
 - no inferred `period_start`/`period_end` fields or date range in DTO/API/UI;
 - empty member lookup is valid and no nearest-date/tolerance/averaging path exists.
@@ -626,6 +614,7 @@ Only the future implementation PR may touch these files:
 - `estimated_ad_spend_rub` uses `total_drr_pct`; no `promotion_*` field participates or acts as fallback;
 - support denominator is `ordered_units`, with no sold/bought-out-unit substitute or terminology;
 - zero units unavailable without exception/infinity/fake zero;
+- with `ordered_units == 0` and `total_drr_pct > 0`, estimated spend remains derivable while support per unit is unavailable and its exclusion reason is `DERIVED_VALUE_UNAVAILABLE`;
 - zero DRR with positive units yields exact zeros;
 - repeating Decimal division retains internal precision and canonical API text;
 - all advertising direction values are `CONTEXTUAL` and never produce GOOD/BAD/WIN labels.
@@ -635,9 +624,11 @@ Only the future implementation PR may touch these files:
 - `BenchmarkCandidate.contextual_price_rub`, Search Visibility rank/date/title/seller evidence, frontend candidate state, and MPStats previews never enter analytics dependencies or values;
 - absent compatible `ProductSnapshot` has no candidate/Search Visibility fallback;
 - a manually added saved member without any ProductSnapshot remains in composition and is reported as `NO_COMPATIBLE_OBSERVATION` for every metric;
+- that manual member is not deleted and does not enter any ProductSnapshot metric sample; its stable presentation fallback is Ozon product ID when the UI shows it;
 - brand/category/title/price/photo/seller mismatch never removes or reranks a saved member;
+- persisted ProductSnapshot title/seller/brand/URL may be used only as presentation labels, while candidate metadata remains forbidden as an analytical fallback;
 - runtime metric exclusion neither changes current `BenchmarkSetRevision` nor creates a new revision;
-- `benchmark_member_count` may exceed each independently calculated `sample_size`, and included plus excluded detail explains the difference.
+- `benchmark_member_count` may exceed each independently calculated `sample_size`, and the three aggregate exclusion counts explain the difference without a per-member exclusion DTO.
 
 ### Confidence, position, delta, and boundaries
 
@@ -655,7 +646,6 @@ Only the future implementation PR may touch these files:
 - the exact 13 `metric_id` strings and numeric catalog order are stable in analytics, DTO, API, and UI;
 - changing a Russian label cannot change metric identity or result lookup;
 - `metrics[]` order is independent of dict/set/SQLite order;
-- included and excluded competitor detail follows numeric Ozon identity then `product_id`, independent of member insertion and metric values;
 - statistical median/quantiles use numeric Decimal sort, so identity ordering and equal-value ties cannot change results.
 
 ### Repository and application service
@@ -670,14 +660,14 @@ Only the future implementation PR may touch these files:
 
 - exact all-13-metric success JSON, ordering, enum strings, labels, units, estimate flags, and canonical Decimal strings;
 - exact response for every readiness state and benchmark revision context fields;
-- included competitor identity/value/observation and excluded reason shape;
+- exact three-key aggregate exclusion-summary shape and member-count accounting;
 - invalid path 422, missing 404 exact envelope, non-owned 409 exact envelope;
 - GET has no body/query mutation and repeated requests are stable.
 
 ### Frontend contract
 
 - detail control/panel and all seven visible states exist;
-- N, confidence, revision, period phrase, direction-neutral comparison, and competitor disclosures render;
+- N, confidence, revision, period phrase, direction-neutral comparison, and aggregate exclusion disclosures render;
 - unavailable quartiles/delta render no fake zero;
 - partial metrics render independently;
 - percentage points, RUB, counts, units, and RUB/unit format correctly;
@@ -714,12 +704,17 @@ The Windows smoke must not test median/quantile/confidence matrices; those belon
 Before an implementation commit, review the diff and answer all of these affirmatively:
 
 - **Layer contamination:** no `BenchmarkCandidate`, Search Visibility candidate value, frontend selection metadata, or MPStats preview is used as a Core Benchmark source fact.
+- **Anchor purity:** own-anchor selection reads only own ProductSnapshot history and cannot change with benchmark composition, competitor sample, metric availability, confidence, or result statistics; all metrics share that anchor.
+- **Revision purity:** exact observation-context selection is completed before choosing its current revision; an older compatible logical context is not confused with a superseded revision of that context.
 - **Semantic contamination:** no mapping equates above with good, below with bad, or lower DRR/ad support with good; PR7 exposes no performance-verdict field.
+- **DTO YAGNI:** `comparison_position` plus `direction` preserve the required distinction without a redundant performance-interpretation field/enum.
+- **Explainability YAGNI:** the aggregate three-reason exclusion summary accounts for member count versus sample size without per-member exclusion history.
+- **Presentation/source separation:** candidate/transient metadata is never a metric input, while canonical persisted ProductSnapshot metadata remains allowed for display with stable identity fallback.
 - **Temporal ambiguity:** same-date multiple windows deterministically select the longest current window after selecting the freshest generated date, exactly as section 8 cases A–E require.
 - **Naming ambiguity:** advertising is not called promotion; the estimate is `estimated_ad_spend_rub`; ordered units are never called sold units.
 - **Responsibility boundary:** `BenchmarkSelectionService` remains PR6 composition orchestration; derived analytics lives in the separate `CoreBenchmarkService` and pure feature module.
 - **User-context integrity:** analytics respects every saved member and filters only at runtime for exact observation compatibility or metric availability without mutating composition.
-- **Ordering:** metric response order, competitor detail order, and numeric statistical order follow their separate explicit contracts.
+- **Ordering:** metric response order and numeric statistical order follow their separate explicit contracts; aggregate exclusion counts do not depend on member insertion order.
 - **Scope:** no PR8 diagnostics, automatic competitor scoring, generic framework, query/cluster benchmark, new adapter, historical UI/result persistence, `BenchmarkSnapshot`, `AdvertisingSnapshot`, or MPStats sales benchmark appears.
 
 ## 35. Implementation acceptance criteria / Definition of Done
@@ -731,7 +726,7 @@ PR7 implementation is complete only when:
 - metric-specific samples, Decimal median, Type-7 quartiles, thresholds, absolute delta, comparison position, and confidence exactly match this spec;
 - advertising calculations and zero-denominator semantics exactly match section 19 and remain contextual;
 - every normal no-data case returns the exact first-class readiness shape over HTTP 200, while product errors match section 26;
-- every response retains concrete benchmark and observation revision context and detail accounts for every member per metric;
+- every response retains concrete benchmark and observation revision context and aggregate exclusion counts account for every member per metric;
 - the endpoint, UI states, disclosure details, labels, precision, neutral semantics, and freshness phrase match this spec and the Visual Design System;
 - SQL exists only in repositories, pure analytics has no infrastructure dependency, handlers contain no business logic, and no generic engine is introduced;
 - no migration, result persistence, dependency, source adapter, PR8+ behavior, or implementation-plan document appears;
@@ -746,16 +741,24 @@ The plan author must treat these answers as closed:
 
 | Question | Frozen answer |
 |---|---|
+| Can `BenchmarkSetRevision`, compatible N, metric availability, confidence, or benchmark result influence the own anchor? | **No.** The anchor is selected from own ProductSnapshot history only. |
+| Can each metric select a different own observation window? | **No.** One response has one common own anchor. |
 | Can Search Visibility/candidate price enter Core Benchmark? | **No.** |
+| Can persisted ProductSnapshot title/seller/brand/URL label a competitor in the UI? | **Yes, for presentation only**, never as a mathematical input. |
 | Can PR7 remove a saved member for brand/category/title or other similarity concerns? | **No.** |
+| Is a manual member without ProductSnapshot removed or sampled? | **Neither:** it remains in composition, is excluded from ProductSnapshot samples, and may display by Ozon ID. |
 | What is the product-level metric source? | The current revision of an exact-context canonical `ProductSnapshot`. |
 | Can generic latest competitor snapshot be used? | Only when its logical key happens to equal the exact anchor; lookup is by exact context, never by generic latest/fallback. |
+| If a newer incompatible competitor context and an older exact-compatible context exist? | Use the **current revision of the exact-compatible context**. |
+| Can a superseded revision at that exact-compatible context be used? | **No.** |
 | Same generated date has 7- and 28-day own observations? | Choose the current 28-day observation under the same-date longest-window rule. |
 | Does `ABOVE_BENCHMARK` mean `GOOD`? | **No.** It states position only. |
 | Can a contextual metric receive an automatic business verdict? | **No.** |
+| Are three fields for relative position, direction, and interpretation mandatory? | **No.** PR7 uses factual `comparison_position` plus `direction` and has no interpretation field. |
 | Is estimated ad spend observed spend? | **No.** It is the labeled estimate `ordered_amount_rub * total_drr_pct / 100`. |
 | Advertising-support denominator? | `ordered_units`, only when greater than zero. |
 | Does `BenchmarkSelectionService` calculate analytics? | **No.** Separate `CoreBenchmarkService` owns orchestration. |
-| Can metric sample N be smaller than saved member count? | **Yes, independently per metric**, with every exclusion explained. |
+| Can metric sample N be smaller than saved member count? | **Yes, independently per metric**, with aggregate reason counts explaining every exclusion. |
+| Is a per-member exclusion list mandatory? | **No.** The PR7 MVP returns only the aggregate three-reason summary. |
 
 Work stops at this spec in the current task. PR7 production implementation and PR8 design/implementation must not begin here.
