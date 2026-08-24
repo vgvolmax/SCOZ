@@ -23,6 +23,34 @@
         <p id="page-description">Здесь появятся ваши товары после добавления данных.</p>
       </header>
       <section id="products-view" class="view"><div id="products-status" class="status" aria-live="polite">Загрузка товаров…</div><div id="products-list"></div></section>
+      <section id="competitors-workspace" class="view" hidden aria-busy="false">
+        <div id="competitors-context" class="card"></div>
+        <article id="relevant-queries-panel" class="card">
+          <h2>Релевантные запросы</h2>
+          <div id="relevant-queries-status" class="status" aria-live="polite">Загрузка…</div>
+          <div id="relevant-queries-table" class="table-wrap"></div>
+          <button id="relevant-queries-save" type="button" disabled>Сохранить запросы</button>
+        </article>
+        <div class="benchmark-layout">
+          <article id="benchmark-candidates-panel" class="card">
+            <h2>Кандидаты</h2>
+            <div id="benchmark-candidates-status" class="status" aria-live="polite">Сначала сохраните релевантные запросы.</div>
+            <button id="benchmark-load-photos" type="button" disabled>Загрузить фото MPStats</button>
+            <div id="benchmark-candidates-list" class="candidate-list"></div>
+            <div class="button-row"><button id="benchmark-candidates-prev" type="button" disabled>Назад</button><button id="benchmark-candidates-next" type="button" disabled>Далее</button></div>
+          </article>
+          <article id="benchmark-selected-panel" class="card">
+            <h2>Выбранные конкуренты</h2>
+            <p id="benchmark-revision">Ещё не сохранено</p>
+            <div id="benchmark-selected-list"></div>
+            <label for="manual-ozon-product-id">Добавить SKU Ozon вручную</label>
+            <input id="manual-ozon-product-id" inputmode="numeric" placeholder="123456789">
+            <button id="manual-candidate-add" type="button" disabled>Добавить</button>
+            <button id="benchmark-save" type="button" disabled>Сохранить benchmark</button>
+            <div id="benchmark-save-status" class="status" aria-live="polite"></div>
+          </article>
+        </div>
+      </section>
       <section id="data-view" class="view" hidden>
         <div class="import-grid">
           <article class="card"><h2>Отчёт «Товары на Ozon»</h2><p>Загрузите XLSX-файл с данными о товарах.</p><label for="ozon-products-file">XLSX-файл</label><input id="ozon-products-file" type="file" accept=".xlsx"><span id="selected-file-name">Файл не выбран</span><button id="import-submit" type="button" disabled>Импортировать</button><div id="import-status" class="status" aria-live="polite">Выберите XLSX-файл</div></article>
@@ -32,9 +60,29 @@
         </div>
         <article class="card"><h2>История импортов</h2><div id="import-history">История пуста</div></article>
       </section>
-      <section id="settings-view" class="view" hidden><div class="empty-state"><h2>Настройки пока не требуются</h2><p>Локальное приложение готово к работе.</p></div></section>
+      <section id="settings-view" class="view" hidden>
+        <article class="card source-card">
+          <h2>Источник MPStats</h2>
+          <p>Токен хранится только в памяти текущей вкладки.</p>
+          <label for="mpstats-token">Токен MPStats</label><input id="mpstats-token" type="password" autocomplete="off">
+          <label for="mpstats-probe-sku">Проверочный SKU Ozon</label><input id="mpstats-probe-sku" inputmode="numeric" placeholder="123456789">
+          <button id="mpstats-test" type="button">Проверить подключение</button>
+          <div id="mpstats-status" class="status" aria-live="polite"></div>
+          <h3>Сохранить зашифрованный файл</h3>
+          <label for="mpstats-save-password">Пароль файла</label><input id="mpstats-save-password" type="password" autocomplete="new-password">
+          <label for="mpstats-save-password-confirm">Повторите пароль</label><input id="mpstats-save-password-confirm" type="password" autocomplete="new-password">
+          <button id="mpstats-save-keystore" type="button">Сохранить зашифрованный файл</button>
+          <h3>Открыть зашифрованный файл</h3>
+          <label for="mpstats-keystore-file">Файл ключей</label><input id="mpstats-keystore-file" type="file" accept=".json,.enc.json">
+          <label for="mpstats-open-password">Пароль файла</label><input id="mpstats-open-password" type="password" autocomplete="current-password">
+          <button id="mpstats-open-keystore" type="button">Открыть</button>
+          <button id="mpstats-lock" type="button">Заблокировать ключи</button>
+        </article>
+      </section>
     </main>
   </div>
+  <script src="/assets/js/keystore.js" defer></script>
+  <script src="/assets/js/competitor_state.js" defer></script>
   <script src="/assets/js/app.js" defer></script>
 </body>
 </html>

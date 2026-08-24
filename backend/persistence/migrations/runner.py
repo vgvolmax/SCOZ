@@ -12,6 +12,7 @@ MIGRATIONS = [
     (2, "ozon_products_import", "backend.persistence.migrations.migration_002_ozon_products_import"),
     (3, "ozon_search_visibility_import", "backend.persistence.migrations.migration_003_ozon_search_visibility_import"),
     (4, "pr5_query_data", "backend.persistence.migrations.migration_004_pr5_query_data"),
+    (5, "benchmark_selection", "backend.persistence.migrations.migration_005_benchmark_selection"),
 ]
 
 

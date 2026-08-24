@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from backend.config import DEFAULT_DB_PATH, resolve_db_path
-from backend.persistence.connection import connect, transaction
+from backend.persistence.connection import connect, immediate_transaction, transaction
 from backend.persistence.database import initialize_database
 
 
@@ -83,6 +83,64 @@ def test_transaction_rolls_back_and_closes_connection_on_exception(tmp_path):
         yielded_connection.execute("SELECT 1")
 
 
+def test_immediate_transaction_commits_and_closes(tmp_path):
+    db_path = tmp_path / "immediate.db"
+    with immediate_transaction(db_path) as connection:
+        yielded_connection = connection
+        connection.execute("CREATE TABLE marker (value TEXT)")
+        connection.execute("INSERT INTO marker VALUES ('persisted')")
+
+    with sqlite3.connect(db_path) as verification:
+        assert verification.execute("SELECT value FROM marker").fetchone() == ("persisted",)
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        yielded_connection.execute("SELECT 1")
+
+
+def test_immediate_transaction_rolls_back_and_closes(tmp_path):
+    db_path = tmp_path / "immediate.db"
+    with sqlite3.connect(db_path) as setup:
+        setup.execute("CREATE TABLE marker (value TEXT)")
+
+    with pytest.raises(RuntimeError, match="stop"):
+        with immediate_transaction(db_path) as connection:
+            yielded_connection = connection
+            connection.execute("INSERT INTO marker VALUES ('discarded')")
+            raise RuntimeError("stop")
+
+    with sqlite3.connect(db_path) as verification:
+        assert verification.execute("SELECT value FROM marker").fetchall() == []
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        yielded_connection.execute("SELECT 1")
+
+
+def test_transaction_retains_deferred_behavior(tmp_path):
+    db_path = tmp_path / "deferred.db"
+    with sqlite3.connect(db_path) as setup:
+        setup.execute("CREATE TABLE marker (value TEXT)")
+
+    with transaction(db_path) as connection:
+        assert not connection.in_transaction
+        connection.execute("SELECT * FROM marker").fetchall()
+        assert not connection.in_transaction
+
+
+def test_immediate_transaction_exposes_locked_timeout(tmp_path):
+    db_path = tmp_path / "locked.db"
+    with sqlite3.connect(db_path) as setup:
+        setup.execute("CREATE TABLE marker (value TEXT)")
+
+    first = sqlite3.connect(db_path)
+    first.execute("BEGIN IMMEDIATE")
+    try:
+        with pytest.raises(sqlite3.OperationalError) as caught:
+            with immediate_transaction(db_path):
+                pass
+        assert caught.value.sqlite_errorcode in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+    finally:
+        first.rollback()
+        first.close()
+
+
 def test_initialize_database_creates_only_parent_and_migrated_database(tmp_path):
     db_path = tmp_path / "state" / "scoz.db"
 
@@ -97,8 +155,9 @@ def test_initialize_database_creates_only_parent_and_migrated_database(tmp_path)
         ).fetchall() == [
             (1, "core_foundation"),
             (2, "ozon_products_import"),
-                (3, "ozon_search_visibility_import"),
-                (4, "pr5_query_data"),
+                    (3, "ozon_search_visibility_import"),
+                    (4, "pr5_query_data"),
+                    (5, "benchmark_selection"),
             ]
 
 
@@ -123,4 +182,5 @@ def test_initialize_database_is_idempotent_and_resolves_environment_late(
                 (2, "ozon_products_import"),
                 (3, "ozon_search_visibility_import"),
                 (4, "pr5_query_data"),
+                (5, "benchmark_selection"),
             ]

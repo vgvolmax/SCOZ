@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -30,7 +32,7 @@ def test_no_frontend_toolchain_or_future_ui():
     assert not (ROOT / "package.json").exists()
     assert not (ROOT / "frontend/src").exists()
     combined = "\n".join(p.read_text(encoding="utf-8") for p in (ROOT / "frontend").rglob("*.*"))
-    for forbidden in ("ReactDOM", "Диагностика", "Разгон", "Конкуренты", "MPStats", "API credentials"):
+    for forbidden in ("ReactDOM", "Диагностика", "Разгон", "Конкуренты", "API credentials"):
         assert forbidden not in combined
 
 
@@ -82,7 +84,7 @@ def test_pr4_does_not_leak_future_analytics_ui():
         path.read_text(encoding="utf-8") for path in (ROOT / "frontend").rglob("*.*")
     ).casefold()
     for forbidden in (
-        "heatmap", "benchmark", "query opportunity", "тепловая карта",
+        "heatmap", "query opportunity", "тепловая карта",
         "анализ запросов", "карточки конкурентов", "оценка кластера",
     ):
         assert forbidden not in combined
@@ -110,3 +112,143 @@ def test_pr5_query_imports_and_global_readiness_contract():
     ):
         assert value in js
     assert "data.items.some" not in js
+
+
+def test_ci_runs_both_js_checks_and_keystore_contract_without_npm():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    for command in (
+        "python -m pytest -q",
+        "node --check frontend/assets/js/app.js",
+        "node --check frontend/assets/js/keystore.js",
+        "node tests/keystore_contract.mjs",
+    ):
+        assert command in workflow
+    assert "npm " not in workflow
+
+
+def test_candidate_renderer_uses_frozen_transport_field_names():
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    for field in ("source_title", "contextual_price_rub", "matched_relevant_query_count", "representative_observed_at"):
+        assert f"item.{field}" in js
+
+
+def test_only_owned_products_expose_competitor_entry():
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    assert "Выбрать конкурентов" in js
+    assert "item.is_owned" in js
+    assert "openCompetitorWorkspace(product)" in js
+
+
+def test_competitor_workspace_has_active_context_and_relevance_states():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    for hook in ("competitors-workspace", "competitors-context", "relevant-queries-panel",
+                 "relevant-queries-status", "relevant-queries-table", "relevant-queries-save"):
+        assert f'id="{hook}"' in html
+    for value in ("loadRelevantQueries(productId)", "renderRelevantQueries(selection)",
+                  "saveRelevantQueries(productId)", "NO_OWN_QUERY_DATA", "Нет в свежем периоде",
+                  "Искали", "Видели", "Средняя позиция", "Заказано", "Выручка"):
+        assert value in html + js
+
+
+def test_candidate_and_selected_panels_have_exact_controls():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    for hook in ("benchmark-candidates-panel", "benchmark-candidates-status",
+                 "benchmark-candidates-list", "benchmark-candidates-prev", "benchmark-candidates-next",
+                 "benchmark-selected-panel", "benchmark-selected-list", "manual-ozon-product-id",
+                 "manual-candidate-add", "benchmark-save", "benchmark-save-status"):
+        assert f'id="{hook}"' in html
+    for function in ("loadBenchmark(productId)", "loadCandidates(productId, offset)",
+                     "renderCandidates(page)", "addManualCandidate(productId)",
+                     "renderSelectedBenchmark()", "saveBenchmark(productId)"):
+        assert function in js
+    assert 'placeholder="123456789"' in html
+
+
+def test_stale_no_evidence_error_and_revision_feedback_are_renderable():
+    combined = "\n".join(p.read_text(encoding="utf-8") for p in (ROOT / "frontend").rglob("*.*"))
+    for value in ("NO_CANDIDATE_EVIDENCE", "Нет в свежем периоде", "Ещё не сохранено",
+                  "Состав не изменился — revision", "Сохраняем…", "Фото недоступно"):
+        assert value in combined
+
+
+def test_frontend_uses_committed_classic_assets_without_framework():
+    combined = "\n".join(p.read_text(encoding="utf-8") for p in (ROOT / "frontend").rglob("*.*"))
+    assert "const competitorState =" in combined and "selectedProductIds: new Set()" in combined
+    assert "candidateOffset: 0" in combined
+    for forbidden in ("React", "Vue", "localStorage", "sessionStorage", "score", "Query Opportunity"):
+        assert forbidden not in combined
+
+
+def test_settings_source_controls_and_memory_only_state():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    for hook in ("mpstats-token", "mpstats-probe-sku", "mpstats-test", "mpstats-status",
+                 "mpstats-save-password", "mpstats-save-password-confirm", "mpstats-save-keystore",
+                 "mpstats-keystore-file", "mpstats-open-password", "mpstats-open-keystore", "mpstats-lock"):
+        assert f'id="{hook}"' in html
+    assert "let credentialState = null;" in js
+    for function in ("testMpstatsSource()", "loadMpstatsPhotos()", "saveMpstatsKeystore()",
+                     "openMpstatsKeystore()", "lockCredentials()"):
+        assert function in js
+
+
+def test_credentials_never_use_browser_persistence_or_urls():
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    for forbidden in ("localStorage", "sessionStorage", "indexedDB", "document.cookie",
+                      "auth-token", "?token=", "/api/credentials", "/api/keystore"):
+        assert forbidden not in js
+    assert 'body:JSON.stringify({token:' in js
+    assert 'type="password"' in (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+
+
+def test_unlock_failure_preserves_old_state_and_clears_password():
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    assert "const previousState=credentialState" in js
+    assert "credentialState=previousState" in js
+    assert 'openPassword.value=""' in js
+
+
+def test_save_requires_matching_confirmation():
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    assert "password!==confirmation" in js
+    assert "ScozKeystore.encryptMpstatsCredentials" in js
+    assert "ScozKeystore.downloadEnvelope" in js
+
+
+def test_lock_clears_credentials_inputs_status_and_preview_urls():
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    assert "credentialState=null" in js
+    for value in ("mpstats-token", "mpstats-save-password", "mpstats-save-password-confirm",
+                  "mpstats-keystore-file", "mpstats-open-password", "mpstats-status"):
+        assert value in js
+    assert 'item.photo_url=null' in js and 'item.photo_status="NOT_REQUESTED"' in js
+
+
+def test_windows_smoke_db_python_snippets_are_transported_over_stdin():
+    smoke = Path("tests/windows_smoke.ps1").read_text(encoding="utf-8")
+
+    assert "$schemaCode = @'" in smoke
+    assert "$seed = @'" in smoke
+    assert 'c.execute(\\"SELECT' not in smoke
+    assert 'c.execute(\\"INSERT' not in smoke
+    assert "$Code | & $python - $db @Arguments" in smoke
+    assert "& $python -c $Code $db @Arguments" not in smoke
+
+
+def test_competitor_state_behavioral_contract():
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is unavailable")
+    result = subprocess.run(
+        [node, "tests/competitor_state_contract.mjs"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "competitor state contract: PASS" in result.stdout

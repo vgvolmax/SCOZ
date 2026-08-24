@@ -16,6 +16,7 @@ def test_runtime_inputs():
         "uvicorn==0.51.0",
         "openpyxl==3.1.5",
         "python-multipart==0.0.32",
+        "httpx==0.28.1",
     ]
     assert "pytest" in (ROOT / "requirements-dev.txt").read_text()
     assert DEFAULT_DB_PATH == DATA_DIR / "scoz.db"
@@ -30,6 +31,7 @@ def test_runtime_inputs_include_exact_pr3_dependencies_and_no_pandas():
         "uvicorn==0.51.0",
         "openpyxl==3.1.5",
         "python-multipart==0.0.32",
+        "httpx==0.28.1",
     ]
     assert all("pandas" not in requirement.lower() for requirement in requirements)
 

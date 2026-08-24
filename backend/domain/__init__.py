@@ -13,6 +13,20 @@ from backend.domain.lineage import (
     InvalidStoredRelativePath,
     SourceArtifact,
 )
+from backend.domain.benchmark_selection import (
+    BenchmarkCandidate, BenchmarkComposition, BenchmarkCompositionWriteResult,
+    BenchmarkConcurrentWriteError, BenchmarkEmptyError, BenchmarkMember,
+    BenchmarkMemberInvalidError, BenchmarkSelectionError, BenchmarkSet,
+    BenchmarkSetRevision, BenchmarkWriteKind, CandidatePage, CandidateReadiness,
+    ManualCandidateWriteResult, ManualOzonSkuInvalidError, MPStatsAuthError,
+    MPStatsConnectionResult, MPStatsConnectionStatus, MPStatsMalformedResponseError,
+    MPStatsNetworkError, MPStatsPendingError, MPStatsProductPreview,
+    MPStatsRateLimitError, MPStatsTimeoutError, MPStatsUpstreamError,
+    NoOwnQueryDataError, OwnProductCannotBeCompetitorError, PhotoStatus,
+    ProductNotOwnedError, RelevantQueryOption, RelevantQueryReadiness,
+    RelevantQuerySelection, RelevantQuerySelectionEmptyError,
+    RelevantQuerySelectionInvalidError, RelevantQueryWriteResult, SourcePeriod,
+)
 
 __all__ = [
     "ExternalIdentityConflict",
@@ -26,4 +40,16 @@ __all__ = [
     "InvalidSourceArtifactMetadata",
     "InvalidStoredRelativePath",
     "SourceArtifact",
+    "BenchmarkCandidate", "BenchmarkComposition", "BenchmarkCompositionWriteResult",
+    "BenchmarkConcurrentWriteError", "BenchmarkEmptyError", "BenchmarkMember",
+    "BenchmarkMemberInvalidError", "BenchmarkSelectionError", "BenchmarkSet",
+    "BenchmarkSetRevision", "BenchmarkWriteKind", "CandidatePage", "CandidateReadiness",
+    "ManualCandidateWriteResult", "ManualOzonSkuInvalidError", "MPStatsAuthError",
+    "MPStatsConnectionResult", "MPStatsConnectionStatus", "MPStatsMalformedResponseError",
+    "MPStatsNetworkError", "MPStatsPendingError", "MPStatsProductPreview",
+    "MPStatsRateLimitError", "MPStatsTimeoutError", "MPStatsUpstreamError",
+    "NoOwnQueryDataError", "OwnProductCannotBeCompetitorError", "PhotoStatus",
+    "ProductNotOwnedError", "RelevantQueryOption", "RelevantQueryReadiness",
+    "RelevantQuerySelection", "RelevantQuerySelectionEmptyError",
+    "RelevantQuerySelectionInvalidError", "RelevantQueryWriteResult", "SourcePeriod",
 ]

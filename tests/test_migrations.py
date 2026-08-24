@@ -28,7 +28,7 @@ def test_migration_001_creates_exact_schema_once(tmp_path):
     with sqlite3.connect(db_path) as connection:
         assert connection.execute(
             "SELECT version, name FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(1, "core_foundation"), (2, "ozon_products_import"), (3, "ozon_search_visibility_import"), (4, "pr5_query_data")]
+        ).fetchall() == [(1, "core_foundation"), (2, "ozon_products_import"), (3, "ozon_search_visibility_import"), (4, "pr5_query_data"), (5, "benchmark_selection")]
         assert _application_tables(connection) == {
             "schema_migrations",
             "products",
@@ -41,6 +41,10 @@ def test_migration_001_creates_exact_schema_once(tmp_path):
             "search_visibility_snapshots",
             "product_query_snapshots",
             "query_metric_snapshots",
+            "product_relevant_queries",
+            "benchmark_sets",
+            "benchmark_set_revisions",
+            "benchmark_members",
         }
         columns = {
             table: [tuple(row[1:6]) for row in connection.execute(f"PRAGMA table_info({table})")]
@@ -233,3 +237,79 @@ def test_failed_migration_rolls_back_ddl_and_metadata_and_preserves_cause(monkey
     assert "synthetic_first" not in _application_tables(connection)
     assert connection.execute("SELECT * FROM schema_migrations").fetchall() == []
     connection.close()
+
+
+def test_fresh_database_applies_migrations_one_through_five(tmp_path):
+    db_path = tmp_path / "fresh.db"
+    initialize_database(db_path)
+    with sqlite3.connect(db_path) as connection:
+        assert connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()[-1] == (5, "benchmark_selection")
+
+
+def test_migration_005_upgrades_populated_v4_without_changing_rows(monkeypatch):
+    connection = connect(":memory:")
+    monkeypatch.setattr(runner, "MIGRATIONS", runner.MIGRATIONS[:4])
+    run_migrations(connection)
+    connection.execute(
+        "INSERT INTO products (is_owned, created_at, updated_at) VALUES (1, 'created', 'updated')"
+    )
+    connection.execute("INSERT INTO search_queries (query_text, created_at) VALUES ('Exact  Query', 'created')")
+    connection.commit()
+    before = tuple(connection.execute("SELECT * FROM products").fetchone())
+    monkeypatch.undo()
+    run_migrations(connection)
+    assert tuple(connection.execute("SELECT * FROM products").fetchone()) == before
+    assert tuple(connection.execute("SELECT * FROM search_queries").fetchone())[1] == "Exact  Query"
+    assert connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 5
+    connection.close()
+
+
+def test_migration_005_schema_is_exact(tmp_path):
+    db_path = tmp_path / "schema.db"
+    initialize_database(db_path)
+    with sqlite3.connect(db_path) as connection:
+        expected_columns = {
+            "product_relevant_queries": [
+                ("product_id", "INTEGER", 1, None, 1),
+                ("search_query_id", "INTEGER", 1, None, 2),
+                ("selected_at", "TEXT", 1, None, 0),
+            ],
+            "benchmark_sets": [
+                ("id", "INTEGER", 0, None, 1),
+                ("own_product_id", "INTEGER", 1, None, 0),
+                ("created_at", "TEXT", 1, None, 0),
+            ],
+            "benchmark_set_revisions": [
+                ("id", "INTEGER", 0, None, 1),
+                ("benchmark_set_id", "INTEGER", 1, None, 0),
+                ("revision", "INTEGER", 1, None, 0),
+                ("created_at", "TEXT", 1, None, 0),
+            ],
+            "benchmark_members": [
+                ("benchmark_set_revision_id", "INTEGER", 1, None, 1),
+                ("product_id", "INTEGER", 1, None, 2),
+            ],
+        }
+        for table, expected in expected_columns.items():
+            assert [tuple(row[1:6]) for row in connection.execute(f"PRAGMA table_info({table})")] == expected
+
+        indexes = {
+            "idx_product_relevant_queries_query_product": ["search_query_id", "product_id"],
+            "idx_benchmark_set_revisions_current": ["benchmark_set_id", "revision"],
+            "idx_benchmark_members_product_revision": ["product_id", "benchmark_set_revision_id"],
+        }
+        for name, columns in indexes.items():
+            assert [row[2] for row in connection.execute(f"PRAGMA index_info({name})")] == columns
+
+        foreign_keys = {
+            (row[2], row[3], row[4], row[6])
+            for table in expected_columns
+            for row in connection.execute(f"PRAGMA foreign_key_list({table})")
+        }
+        assert ("products", "product_id", "id", "CASCADE") in foreign_keys
+        assert ("search_queries", "search_query_id", "id", "RESTRICT") in foreign_keys
+        assert ("products", "own_product_id", "id", "RESTRICT") in foreign_keys
+        assert ("benchmark_sets", "benchmark_set_id", "id", "CASCADE") in foreign_keys
+        assert ("benchmark_set_revisions", "benchmark_set_revision_id", "id", "CASCADE") in foreign_keys

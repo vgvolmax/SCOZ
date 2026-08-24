@@ -82,6 +82,27 @@ def test_visibility_only_product_stays_out_of_catalog_even_when_owned(repository
     ).is_owned is True
 
 
+@pytest.mark.parametrize("value", ["0", "00", "01", "-1", "+1", " 1", "1 ", "abc", "١", "１"])
+def test_resolver_rejects_zero_leading_zero_and_nondigit_ozon_ids(repository, value):
+    repo, connection = repository
+    with pytest.raises(ValueError, match="invalid Ozon product ID"):
+        repo.resolve_or_create_ozon_product(value)
+    assert connection.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 0
+
+
+def test_resolver_reuses_existing_canonical_identity(repository):
+    repo, _ = repository
+    first = repo.resolve_or_create_ozon_product("123")
+    assert repo.resolve_or_create_ozon_product("123") == first
+
+
+def test_identity_only_product_is_not_in_catalog_projection(repository):
+    repo, _ = repository
+    repo.resolve_or_create_ozon_product("456")
+    assert repo.list_ozon_products(limit=10, offset=0) == []
+    assert repo.count_ozon_products() == 0
+
+
 def test_external_identity_insert_and_lookup(repository):
     repo, _ = repository
     product = repo.create_product(is_owned=True)

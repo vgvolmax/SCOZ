@@ -114,7 +114,13 @@ class ProductRepository:
         return None if row is None else _product_from_row(row)
 
     def resolve_or_create_ozon_product(self, ozon_product_id: str) -> Product:
-        if not ozon_product_id.isdigit(): raise ValueError("invalid Ozon product ID")
+        if not (
+            ozon_product_id.isascii()
+            and ozon_product_id.isdigit()
+            and int(ozon_product_id) > 0
+            and str(int(ozon_product_id)) == ozon_product_id
+        ):
+            raise ValueError("invalid Ozon product ID")
         product = self.find_by_external_identity(source="ozon", identity_type="ozon_product_id", identity_value=ozon_product_id)
         if product is not None: return product
         product = self.create_product(is_owned=False)
