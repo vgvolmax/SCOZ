@@ -43,7 +43,7 @@ function Stop-Scoz {
 function Invoke-DbPython([string]$Code, [string[]]$Arguments = @()) {
     $python = Join-Path $app 'runtime/python.exe'
     $db = Join-Path $app 'data/scoz.db'
-    $output = & $python -c $Code $db @Arguments
+    $output = $Code | & $python - $db @Arguments
     if ($LASTEXITCODE -ne 0) { throw "Database verification failed: $LASTEXITCODE" }
     return $output
 }
@@ -53,7 +53,9 @@ function Assert-CoreMigration {
     $code = "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(list(c.execute('SELECT version,name FROM schema_migrations ORDER BY version')))"
     $rows = Invoke-DbPython $code
     Assert-True ($rows -eq "[(1, 'core_foundation'), (2, 'ozon_products_import'), (3, 'ozon_search_visibility_import'), (4, 'pr5_query_data'), (5, 'benchmark_selection')]") 'Migration metadata mismatch'
-    $schemaCode = "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); expected={'product_relevant_queries','benchmark_sets','benchmark_set_revisions','benchmark_members'}; actual={r[0] for r in c.execute(\"SELECT name FROM sqlite_master WHERE type='table'\")}; assert expected <= actual; print('PASS')"
+    $schemaCode = @'
+import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); expected={'product_relevant_queries','benchmark_sets','benchmark_set_revisions','benchmark_members'}; actual={r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}; assert expected <= actual; print('PASS')
+'@
     Assert-True ((Invoke-DbPython $schemaCode) -contains 'PASS') 'PR6 schema missing'
 }
 function Assert-Pr6Assets {
@@ -67,7 +69,9 @@ function Assert-Pr6Assets {
     catch { Assert-True ($_.Exception.Response.StatusCode.value__ -eq 404) 'PR6 benchmark error mapping mismatch' }
 }
 function Assert-Pr6Workflow {
-    $seed = "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('PRAGMA foreign_keys=ON'); t='2026-01-01T00:00:00+00:00'; own=c.execute('INSERT INTO products(is_owned,created_at,updated_at) VALUES(1,?,?)',(t,t)).lastrowid; comp=c.execute('INSERT INTO products(is_owned,created_at,updated_at) VALUES(0,?,?)',(t,t)).lastrowid; c.execute(\"INSERT INTO product_external_identities(product_id,source,identity_type,identity_value,source_account_scope,created_at) VALUES(?,?,?,?,?,?)\",(own,'ozon','ozon_product_id','700001','',t)); c.execute(\"INSERT INTO product_external_identities(product_id,source,identity_type,identity_value,source_account_scope,created_at) VALUES(?,?,?,?,?,?)\",(comp,'ozon','ozon_product_id','700002','',t)); q=c.execute('INSERT INTO search_queries(query_text,created_at) VALUES(?,?)',('portable query',t)).lastrowid; b=c.execute(\"INSERT INTO import_batches(source,import_kind,status,started_at) VALUES('ozon','portable','SUCCESS',?)\",(t,)).lastrowid; a=c.execute(\"INSERT INTO source_artifacts(import_batch_id,artifact_kind,content_sha256,byte_size,created_at) VALUES(?,?,?,?,?)\",(b,'portable','a'*64,1,t)).lastrowid; c.execute(\"INSERT INTO product_query_snapshots(product_id,search_query_id,period_start,period_end,revision,supersedes_snapshot_id,payload_sha256,import_batch_id,source_artifact_id,imported_at,searched_users,seen_users,position_state,average_position,search_to_card_conversion_pct,search_to_order_conversion_pct,ordered_units,ordered_revenue_rub) VALUES(?,?,?,?,1,NULL,?,?,?,?,1,1,'KNOWN',1,'1','1',1,'1')\",(own,q,'2026-01-01','2026-01-31','b'*64,b,a,t)); c.commit(); print(f'{own}|{comp}|{q}')"
+    $seed = @'
+import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('PRAGMA foreign_keys=ON'); t='2026-01-01T00:00:00+00:00'; own=c.execute('INSERT INTO products(is_owned,created_at,updated_at) VALUES(1,?,?)',(t,t)).lastrowid; comp=c.execute('INSERT INTO products(is_owned,created_at,updated_at) VALUES(0,?,?)',(t,t)).lastrowid; c.execute("INSERT INTO product_external_identities(product_id,source,identity_type,identity_value,source_account_scope,created_at) VALUES(?,?,?,?,?,?)",(own,'ozon','ozon_product_id','700001','',t)); c.execute("INSERT INTO product_external_identities(product_id,source,identity_type,identity_value,source_account_scope,created_at) VALUES(?,?,?,?,?,?)",(comp,'ozon','ozon_product_id','700002','',t)); q=c.execute('INSERT INTO search_queries(query_text,created_at) VALUES(?,?)',('portable query',t)).lastrowid; b=c.execute("INSERT INTO import_batches(source,import_kind,status,started_at) VALUES('ozon','portable','SUCCESS',?)",(t,)).lastrowid; a=c.execute("INSERT INTO source_artifacts(import_batch_id,artifact_kind,content_sha256,byte_size,created_at) VALUES(?,?,?,?,?)",(b,'portable','a'*64,1,t)).lastrowid; c.execute("INSERT INTO product_query_snapshots(product_id,search_query_id,period_start,period_end,revision,supersedes_snapshot_id,payload_sha256,import_batch_id,source_artifact_id,imported_at,searched_users,seen_users,position_state,average_position,search_to_card_conversion_pct,search_to_order_conversion_pct,ordered_units,ordered_revenue_rub) VALUES(?,?,?,?,1,NULL,?,?,?,?,1,1,'KNOWN',1,'1','1',1,'1')",(own,q,'2026-01-01','2026-01-31','b'*64,b,a,t)); c.commit(); print(f'{own}|{comp}|{q}')
+'@
     $ids = (Invoke-DbPython $seed).Split('|')
     $own = $ids[0]; $comp = [int]$ids[1]; $query = [int]$ids[2]
     $headers = @{ 'Content-Type' = 'application/json' }

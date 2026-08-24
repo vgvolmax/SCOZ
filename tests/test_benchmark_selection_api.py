@@ -234,3 +234,29 @@ def test_real_testclient_mpstats_validation_no_call_rate_limit_and_secret_absenc
     response = client.post("/api/sources/mpstats/test", json={"token":sentinel,"ozon_product_id":"123"})
     assert response.status_code == 429 and response.headers["Retry-After"] == "42"
     assert response.json()["retry_after_seconds"] == 42 and sentinel not in response.text
+
+
+@pytest.mark.parametrize(
+    ("path", "extra"),
+    [
+        ("/api/sources/mpstats/test", {"ozon_product_id": "123"}),
+        ("/api/sources/mpstats/ozon-product-previews", {"ozon_product_ids": ["123"]}),
+    ],
+)
+def test_invalid_mpstats_token_is_never_echoed_or_sent(monkeypatch, path, extra):
+    from fastapi.testclient import TestClient
+    from backend import main
+
+    calls = []
+
+    class Source:
+        def __init__(self, _client):
+            calls.append("source")
+
+    monkeypatch.setattr(main, "MPStatsClient", Source)
+    sentinel = "SECRET_TOKEN_" + "x" * 4096
+    response = TestClient(main.app).post(path, json={"token": sentinel, **extra})
+
+    assert response.status_code == 422
+    assert sentinel not in response.text
+    assert calls == []

@@ -157,6 +157,19 @@ PositiveStrictInt = Annotated[StrictInt, Field(gt=0)]
 def _is_canonical_ozon_product_id(value: str) -> bool:
     return value.isascii() and value.isdigit() and int(value) > 0 and str(int(value)) == value
 
+def _mpstats_token_is_valid(token: SecretStr) -> bool:
+    return 1 <= len(token.get_secret_value()) <= 4096
+
+def _invalid_mpstats_token_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=422,
+        content={"detail": [{
+            "type": "value_error",
+            "loc": ["body", "token"],
+            "msg": "Token length must be between 1 and 4096 characters",
+        }]},
+    )
+
 class RelevantQueriesRequest(BaseModel):
     search_query_ids: list[PositiveStrictInt] = Field(max_length=10_000)
 
@@ -169,11 +182,6 @@ class BenchmarkRevisionRequest(BaseModel):
 class MPStatsTestRequest(BaseModel):
     token: SecretStr
     ozon_product_id: StrictStr
-    @field_validator("token")
-    @classmethod
-    def validate_token(cls, value):
-        if not 1 <= len(value.get_secret_value()) <= 4096: raise ValueError("token length must be between 1 and 4096 characters")
-        return value
     @field_validator("ozon_product_id")
     @classmethod
     def validate_ozon_product_id(cls, value):
@@ -183,11 +191,6 @@ class MPStatsTestRequest(BaseModel):
 class MPStatsPreviewsRequest(BaseModel):
     token: SecretStr
     ozon_product_ids: list[StrictStr] = Field(min_length=1, max_length=500)
-    @field_validator("token")
-    @classmethod
-    def validate_token(cls, value):
-        if not 1 <= len(value.get_secret_value()) <= 4096: raise ValueError("token length must be between 1 and 4096 characters")
-        return value
     @field_validator("ozon_product_ids")
     @classmethod
     def validate_ozon_product_ids(cls, values):
@@ -273,6 +276,8 @@ def post_benchmark_revision(product_id: Annotated[int,Path(gt=0)],request:Benchm
 
 @app.post("/api/sources/mpstats/test")
 def post_mpstats_test(request:MPStatsTestRequest):
+    if not _mpstats_token_is_valid(request.token):
+        return _invalid_mpstats_token_response()
     try:
         with httpx.Client(follow_redirects=False) as client:
             result=BenchmarkSelectionService(db_path=resolve_db_path(),mpstats_client=MPStatsClient(client)).test_mpstats(request.token,request.ozon_product_id)
@@ -281,6 +286,8 @@ def post_mpstats_test(request:MPStatsTestRequest):
 
 @app.post("/api/sources/mpstats/ozon-product-previews")
 def post_mpstats_previews(request:MPStatsPreviewsRequest):
+    if not _mpstats_token_is_valid(request.token):
+        return _invalid_mpstats_token_response()
     try:
         with httpx.Client(follow_redirects=False) as client:
             result=BenchmarkSelectionService(db_path=resolve_db_path(),mpstats_client=MPStatsClient(client)).enrich_mpstats_previews(request.token,tuple(request.ozon_product_ids))
