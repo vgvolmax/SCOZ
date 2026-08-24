@@ -31,3 +31,19 @@ def transaction(
         raise
     finally:
         connection.close()
+
+
+@contextmanager
+def immediate_transaction(
+    db_path: Path | None = None,
+) -> Iterator[sqlite3.Connection]:
+    connection = connect(db_path)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        yield connection
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
