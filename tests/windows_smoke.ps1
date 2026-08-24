@@ -43,7 +43,7 @@ function Stop-Scoz {
 function Invoke-DbPython([string]$Code, [string[]]$Arguments = @()) {
     $python = Join-Path $app 'runtime/python.exe'
     $db = Join-Path $app 'data/scoz.db'
-    $output = & $python -c $Code $db @Arguments
+    $output = $Code | & $python - $db @Arguments
     if ($LASTEXITCODE -ne 0) { throw "Database verification failed: $LASTEXITCODE" }
     return $output
 }
