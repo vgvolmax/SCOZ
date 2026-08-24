@@ -226,13 +226,15 @@ def test_lock_clears_credentials_inputs_status_and_preview_urls():
     assert 'item.photo_url=null' in js and 'item.photo_status="NOT_REQUESTED"' in js
 
 
-def test_windows_smoke_pr6_python_snippets_use_literal_here_strings():
+def test_windows_smoke_db_python_snippets_are_transported_over_stdin():
     smoke = Path("tests/windows_smoke.ps1").read_text(encoding="utf-8")
 
     assert "$schemaCode = @'" in smoke
     assert "$seed = @'" in smoke
     assert 'c.execute(\\"SELECT' not in smoke
     assert 'c.execute(\\"INSERT' not in smoke
+    assert "$Code | & $python - $db @Arguments" in smoke
+    assert "& $python -c $Code $db @Arguments" not in smoke
 
 
 def test_competitor_state_behavioral_contract():
