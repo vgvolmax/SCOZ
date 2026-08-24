@@ -57,7 +57,7 @@ PR7 does not include:
 - a migration, new table/entity, new dependency, new source adapter, or changes to source ingestion contracts;
 - MPStats sales estimates or any MPStats input in calculations;
 - `missed_sales_source_value`, `promotion_discount_source_value`, turnover change, daily averages, stock, OOS days, promotion share/days, advertising days, or fields not listed in section 10;
-- minimum price: it is a valid source money fact but is excluded because average price is the single compact, comparable PR7 offer context and a second price row adds no required PR8 input;
+- minimum price: it was explicitly considered as a contextual metric, but is excluded because average price is the single compact, comparable PR7 offer context and a second price row adds no required PR8 input; exclusion does not imply that lower or higher minimum price would be good or bad;
 - silent period alignment, nearest-date matching, date tolerance, overlap estimation, averaging periods, extrapolation, interpolation, invented dimensions, invented dates, missing-to-zero conversion, clamping, or source-fact correction;
 - a separate advertising dashboard or a new Product Workspace/navigation model.
 
@@ -68,6 +68,21 @@ The sole numerical source is the current revision of `ProductSnapshot`, imported
 All catalog metrics exist with the same ProductSnapshot semantics for own products and competitors because ownership is a relation on the same `Product` entity. `buyout_share_pct` alone is nullable under the approved missing sentinel. Numeric zero is an observed fact. Other catalog source metrics are required by the source contract, although a competitor may have no compatible snapshot at all.
 
 The benchmark dependency is the current `BenchmarkSetRevision` and its immutable ordered-by-product-id repository representation. The calculation must report its identity and member count. Relevant-query evidence and MPStats photos justify composition upstream but are not calculation inputs.
+
+### 6.1 Hard boundary from PR6 candidate evidence
+
+PR6 candidate data is selection evidence, not a PR7 source fact. `BenchmarkCandidate.contextual_price_rub`, `best_position`, `representative_observed_at`, `source_title`, `seller_name`, matched-query/cluster counts, photos, MPStats preview data, frontend state, and transient manual-candidate metadata **must never** be read, copied, or used as fallback by Core Benchmark. In particular, candidate price cannot fill a missing `ProductSnapshot.average_price_rub` or a missing compatible snapshot.
+
+The only handoff from selection to measurement is persisted composition:
+
+```text
+BenchmarkSet -> current BenchmarkSetRevision -> BenchmarkMember.product_id
+                                                  |
+                                                  v
+                             compatible canonical ProductSnapshot history
+```
+
+Every saved member is authoritative even when its brand, category, title, seller, photo, candidate rank, price similarity, query count, cluster count, or Search Visibility position looks unusual. PR7 does not rerank or remove it. Availability filtering is runtime, metric-specific analysis only: it neither changes nor creates a `BenchmarkSetRevision` and never changes source facts.
 
 Source lineage remains on each snapshot through `id`, `revision`, `source_artifact_id`, `import_batch_id`, and `imported_at`. PR7 exposes the observation and import context required for transparency without exposing local artifact paths or raw files.
 
@@ -101,6 +116,20 @@ The application service executes the following deterministic algorithm in one re
 7. From each compatible snapshot, extract or derive each metric independently. A missing nullable source value or an unavailable derived value excludes that member only from that metric as `METRIC_UNAVAILABLE`.
 8. Corrections take effect naturally: a higher revision at the own anchor key replaces the superseded own payload; a higher revision at a competitor's exact compatible key replaces its superseded payload. Superseded rows are never additional sample members.
 
+The own-anchor policy is analytical policy, not an accidental reuse of repository ordering. Its semantic basis is: use the freshest source-generated observation; where that source date exposes multiple valid report windows, use the longest window because PR7 has no user-selected window and the longer observation is the least volatile comparison context. Repository SQL must implement this declared rule and tests must prove incidental row/insertion order cannot change it.
+
+Normative examples:
+
+| Case | Current own observations | Required anchor |
+|---|---|---|
+| A | `2026-08-23 / 7 days` only | `2026-08-23 / 7 days` |
+| B | `2026-08-23 / 28 days` only | `2026-08-23 / 28 days` |
+| C | `2026-08-23 / 7 days` and `2026-08-23 / 28 days` | `2026-08-23 / 28 days` (same-date longest-window rule) |
+| D | `2026-08-23 / 28 days` and `2026-08-22 / 7 days` | `2026-08-23 / 28 days` (freshest generated date wins before window length) |
+| E | revisions 1 and 2 for the chosen `2026-08-23 / 28 days` key | revision 2 of `2026-08-23 / 28 days`; revision 1 is superseded, not a sample row |
+
+These keys remain source context only. None of the examples creates or implies `period_start` or `period_end`.
+
 The own metric may itself be unavailable (`buyout_share_pct`, or advertising support with zero ordered units). That metric returns an unavailable own/comparison result while other metrics remain independent. Competitor availability is still summarized for transparency, but no median/delta/status is presented for a metric whose own value is unavailable.
 
 ## 9. Period and grain compatibility
@@ -119,23 +148,29 @@ Canonical display is `{window} дней · отчёт сформирован {DD
 
 ## 10. Exact Core Benchmark metric catalog
 
-The ordered API/UI catalog is frozen below. `metric_key`, Russian label, source/derivation, unit, direction, and display precision are normative.
+The ordered API/UI catalog is frozen below. `metric_id` is the stable machine/API identity and is independent of mutable Russian display wording. The table itself is the feature-specific PR7 catalog, not a generic Metric Registry. PR8 may refer to these IDs without parsing labels.
 
-| Order | `metric_key` | Russian label | Source or derivation | API `unit` | Direction | Display |
-|---:|---|---|---|---|---|---|
-| 1 | `ordered_amount_rub` | Заказано на сумму | source | `RUB` | `HIGHER_IS_BETTER` | whole ₽ |
-| 2 | `ordered_units` | Заказано, шт. | source | `UNITS` | `HIGHER_IS_BETTER` | integer |
-| 3 | `impressions_total` | Показы всего | source | `COUNT` | `HIGHER_IS_BETTER` | integer |
-| 4 | `search_catalog_views` | Просмотры в поиске и каталоге | source | `COUNT` | `HIGHER_IS_BETTER` | integer |
-| 5 | `card_views` | Просмотры карточки | source | `COUNT` | `HIGHER_IS_BETTER` | integer |
-| 6 | `impression_to_order_pct` | Конверсия из показа в заказ | source | `PERCENTAGE_POINTS` | `HIGHER_IS_BETTER` | 1 decimal + `%` |
-| 7 | `search_catalog_to_cart_pct` | В корзину из поиска и каталога | source | `PERCENTAGE_POINTS` | `HIGHER_IS_BETTER` | 1 decimal + `%` |
-| 8 | `card_to_cart_pct` | В корзину из карточки | source | `PERCENTAGE_POINTS` | `HIGHER_IS_BETTER` | 1 decimal + `%` |
-| 9 | `average_price_rub` | Средняя цена | source | `RUB` | `CONTEXTUAL` | whole ₽ |
-| 10 | `buyout_share_pct` | Доля выкупа | nullable source | `PERCENTAGE_POINTS` | `HIGHER_IS_BETTER` | 1 decimal + `%` |
-| 11 | `total_drr_pct` | Общая ДРР | source | `PERCENTAGE_POINTS` | `CONTEXTUAL` | 1 decimal + `%` |
-| 12 | `estimated_promotion_spend_rub` | Оценочные расходы на продвижение | derived | `RUB` | `CONTEXTUAL` | whole ₽, marked “оценка” |
-| 13 | `advertising_support_per_ordered_unit_rub` | Рекламная поддержка на заказанную единицу | derived | `RUB_PER_ORDERED_UNIT` | `CONTEXTUAL` | whole ₽/шт., marked “оценка” |
+`nullable` describes whether own/member extraction can be unavailable (`ProductSnapshot` absence is handled before extraction). `comparison=YES` means relative comparison is permitted when sample rules are met. `delta` freezes the only returned delta. `quantiles=YES (N>=4)` means Type-7 P25/P75 under section 14.
+
+| Order/group | `metric_id` | Source or exact formula | Russian UI label | API `unit` | Nullable | Direction | Comparison | Delta | Quantiles | Semantic notes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 / Result | `ordered_amount_rub` | `ProductSnapshot.ordered_amount_rub` | Заказано на сумму | `RUB` | NO | `HIGHER_IS_BETTER` | YES | absolute RUB | YES (N>=4) | Ordered amount, not verified buyout revenue. |
+| 2 / Result | `ordered_units` | `ProductSnapshot.ordered_units` | Заказано, шт. | `UNITS` | NO | `HIGHER_IS_BETTER` | YES | absolute units | YES (N>=4) | Ordered units, never “sold units”. |
+| 3 / Result | `buyout_share_pct` | `ProductSnapshot.buyout_share_pct` | Доля выкупа | `PERCENTAGE_POINTS` | YES | `HIGHER_IS_BETTER` | YES | percentage points | YES (N>=4) | Missing sentinel is unavailable, never zero. |
+| 4 / Traffic | `impressions_total` | `ProductSnapshot.impressions_total` | Показы всего | `COUNT` | NO | `HIGHER_IS_BETTER` | YES | absolute count | YES (N>=4) | Product-level exposure. |
+| 5 / Traffic | `search_catalog_views` | `ProductSnapshot.search_catalog_views` | Просмотры в поиске и каталоге | `COUNT` | NO | `HIGHER_IS_BETTER` | YES | absolute count | YES (N>=4) | No query/cluster grain is invented. |
+| 6 / Traffic | `card_views` | `ProductSnapshot.card_views` | Просмотры карточки | `COUNT` | NO | `HIGHER_IS_BETTER` | YES | absolute count | YES (N>=4) | Product-level card views. |
+| 7 / Conversion | `impression_to_order_pct` | `ProductSnapshot.impression_to_order_pct` | Конверсия из показа в заказ | `PERCENTAGE_POINTS` | NO | `HIGHER_IS_BETTER` | YES | percentage points | YES (N>=4) | Source value is already in percentage points. |
+| 8 / Conversion | `search_catalog_to_cart_pct` | `ProductSnapshot.search_catalog_to_cart_pct` | В корзину из поиска и каталога | `PERCENTAGE_POINTS` | NO | `HIGHER_IS_BETTER` | YES | percentage points | YES (N>=4) | Source value is already in percentage points. |
+| 9 / Conversion | `card_to_cart_pct` | `ProductSnapshot.card_to_cart_pct` | В корзину из карточки | `PERCENTAGE_POINTS` | NO | `HIGHER_IS_BETTER` | YES | percentage points | YES (N>=4) | Source value is already in percentage points. |
+| 10 / Offer | `average_price_rub` | `ProductSnapshot.average_price_rub` | Средняя цена | `RUB` | NO | `CONTEXTUAL` | YES | absolute RUB | YES (N>=4) | Relative position only; no price verdict. Candidate price is forbidden. |
+| 11 / Advertising | `total_drr_pct` | `ProductSnapshot.total_drr_pct` | Общая ДРР | `PERCENTAGE_POINTS` | NO | `CONTEXTUAL` | YES | percentage points | YES (N>=4) | Advertising, not `promotion_*`; no automatic efficiency verdict. |
+| 12 / Advertising | `estimated_ad_spend_rub` | `ordered_amount_rub * total_drr_pct / 100` | Оценка рекламных расходов | `RUB` | NO | `CONTEXTUAL` | YES | absolute RUB | YES (N>=4) | Derived estimate, not observed advertising spend. |
+| 13 / Advertising | `advertising_support_per_ordered_unit_rub` | `estimated_ad_spend_rub / ordered_units`, only when `ordered_units > 0` | Рекламная поддержка на заказанную единицу | `RUB_PER_ORDERED_UNIT` | YES | `CONTEXTUAL` | YES | absolute RUB/ordered unit | YES (N>=4) | Denominator is ordered units, never sold/bought-out units. |
+
+The canonical response/display group sequence is exactly Result, Traffic, Conversion, Offer, Advertising as represented by the numeric `Order` column; the numeric order, not group iteration, controls `metrics[]`. Labels may later change without changing `metric_id`.
+
+Display precision is also frozen: RUB and RUB-per-ordered-unit rows render whole rubles; `UNITS` and `COUNT` render integers; `PERCENTAGE_POINTS` renders one decimal plus `%`. Both derived advertising rows carry an explicit “Оценка” marker. Display rounding follows section 12 and never changes analytical values.
 
 Sales measures result; traffic measures exposure/engagement; conversion measures funnel effectiveness; average price supplies compact commercial context; buyout supplies post-order realization context; advertising rows show support rather than quality. All are product-level, same-source, same-context facts or deterministic derivatives and are useful inputs for later diagnostics without performing diagnosis here.
 
@@ -151,6 +186,16 @@ No percentage-point source value is converted on extraction: source `7.7` means 
 `LOWER_IS_BETTER` is deliberately not included because no PR7 metric has that unconditional meaning. Average price, DRR, estimated spend, and support per unit are contextual. In particular, lower advertising intensity must never map to good/win/green semantics.
 
 Direction is metadata separate from `ComparisonPosition`. The frontend may label “ниже/на уровне/выше медианы”; it must not label PR7 outputs “good”, “bad”, “win”, “loss”, “problem”, or “recommendation”.
+
+The three contracts are frozen separately:
+
+| Concept | PR7 contract | What it may mean |
+|---|---|---|
+| relative comparison | `ComparisonPosition` | only where own lies against the competitor median |
+| metric direction | `MetricDirection` | stable semantic metadata for possible later interpretation |
+| performance interpretation | **not calculated and not present in PR7 DTO/API** | PR8+ may combine multiple facts into a verdict under a separately approved contract |
+
+Consequently `ABOVE_BENCHMARK` is not `GOOD`, `BELOW_BENCHMARK` is not `BAD`, and direction does not invert or decorate comparison position. A `CONTEXTUAL` metric can have an available comparison and delta but can never receive an automatic business/performance verdict. The latest plan's generic phrase “performance status” is satisfied in PR7 only by factual comparison/readiness; diagnostic judgment remains explicitly sequenced to PR8.
 
 ## 12. Statistical contract
 
@@ -216,15 +261,15 @@ No relative delta is calculated or returned for any metric. Therefore no relativ
 
 ## 17. Comparison position
 
-`ComparisonPosition` has exactly `BELOW_MEDIAN`, `EQUAL_TO_MEDIAN`, `ABOVE_MEDIAN`, and `UNAVAILABLE`.
+`ComparisonPosition` has exactly `BELOW_BENCHMARK`, `WITHIN_BENCHMARK`, `ABOVE_BENCHMARK`, and `UNAVAILABLE`. In PR7 the comparison reference is exactly the median, so these names communicate relative benchmark position without encoding the implementation statistic or a business verdict.
 
 When own value exists and `sample_size >= 3`, compare exact, unrounded Decimal values:
 
-- own `< median` → `BELOW_MEDIAN`;
-- own `== median` → `EQUAL_TO_MEDIAN`;
-- own `> median` → `ABOVE_MEDIAN`.
+- own `< median` → `BELOW_BENCHMARK`;
+- own `== median` → `WITHIN_BENCHMARK`;
+- own `> median` → `ABOVE_BENCHMARK`.
 
-Otherwise it is `UNAVAILABLE`. Quartiles are descriptive distribution context and do not alter status. There are no tolerances, color-based success semantics, or thresholds hidden in UI. Direction remains a separate field, so `BELOW_MEDIAN + CONTEXTUAL` is never interpreted as good.
+Otherwise it is `UNAVAILABLE`. Quartiles are descriptive distribution context and do not alter status. There are no tolerances, color-based success semantics, or thresholds hidden in UI. Direction remains a separate field, so `BELOW_BENCHMARK + CONTEXTUAL` is never interpreted as good.
 
 ## 18. Confidence algorithm
 
@@ -237,11 +282,11 @@ Confidence is not a compatibility adjustment. Incompatible observations are remo
 For each own or compatible competitor snapshot, use exact existing facts:
 
 ```text
-estimated_promotion_spend_rub
+estimated_ad_spend_rub
     = ordered_amount_rub * total_drr_pct / Decimal(100)
 
 advertising_support_per_ordered_unit_rub
-    = estimated_promotion_spend_rub / Decimal(ordered_units)
+    = estimated_ad_spend_rub / Decimal(ordered_units)
 ```
 
 `total_drr_pct` is stored in percentage points, so `7.7` is divided by 100 exactly once in the spend formula. Spend is an **estimate**, not actual Performance advertising spend. The API/UI names and estimate marker are mandatory.
@@ -300,7 +345,7 @@ ExcludedBenchmarkMember
   reason: NO_COMPATIBLE_OBSERVATION | METRIC_UNAVAILABLE
 
 CoreBenchmarkMetric
-  metric_key: CoreBenchmarkMetricKey
+  metric_id: CoreBenchmarkMetricId
   label: str
   unit: MetricUnit
   direction: MetricDirection
@@ -325,11 +370,11 @@ CoreBenchmarkResult
   metrics: tuple[CoreBenchmarkMetric, ...]
 ```
 
-`CoreBenchmarkMetricKey` is exactly the ordered 13 keys in section 10. `MetricUnit` is exactly `RUB`, `UNITS`, `COUNT`, `PERCENTAGE_POINTS`, `RUB_PER_ORDERED_UNIT`. Other enums are exactly those defined in sections 11 and 15–20. Labels are returned by the backend contract rather than independently redefined in UI.
+`CoreBenchmarkMetricId` is exactly the ordered 13 keys in section 10. `MetricUnit` is exactly `RUB`, `UNITS`, `COUNT`, `PERCENTAGE_POINTS`, `RUB_PER_ORDERED_UNIT`. Other enums are exactly those defined in sections 11 and 15–20. Labels are returned by the backend contract rather than independently redefined in UI.
 
 For `NO_BENCHMARK`, `benchmark`, `observation`, and `metrics` are respectively `null`, `null`, and `[]`. For `NO_OWN_SOURCE_DATA`, benchmark is present, observation is `null`, and metrics is `[]`. Once an own anchor exists, all 13 metrics are returned in catalog order even when unavailable.
 
-Competitor values are sorted by `(value ASC, product_id ASC)` to make distribution inspection stable. Exclusions are sorted by `product_id ASC`. A member appears exactly once in either `competitor_values` or `excluded_members` for each metric. This explains why composition N differs from metric N without bloating a separate summary.
+Response detail ordering is identity-based and independent of metric value and member insertion order: included values and exclusions are each sorted by `(int(ozon_product_id) ASC, product_id ASC)`. Canonical Ozon product IDs are numeric strings under the existing identity contract; `product_id` is the deterministic tie-breaker. Statistical helpers separately sort a fresh Decimal value list numerically for median/quantiles. Equal values therefore cannot make identity order affect statistics. A member appears exactly once in either `competitor_values` or `excluded_members` for each metric. This explains why composition N differs from metric N without bloating a separate summary.
 
 ## 22. Persistence read requirements
 
@@ -404,7 +449,7 @@ HTTP 200, JSON keys exactly:
   },
   "metrics": [
     {
-      "metric_key": "impression_to_order_pct",
+      "metric_id": "impression_to_order_pct",
       "label": "Конверсия из показа в заказ",
       "unit": "PERCENTAGE_POINTS",
       "direction": "HIGHER_IS_BETTER",
@@ -416,7 +461,7 @@ HTTP 200, JSON keys exactly:
       "p75": "7.4",
       "absolute_delta": "-1.4",
       "sample_size": 7,
-      "comparison_position": "BELOW_MEDIAN",
+      "comparison_position": "BELOW_BENCHMARK",
       "confidence": "MEDIUM",
       "competitor_values": [
         {
@@ -548,7 +593,10 @@ Only the future implementation PR may touch these files:
 - different generated date rejected;
 - different report window rejected;
 - latest incompatible competitor snapshot not silently selected;
+- when a competitor's overall latest snapshot is incompatible but an older-date logical key exactly matches the own anchor, the current revision at that exact matching key is used; the newer incompatible key neither replaces nor suppresses it;
 - latest own current observation ordering includes deterministic same-date window tie;
+- own-anchor cases A–E in section 8, including same-date 7/28-day choice and freshest-date-before-window precedence;
+- shuffled repository insertion/return order cannot change the declared own-anchor policy;
 - no inferred `period_start`/`period_end` fields or date range in DTO/API/UI;
 - empty member lookup is valid and no nearest-date/tolerance/averaging path exists.
 
@@ -575,19 +623,40 @@ Only the future implementation PR may touch these files:
 
 - DRR `7.7` uses `7.7 / 100`, not `7.7` or `0.077 / 100`;
 - exact spend formula and support-per-unit formula;
+- `estimated_ad_spend_rub` uses `total_drr_pct`; no `promotion_*` field participates or acts as fallback;
+- support denominator is `ordered_units`, with no sold/bought-out-unit substitute or terminology;
 - zero units unavailable without exception/infinity/fake zero;
 - zero DRR with positive units yields exact zeros;
 - repeating Decimal division retains internal precision and canonical API text;
 - all advertising direction values are `CONTEXTUAL` and never produce GOOD/BAD/WIN labels.
 
+### Candidate/source separation and membership authority
+
+- `BenchmarkCandidate.contextual_price_rub`, Search Visibility rank/date/title/seller evidence, frontend candidate state, and MPStats previews never enter analytics dependencies or values;
+- absent compatible `ProductSnapshot` has no candidate/Search Visibility fallback;
+- a manually added saved member without any ProductSnapshot remains in composition and is reported as `NO_COMPATIBLE_OBSERVATION` for every metric;
+- brand/category/title/price/photo/seller mismatch never removes or reranks a saved member;
+- runtime metric exclusion neither changes current `BenchmarkSetRevision` nor creates a new revision;
+- `benchmark_member_count` may exceed each independently calculated `sample_size`, and included plus excluded detail explains the difference.
+
 ### Confidence, position, delta, and boundaries
 
 - N=0,1,2 → `INSUFFICIENT`; N=3,4 → `LOW`; N=5,9 → `MEDIUM`; N=10 → `HIGH`;
 - comparison boundary at N=2/3 and quartile boundary at N=3/4;
-- exact own below/equal/above median yields each position enum;
+- exact own below/equal/above median yields `BELOW_BENCHMARK`/`WITHIN_BENCHMARK`/`ABOVE_BENCHMARK`;
 - unavailable own or N<3 yields `UNAVAILABLE` position/null delta;
 - percentage-point absolute delta is p.p.; zero median works;
 - no relative-delta field and no direction-based status inversion.
+- `ABOVE_BENCHMARK` does not create positive performance interpretation;
+- every `CONTEXTUAL` metric can return relative position but never automatic GOOD/BAD interpretation.
+
+### Stable catalog and ordering
+
+- the exact 13 `metric_id` strings and numeric catalog order are stable in analytics, DTO, API, and UI;
+- changing a Russian label cannot change metric identity or result lookup;
+- `metrics[]` order is independent of dict/set/SQLite order;
+- included and excluded competitor detail follows numeric Ozon identity then `product_id`, independent of member insertion and metric values;
+- statistical median/quantiles use numeric Decimal sort, so identity ordering and equal-value ties cannot change results.
 
 ### Repository and application service
 
@@ -640,7 +709,20 @@ The Windows smoke must not test median/quantile/confidence matrices; those belon
 - Ozon ProductSnapshot is the only metric source. MPStats remains absent from numerical benchmark calculation.
 - Decimal calculation and explicit units preserve factual semantics; estimate labels preserve derived-fact provenance.
 
-## 34. Implementation acceptance criteria / Definition of Done
+## 34. Mandatory pre-commit self-review
+
+Before an implementation commit, review the diff and answer all of these affirmatively:
+
+- **Layer contamination:** no `BenchmarkCandidate`, Search Visibility candidate value, frontend selection metadata, or MPStats preview is used as a Core Benchmark source fact.
+- **Semantic contamination:** no mapping equates above with good, below with bad, or lower DRR/ad support with good; PR7 exposes no performance-verdict field.
+- **Temporal ambiguity:** same-date multiple windows deterministically select the longest current window after selecting the freshest generated date, exactly as section 8 cases A–E require.
+- **Naming ambiguity:** advertising is not called promotion; the estimate is `estimated_ad_spend_rub`; ordered units are never called sold units.
+- **Responsibility boundary:** `BenchmarkSelectionService` remains PR6 composition orchestration; derived analytics lives in the separate `CoreBenchmarkService` and pure feature module.
+- **User-context integrity:** analytics respects every saved member and filters only at runtime for exact observation compatibility or metric availability without mutating composition.
+- **Ordering:** metric response order, competitor detail order, and numeric statistical order follow their separate explicit contracts.
+- **Scope:** no PR8 diagnostics, automatic competitor scoring, generic framework, query/cluster benchmark, new adapter, historical UI/result persistence, `BenchmarkSnapshot`, `AdvertisingSnapshot`, or MPStats sales benchmark appears.
+
+## 35. Implementation acceptance criteria / Definition of Done
 
 PR7 implementation is complete only when:
 
@@ -656,8 +738,24 @@ PR7 implementation is complete only when:
 - the complete matrix in section 31 and all existing PR1–PR6 checks pass in applicable CI environments; the minimal Windows smoke passes in authoritative Windows CI;
 - diff/self-review confirms no source fact is changed and no real reports, database, credentials, or sensitive logs are committed.
 
-## 35. Implementation-plan handoff boundary
+## 36. Implementation-plan handoff boundary
 
 This document freezes what PR7 must build; it intentionally contains no task/commit sequence. After independent review and explicit approval, a **separate PR7 Implementation Plan** may translate these contracts into dependency-ordered TDD work. That plan must not reopen metric selection, compatibility, formulas, statistics, thresholds, DTO/API shapes, UI states, or file boundaries without a separately approved spec amendment.
+
+The plan author must treat these answers as closed:
+
+| Question | Frozen answer |
+|---|---|
+| Can Search Visibility/candidate price enter Core Benchmark? | **No.** |
+| Can PR7 remove a saved member for brand/category/title or other similarity concerns? | **No.** |
+| What is the product-level metric source? | The current revision of an exact-context canonical `ProductSnapshot`. |
+| Can generic latest competitor snapshot be used? | Only when its logical key happens to equal the exact anchor; lookup is by exact context, never by generic latest/fallback. |
+| Same generated date has 7- and 28-day own observations? | Choose the current 28-day observation under the same-date longest-window rule. |
+| Does `ABOVE_BENCHMARK` mean `GOOD`? | **No.** It states position only. |
+| Can a contextual metric receive an automatic business verdict? | **No.** |
+| Is estimated ad spend observed spend? | **No.** It is the labeled estimate `ordered_amount_rub * total_drr_pct / 100`. |
+| Advertising-support denominator? | `ordered_units`, only when greater than zero. |
+| Does `BenchmarkSelectionService` calculate analytics? | **No.** Separate `CoreBenchmarkService` owns orchestration. |
+| Can metric sample N be smaller than saved member count? | **Yes, independently per metric**, with every exclusion explained. |
 
 Work stops at this spec in the current task. PR7 production implementation and PR8 design/implementation must not begin here.
