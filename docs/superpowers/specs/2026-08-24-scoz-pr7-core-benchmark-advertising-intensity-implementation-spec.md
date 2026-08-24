@@ -86,7 +86,9 @@ Every saved member is authoritative even when its brand, category, title, seller
 
 Presentation metadata is a separate concern. The canonical internal Product identity is `Product.id`; SCOZ relationships including `BenchmarkMember.product_id`, `ProductSnapshot.product_id`, and `BenchmarkSet.own_product_id` refer to that stable internal identifier. The authoritative Ozon external identity for the corresponding internal Product is the canonical `ProductExternalIdentity` carrying `source = "ozon"`, `identity_type = "ozon_product_id"`, `identity_value = <canonical Ozon product ID>`, and `source_account_scope = ""`. Raw `ozon_product_id` must not be described as the overall canonical Product identity.
 
-For a benchmark member, `BenchmarkMember.product_id -> Product.id` is its internal identity. `BenchmarkMember.ozon_product_id` must correspond to that Product's canonical Ozon `ProductExternalIdentity`; PR7 introduces no second identity mechanism. `ProductSnapshot.title`, `seller_name`, `brand`, `product_url`, price, photo, and category are persisted source-observation/presentation facts, **not identity**. If Benchmark Detail displays title, seller, brand, or product URL, it may read them from a real source observation solely for display; none identifies or merges a Product, replaces `Product.id` or canonical `ProductExternalIdentity`, changes `BenchmarkMember.product_id` or benchmark composition, or participates in benchmark mathematics. Equal titles never merge Products, and seller/brand changes in a new source revision never create a new Product. When persisted presentation metadata is absent, the stable display fallback is canonical `ozon_product_id` and, if needed, internal `product_id`. The UI must not reconstruct title, price, seller, identity, or detail from transient PR6 candidate/frontend state. A manually saved member that has `Product`, `ProductExternalIdentity`, and `BenchmarkMember` but no `ProductSnapshot` remains in the revision, is excluded from ProductSnapshot-based metric samples, and may still be labeled by Ozon product ID; PR7 never deletes it automatically.
+For a benchmark member, `BenchmarkMember.product_id -> Product.id` is its persisted internal identity. **`BenchmarkMember.ozon_product_id` in the current domain/read model is a projection resolved from the existing canonical `ProductExternalIdentity`; it is not a second persisted benchmark identity and not a second source of truth.** The existing repository join may expose both IDs in a read DTO for usability and deterministic display ordering, but `benchmark_members` continues to persist only `benchmark_set_revision_id` and `product_id`. Benchmark composition remains stable through `product_id`; whenever API/UI presentation or deterministic ordering needs the external Ozon ID, it is resolved through the existing Product identity model. PR7 must not add an `ozon_product_id` benchmark column, copy Ozon identity into composition, create `BenchmarkMemberExternalIdentity` or another identity table, or introduce a parallel identity-resolution mechanism.
+
+`ProductSnapshot.title`, `seller_name`, `brand`, `product_url`, price, photo, and category are persisted source-observation/presentation facts, **not identity**. If Benchmark Detail displays title, seller, brand, or product URL, it may read them from a real source observation solely for display; none identifies or merges a Product, replaces `Product.id` or canonical `ProductExternalIdentity`, changes `BenchmarkMember.product_id` or benchmark composition, or participates in benchmark mathematics. Equal titles never merge Products, and seller/brand changes in a new source revision never create a new Product. No fallback may match or merge by title, brand plus seller, similar URL text, or any other presentation field. When persisted presentation metadata is absent, the stable display fallback is canonical `ozon_product_id` and, if needed, internal `product_id`. The UI must not reconstruct title, price, seller, identity, or detail from transient PR6 candidate/frontend state. A manually saved member that has `Product`, `ProductExternalIdentity`, and `BenchmarkMember` but no `ProductSnapshot` remains in the revision, is excluded from ProductSnapshot-based metric samples, and may still be labeled by Ozon product ID; PR7 never deletes it automatically.
 
 Source lineage remains on each snapshot through `id`, `revision`, `source_artifact_id`, `import_batch_id`, and `imported_at`. `imported_at` remains valid provenance/application metadata and a technical import/update timestamp; it may be exposed separately where useful. It is not business freshness and must not participate in business observation-context or business-freshness selection. For Ozon Product XLSX, business freshness is `report_generated_on`, while `report_window_days` describes the source report window. PR7 exposes these distinct observation and import contexts without exposing local artifact paths or raw files.
 
@@ -109,7 +111,9 @@ Only the current benchmark revision is calculated. After PR6 saves a new composi
 
 ## 8. Exact source-observation selection
 
-The candidate set for own analytical anchor selection consists of distinct logical `ProductSnapshot` observation contexts, not individual snapshot revision rows. In PR7 v1 one logical context is exactly `(product_id, report_generated_on, report_window_days)`. Revision is not an observation-context dimension: multiple revisions neither create additional anchor candidates nor influence anchor policy as separate observations nor increase the context count. Conceptually the service groups/resolves all own rows into logical contexts, selects one context, and only then resolves that context's current revision. Superseded revisions remain immutable source history/provenance only.
+The candidate set for own analytical anchor selection consists semantically of distinct logical `ProductSnapshot` observation contexts, not individual snapshot revision rows. In PR7 v1 one logical context is exactly `(product_id, report_generated_on, report_window_days)`. Revision is not an observation-context dimension: multiple revisions neither create additional anchor candidates nor influence anchor policy as separate observations nor increase the context count. Anchor selection therefore operates semantically over distinct logical contexts and then uses the current revision of the selected context. This does **not** require the analytics layer to load, group, inspect, or resolve historical revision rows.
+
+Persistence owns source-history/current-revision resolution; the application service orchestrates the required reads; pure Core Benchmark analytics receives only clean feature-specific current analytical inputs. Persistence must expose the smallest PR7-specific read contract needed to (1) select the eligible current logical observation context for the own Product, (2) return the current revision for that selected context, and (3) return current exact-compatible competitor observations for the same context. Superseded revisions remain immutable source evidence for audit, provenance, and repository-level source-history verification, but they must not be passed into Core Benchmark calculation merely so analytics can decide which revision is current. PR7 introduces no `GenericObservationResolver`, `SnapshotHistoryEngine`, `RevisionResolverFramework`, `TemporalAnalyticsRepository`, `ObservationContextRegistry`, or equivalent generic temporal infrastructure.
 
 For example, own history `2026-08-23 / 7 days / revision 1`, `2026-08-23 / 7 days / revision 2`, and `2026-08-23 / 28 days / revision 1` contains exactly two anchor candidates, not three. Correcting `D / 7 days / revision 1` to revision 2 preserves the same analytical observation context and merely changes its current revision.
 
@@ -401,7 +405,9 @@ list_current_for_products_at_context(
 
 The first implements section 8's explicit two-step rule: select the logical observation context using only `report_generated_on DESC, report_window_days DESC`, then select the maximum revision inside that key. It must not use `imported_at`, database `id`, INSERT/import order, or SQLite natural order to select the anchor. The second returns at most one maximum-revision row per requested product at exact equality context. It must safely handle an empty input without malformed SQL, parameterize every value, deduplicate requested IDs, and not return unrequested products. Chunking is unnecessary for current benchmark sizes unless existing SQLite parameter limits require a small repository-local implementation detail; this does not justify a generic repository.
 
-Reuse `BenchmarkSelectionRepository.get_benchmark()` and `ProductRepository.get_product()`. Analytics receives mapped domain objects, never a SQLite connection or rows. No SQL is added to application, analytics, route, or frontend code.
+These methods resolve revision history inside persistence and return only current domain observations. Neither the application service nor `backend/analytics/core_benchmark.py` receives all historical rows, groups revisions, inspects `supersedes_snapshot_id`, or decides which revision is current. Repository tests own detailed `rev1 -> rev2` resolution coverage; service/analytics tests consume the resolved current inputs at their own layer.
+
+Reuse `BenchmarkSelectionRepository.get_benchmark()` and `ProductRepository.get_product()`. The existing benchmark read model continues to resolve `BenchmarkMember.ozon_product_id` by joining the member's `product_id` to canonical `ProductExternalIdentity`; no benchmark identity value is newly persisted. Analytics receives mapped domain objects, never a SQLite connection, raw rows, or superseded revision history. No SQL is added to application, analytics, route, or frontend code.
 
 ## 23. Analytics module boundary
 
@@ -412,7 +418,7 @@ backend/analytics/__init__.py
 backend/analytics/core_benchmark.py
 ```
 
-`core_benchmark.py` is one feature-specific pure module. It accepts the own snapshot, benchmark revision/member identities, and a mapping of exact-context competitor snapshots; it returns the domain result/metrics. It owns the frozen catalog, extraction/derivation, median, Type-7 quartiles, sample formation, delta, position, and confidence. Small private pure helpers are allowed. It must not know FastAPI, SQLite, files, HTML, MPStats, credentials, or transaction management.
+`core_benchmark.py` is one feature-specific pure module. It accepts the already-resolved current own snapshot, benchmark revision/member identities, and a mapping of already-resolved current exact-context competitor snapshots; it returns the domain result/metrics. It owns the frozen catalog, extraction/derivation, median, Type-7 quartiles, sample formation, delta, position, and confidence. It does not load or resolve snapshot history. Small private pure helpers are allowed. It must not know FastAPI, SQLite, files, HTML, MPStats, credentials, or transaction management.
 
 This package is not a generic analytics framework. No public generic metric definition, registry, engine, repository, configuration DSL, or universal result is introduced.
 
@@ -564,6 +570,10 @@ Only the future implementation PR may touch these files:
 
 ## 31. Required automated-test matrix
 
+### Existing invariant coverage
+
+Keep the existing PR1–PR6 CI coverage for general `Product` identity, canonical `ProductExternalIdentity` uniqueness, ProductSnapshot revision semantics, and benchmark-membership integrity. If those tests already prove a general invariant (for example that equal presentation metadata does not establish Product identity), PR7 reuses that guarantee instead of mechanically duplicating the same scenario under a PR7 test filename. New tests below must add PR7 feature or layer-boundary value.
+
 ### Statistics
 
 - median odd N and even N, including exact fractional even median;
@@ -610,8 +620,9 @@ Only the future implementation PR may touch these files:
 
 ### Revisions and source purity
 
-- highest current ProductSnapshot correction used for own and competitor;
-- superseded revision never participates as current or second sample value;
+- repository tests prove the highest current ProductSnapshot correction is returned for own and competitor exact logical contexts;
+- service/integration coverage proves the repository-resolved current revision is used and a superseded revision never reaches calculation as current or a second sample value;
+- pure Core Benchmark unit tests use clean current inputs and do not recreate persistence revision-history resolution;
 - saving a new current benchmark revision changes composition and calculated result;
 - old benchmark revision/member rows remain unchanged;
 - calculation leaves all snapshot payload/revision/lineage rows byte-for-byte unchanged;
@@ -648,9 +659,9 @@ Only the future implementation PR may touch these files:
 - that manual member is not deleted and does not enter any ProductSnapshot metric sample; its stable presentation fallback is Ozon product ID when the UI shows it;
 - brand/category/title/price/photo/seller mismatch never removes or reranks a saved member;
 - persisted ProductSnapshot title/seller/brand/URL may be used only as presentation labels, while candidate metadata remains forbidden as an analytical fallback;
-- equal titles with different canonical Ozon product IDs remain distinct `Product` rows;
-- seller or brand changes in a new source revision neither create another Product nor change identity;
-- presentation-metadata changes preserve `BenchmarkMember.product_id` and benchmark composition, and `BenchmarkMember.ozon_product_id` continues to correspond to the Product's canonical Ozon `ProductExternalIdentity`;
+- one PR7-specific regression changes a saved member's title, seller, and brand presentation metadata and proves its `BenchmarkMember.product_id`, benchmark composition, and resolved Product remain unchanged, with no merge or reselection;
+- `BenchmarkMember.ozon_product_id` is resolved through the Product's canonical Ozon `ProductExternalIdentity`, while schema/repository assertions prove no external ID is duplicated in benchmark persistence;
+- Core Benchmark contains no matching fallback based on title, brand plus seller, URL similarity, or other presentation metadata;
 - runtime metric exclusion neither changes current `BenchmarkSetRevision` nor creates a new revision;
 - `benchmark_member_count` may exceed each independently calculated `sample_size`, and the three aggregate exclusion counts explain the difference without a per-member exclusion DTO.
 
@@ -676,6 +687,7 @@ Only the future implementation PR may touch these files:
 
 - repository methods parameterize and restrict requested product IDs/context;
 - current revision per exact logical key and stable latest-own ordering;
+- repositories, not analytics, resolve current revisions; analytics is not passed superseded history;
 - application uses one read boundary, never mutates, and passes domain objects to analytics;
 - product missing/non-owned exceptions remain distinct;
 - unexpected SQLite error is not mapped to analytical no-data.
@@ -731,10 +743,13 @@ Before an implementation commit, review the diff and answer all of these affirma
 - **Common anchor:** one response uses exactly one own ProductSnapshot context for every PR7 product-level source and derived metric, with no `SHOULD`, optional fallback, or metric-specific escape hatch.
 - **Anchor purity / technical-order independence:** own-anchor selection reads only own ProductSnapshot business observation keys and cannot change with benchmark composition, competitor sample, metric availability, confidence, result statistics, `imported_at`, database ID, INSERT/import order, or SQLite/repository return order.
 - **Revision purity:** exact observation-context selection is completed before choosing its current revision; a later correction changes the current revision but not the business observation context, and an older compatible logical context is not confused with a superseded revision of that context.
+- **Revision responsibility:** `ProductSnapshotRepository` resolves current revisions and supplies only current feature inputs; Core Benchmark analytics never loads, groups, or inspects superseded revision history.
 - **Semantic contamination:** no mapping equates above with good, below with bad, or lower DRR/ad support with good; PR7 exposes no performance-verdict field.
 - **DTO YAGNI:** `comparison_position` plus `direction` preserve the required distinction without a redundant performance-interpretation field/enum.
 - **Explainability YAGNI:** the aggregate three-reason exclusion summary accounts for member count versus sample size without per-member exclusion history.
 - **Presentation/identity/source separation:** candidate/transient metadata is never a metric input; persisted ProductSnapshot title/seller/brand/URL is presentation metadata only; `Product.id` is canonical internal identity, and canonical `ProductExternalIdentity` carrying `ozon_product_id` is authoritative Ozon external identity. Title/brand/seller neither establish nor change identity, while presentation values may still be displayed.
+- **Identity persistence:** `benchmark_members` still persists membership only through `product_id`; read-model `BenchmarkMember.ozon_product_id` is resolved from canonical `ProductExternalIdentity`, with no duplicate benchmark column, identity table, or source of truth.
+- **Identity regression/coverage:** changing title, seller, or brand leaves saved `product_id` membership and Core Benchmark resolution unchanged, while general identity invariants already covered by PR1–PR6 are not duplicated without PR7-specific value.
 - **Temporal ambiguity:** same-date multiple windows deterministically select the longest current window after selecting the freshest generated date, exactly as section 8 cases A–E require.
 - **Naming ambiguity:** advertising is not called promotion; the estimate is `estimated_ad_spend_rub`; ordered units are never called sold units.
 - **Responsibility boundary:** `BenchmarkSelectionService` remains PR6 composition orchestration; derived analytics lives in the separate `CoreBenchmarkService` and pure feature module.
@@ -779,13 +794,16 @@ The plan author must treat these answers as closed:
 | Can persisted ProductSnapshot title/seller/brand/URL label a competitor in the UI? | **Yes, for presentation only**, never as a mathematical input. |
 | What is canonical internal Product identity? | `Product.id`. Relationships such as `BenchmarkMember.product_id` refer to it. |
 | What is authoritative Ozon external identity? | The canonical `ProductExternalIdentity` carrying `ozon_product_id` for the corresponding internal Product. |
+| Is `BenchmarkMember.ozon_product_id` persisted in benchmark composition? | **No.** It is a read-model projection resolved from canonical `ProductExternalIdentity`; `benchmark_members` persists `product_id`. |
 | Can title, brand, or seller establish Product identity? Can they appear in Benchmark Detail? | **No** to identity; **yes** as persisted source presentation metadata when available. |
+| Can presentation metadata changes alter membership or cause Core Benchmark reselection/merge? | **No.** Membership remains the saved `product_id`, and matching never falls back to title, seller, brand, or URL. |
 | Can PR7 remove a saved member for brand/category/title or other similarity concerns? | **No.** |
 | Is a manual member without ProductSnapshot removed or sampled? | **Neither:** it remains in composition, is excluded from ProductSnapshot samples, and may display by Ozon ID. |
 | What is the product-level metric source? | The current revision of an exact-context canonical `ProductSnapshot`. |
 | Can generic latest competitor snapshot be used? | Only when its logical key happens to equal the exact anchor; lookup is by exact context, never by generic latest/fallback. |
 | If a newer incompatible competitor context and an older exact-compatible context exist? | Use the **current revision of the exact-compatible context**. |
 | Can a superseded revision at that exact-compatible context be used? | **No.** |
+| Does Core Benchmark analytics load or resolve superseded revision history? | **No.** Persistence resolves the current revision and analytics receives clean current inputs. |
 | Same generated date has 7- and 28-day own observations? | Choose the current 28-day observation under the same-date longest-window rule. |
 | Does `ABOVE_BENCHMARK` mean `GOOD`? | **No.** It states position only. |
 | Can a contextual metric receive an automatic business verdict? | **No.** |
