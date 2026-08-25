@@ -79,6 +79,23 @@ def test_pr4_search_visibility_import_and_history_contract():
         assert value in js
 
 
+def test_ozon_products_partial_success_refreshes_history_and_products():
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    function = js.split("async function submitOzonProductsImport(file){", 1)[1].split(
+        "async function submitSearchVisibilityImport(file){", 1
+    )[0]
+
+    partial_branch = 'if(result.status==="PARTIAL_SUCCESS")'
+    success_outcome = 'outcome={state:"success",message:`Импорт завершён'
+    refresh = "await Promise.all([loadImports(),loadProducts()]);"
+
+    assert 'if(!response.ok)' in function
+    assert '}else{if(result.status==="PARTIAL_SUCCESS")' in function
+    assert function.count(refresh) == 1
+    assert function.index(partial_branch) < function.index(success_outcome) < function.index(refresh)
+    assert function.index(refresh) < function.index("}catch{")
+
+
 def test_pr4_does_not_leak_future_analytics_ui():
     combined = "\n".join(
         path.read_text(encoding="utf-8") for path in (ROOT / "frontend").rglob("*.*")
