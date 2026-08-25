@@ -2,7 +2,7 @@
 
 ## 1. Status, authority, and analysis base
 
-**Status:** Proposed, awaiting independent review and approval. This document is the PR-specific authority for the future implementation of **PR7 — Core Benchmark & Advertising Intensity**. It is not an Implementation Plan and does not authorize PR8 work.
+Status: Approved for PR7 implementation. This document is the PR-specific authority for the future implementation of **PR7 — Core Benchmark & Advertising Intensity**. It is not an Implementation Plan and does not authorize PR8 work.
 
 ```text
 PR7_SPEC_BASE_SHA=3cedb9e9b9f3a3769a37b1e22c1f58d0ff84faff
