@@ -27,6 +27,10 @@ class CpoState(str, Enum):
     DISABLED = "DISABLED"
     UNAVAILABLE = "UNAVAILABLE"
 
+class CpcState(str, Enum):
+    ACTIVE = "ACTIVE"
+    DISABLED = "DISABLED"
+
 
 @dataclass(frozen=True)
 class SearchVisibilitySnapshot:
@@ -46,7 +50,8 @@ class SearchVisibilitySnapshot:
     position: int
     overall_score: Decimal
     promotion_status: str
-    cpc_rub: Decimal
+    cpc_state: CpcState
+    cpc_rub: Decimal | None
     promotion_strategy: str
     cpo_state: CpoState
     cpo_pct: Decimal | None
@@ -179,7 +184,7 @@ def search_visibility_snapshot_payload(values: Mapping[str, object]) -> dict[str
         value = values[name]
         if isinstance(value, Decimal):
             value = canonical_decimal_text(value)
-        elif isinstance(value, CpoState):
+        elif isinstance(value, (CpcState, CpoState)):
             value = value.value
         result[name] = value
     return result

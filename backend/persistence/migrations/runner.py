@@ -13,6 +13,7 @@ MIGRATIONS = [
     (3, "ozon_search_visibility_import", "backend.persistence.migrations.migration_003_ozon_search_visibility_import"),
     (4, "pr5_query_data", "backend.persistence.migrations.migration_004_pr5_query_data"),
     (5, "benchmark_selection", "backend.persistence.migrations.migration_005_benchmark_selection"),
+    (6, "search_visibility_cpc_state", "backend.persistence.migrations.migration_006_search_visibility_cpc_state"),
 ]
 
 

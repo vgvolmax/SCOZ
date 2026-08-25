@@ -8,6 +8,7 @@ from openpyxl import Workbook, load_workbook
 
 from backend.domain.search_visibility import (
     Cluster,
+    CpcState,
     CpoState,
     OzonSearchVisibilityError,
     ParsedSearchVisibilityReport,
@@ -65,7 +66,8 @@ def test_parses_exact_report_context_and_normalized_payload(tmp_path: Path) -> N
     assert values == {
         "source_title": "Синтетический товар", "seller_name": "Синтетический продавец",
         "position": 1147, "overall_score": Decimal("0.052"),
-        "promotion_status": "Продвигается", "cpc_rub": Decimal("22.32"),
+        "promotion_status": "Продвигается", "cpc_state": CpcState.ACTIVE,
+        "cpc_rub": Decimal("22.32"),
         "promotion_strategy": "Средняя стоимость клика", "cpo_state": CpoState.ACTIVE,
         "cpo_pct": Decimal("10"), "relevance_score": Decimal("74.50"),
         "rating": Decimal("4.8"), "reviews_count": 33026,
@@ -84,6 +86,21 @@ def test_cpo_distinct_non_active_states(tmp_path: Path, field: str, value: str, 
     report = _parse_rows(tmp_path, [_row(**{field: value})])
     assert report.rows[0].snapshot_values["cpo_state"] is expected
     assert report.rows[0].snapshot_values["cpo_pct"] is None
+
+def test_cpc_numeric_and_disabled_are_distinct(tmp_path: Path) -> None:
+    active=_parse_rows(tmp_path,[_row(**{"Ставка\nОплата за клик":"0,00 ₽"})]).rows[0]
+    disabled=_parse_rows(tmp_path,[_row(**{"Ставка\nОплата за клик":"Выключено","Стратегия":"—"})]).rows[0]
+    assert (active.snapshot_values['cpc_state'],active.snapshot_values['cpc_rub'])==(CpcState.ACTIVE,Decimal('0.00'))
+    assert (disabled.snapshot_values['cpc_state'],disabled.snapshot_values['cpc_rub'])==(CpcState.DISABLED,None)
+    assert active.payload_sha256 != disabled.payload_sha256
+
+@pytest.mark.parametrize('sentinel',['—','Нет данных',''])
+def test_unsupported_cpc_sentinel_is_rejected(tmp_path: Path, sentinel: str) -> None:
+    report=_parse_rows(tmp_path,[_row(**{"Ставка\nОплата за клик":sentinel})])
+    assert report.rows==() and report.row_errors[0].code=='INVALID_METRIC_VALUE'
+
+def test_search_visibility_accepts_a1_stored_dimension_with_real_cells(tmp_path: Path) -> None:
+    assert len(_parse(tmp_path,dimension_ref='A1').rows)==1
 
 
 def test_exact_reviews_missing_sentinel_is_valid(tmp_path: Path) -> None:
@@ -272,7 +289,7 @@ def test_frozen_domain_contract_field_order_and_error_hierarchy() -> None:
 def test_exact_payload_order_and_canonical_decimal_cpo_hashing(tmp_path: Path) -> None:
     assert SEARCH_VISIBILITY_PAYLOAD_FIELDS == (
         "source_title", "seller_name", "position", "overall_score", "promotion_status",
-        "cpc_rub", "promotion_strategy", "cpo_state", "cpo_pct", "relevance_score",
+        "cpc_state", "cpc_rub", "promotion_strategy", "cpo_state", "cpo_pct", "relevance_score",
         "rating", "reviews_count", "buyer_price_rub", "popularity_score",
         "ozon_promotion", "delivery_label", "delivery_min_days", "delivery_max_days",
         "price_index_pct",

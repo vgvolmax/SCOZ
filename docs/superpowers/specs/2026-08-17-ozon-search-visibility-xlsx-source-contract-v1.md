@@ -395,3 +395,9 @@ Broadening support requires this sequence:
 ## 22. Explicit non-goals
 
 This Source Contract does not design SQLite schema, migration 003, repositories, FastAPI routes, UI, import archive lifecycle, coverage UI, analytics, heatmap, benchmark, PR5 `seller-queries`, MPStats, or Ozon API sync. Those belong to later PR-specific Implementation Specs and implementation PRs.
+
+## Verified compatibility amendment — 25.08.2026
+
+A current verified `explainer_report` stores worksheet dimension `A1` although physical cells extend beyond it and the semantic business structure remains exactly A:P. The reader recalculates physical coverage before enforcing the existing exact A:P headers, declared-row reconciliation, prohibition on business values from Q onward, formulas and merged cells, and query/cluster identity rules.
+
+CPC now has two verified exact forms: numeric money is `CpcState.ACTIVE` with a non-null RUB `Decimal`; exact `Выключено` is `CpcState.DISABLED` with `cpc_rub = null`. Disabled is not zero. No `UNAVAILABLE` CPC state or arbitrary blank/missing sentinel is inferred. Exact strategy text `—` is also evidenced and remains ordinary non-empty source text.

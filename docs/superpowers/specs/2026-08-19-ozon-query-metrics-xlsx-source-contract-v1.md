@@ -863,3 +863,11 @@ The following are frozen factual/design-boundary decisions for this source:
 20. original uploaded XLSX remains the provenance artifact even if a temporary read-compatible representation is used internally.
 
 Any newly observed workbook shape or metric representation outside these rules requires new evidence and an explicit source-contract revision before implementation support.
+
+## Verified current Ozon export variant — 25.08.2026
+
+V1 and V2 are two supported exact shapes of the same source family; detection is not fuzzy. V1 remains row 1 Period, row 2 Sort, row 3 A:K headers, row 4 help and row 5+ data. V2 is row 1 Period, row 2 exact-prefix `Поисковый запрос: <source filter text>` context, row 3 Sort, row 4 headers, row 5 help and row 6+ data. A false stored worksheet dimension of `A1` is package metadata and is not authoritative coverage.
+
+V2 has exact A:R headers: `Запрос`; `Популярность запроса`; `Динамика за 28 дней`; `Динамика за 7 дней`; `Добавлений в корзину`; `Конверсия в корзину`; `Уникальные покупатели с заказами`; `Конверсия в заказ`; `Заказано на сумму по запросам, ₽`; `Средняя цена`; `Показано товаров`; `Конкуренты`; `Запросы без действий`; `Доля запросов без действий`; `Запросы с похожими результатами`; `Доля запросов с похожими результатами`; `Запросы без результатов`; `Доля запросов без результатов`.
+
+Only the existing PR5 payload is persisted. V2 maps A-I to the first nine existing fields and M/N to `no_action_queries`/`no_action_share_pct`. J/K/L and O/P/Q/R are verified source values but intentionally not persisted or hashed in this corrective PR. The row-2 filter is report context, not query identity or row payload. Unknown headers or positions remain incompatible; no guessing is performed. The original artifact retains all ignored source values for provenance.

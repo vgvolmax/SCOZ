@@ -182,3 +182,7 @@ The following are explicitly rejected by v1 rather than treated as implementatio
 ## 14. Compatibility and versioning policy
 
 This is strict Source Contract v1 for the evidenced artifact shape. A workbook is compatible only when it passes deterministic v1 detection and field contracts. Any Ozon export change requires new factual evidence and a separately approved source-contract revision; code must not silently broaden v1. Rejection of an unsupported variant is correct compatibility behavior, not a fallback opportunity.
+
+## Verified compatibility amendment — 25.08.2026
+
+Current verified Ozon Products packages can store `<dimension ref="A1"/>` while populated business cells extend through A:AF. Stored worksheet-dimension metadata is therefore not authoritative business coverage. The reader recalculates physical coverage before applying the unchanged exact 32-column header and structural contract; this is package compatibility, not a new Products schema.

@@ -8,6 +8,7 @@ from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 from backend.domain.query_metric import *
 HEADERS=("Запрос","Популярность запроса","Динамика за 28 дней","Динамика за 7 дней","Добавлений в корзину","Конверсия в корзину","Уникальные покупатели с заказами","Конверсия в заказ","Заказано на сумму по запросам, ₽","Запросы без действий","Доля запросов без действий")
+HEADERS_V2=("Запрос","Популярность запроса","Динамика за 28 дней","Динамика за 7 дней","Добавлений в корзину","Конверсия в корзину","Уникальные покупатели с заказами","Конверсия в заказ","Заказано на сумму по запросам, ₽","Средняя цена","Показано товаров","Конкуренты","Запросы без действий","Доля запросов без действий","Запросы с похожими результатами","Доля запросов с похожими результатами","Запросы без результатов","Доля запросов без результатов")
 SORT='Сортировка: По убыванию в Популярность запроса'
 _BLANK=lambda x:x is None or x==''
 _CELL=re.compile(r'([A-Z]+)([1-9]\d*)$')
@@ -33,7 +34,7 @@ def _raw(path):
    coord=c.get('r');m=_CELL.fullmatch(coord or '')
    if not m:continue
    col=m.group(1);rn=int(m.group(2))
-   if len(col)==1 and 'A'<=col<='K' and rn>=5:rows.add(rn)
+   if len(col)==1 and 'A'<=col<='R' and rn>=5:rows.add(rn)
    v=c.find('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}v');cells[coord]=None if v is None else (v.text or '')
   return cells,rows
 
@@ -72,16 +73,25 @@ def parse_ozon_query_metrics_xlsx(path:Path)->ParsedQueryMetricsReport:
  try:
   if len(wb.worksheets)!=1:raise QueryMetricsIncompatibleReportSchema('Ожидается один лист.')
   ws=wb.active
+  # Do not treat the package's frequently false ``A1`` dimension as business
+  # coverage.  Exact V1/V2 signatures below still reject unknown shapes.
+  ws.reset_dimensions() if hasattr(ws, "reset_dimensions") else None
   row5=tuple(ws.cell(5,c).value for c in range(1,33));row7=tuple(ws.cell(7,c).value for c in range(1,17));row6=tuple(ws.cell(6,c).value for c in range(1,12))
   if row5[0]=='Название товара' or row7[0]=='Позиция' or row6[0]=='SKU':raise QueryMetricsWrongReportType('Выбран другой тип отчёта.')
   if ws.merged_cells.ranges:raise QueryMetricsIncompatibleReportSchema('Объединённые ячейки не поддерживаются.')
   for r in range(1,5):
    for c in range(1,12):
     if ws.cell(r,c).data_type=='f':raise QueryMetricsIncompatibleReportSchema('Формулы в структуре отчёта не поддерживаются.')
-  if tuple(ws.cell(3,c).value for c in range(1,12))!=HEADERS or ws['A2'].value!=SORT:raise QueryMetricsIncompatibleReportSchema('Структура отчёта изменилась.')
-  if any(not _BLANK(ws.cell(r,c).value) for r in (1,2) for c in range(2,12)):raise QueryMetricsIncompatibleReportSchema('Структура метаданных изменилась.')
+  v1 = tuple(ws.cell(3,c).value for c in range(1,12))==HEADERS and ws['A2'].value==SORT
+  v2 = (isinstance(ws['A2'].value,str) and ws['A2'].value.startswith('Поисковый запрос: ')
+        and ws['A3'].value==SORT
+        and tuple(ws.cell(4,c).value for c in range(1,19))==HEADERS_V2)
+  if not (v1 or v2):raise QueryMetricsIncompatibleReportSchema('Структура отчёта изменилась.')
+  width=11 if v1 else 18; data_start=5 if v1 else 6
+  metadata_rows=(1,2) if v1 else (1,2,3)
+  if any(not _BLANK(ws.cell(r,c).value) for r in metadata_rows for c in range(2,width+1)):raise QueryMetricsIncompatibleReportSchema('Структура метаданных изменилась.')
   for rn in range(1,max(ws.max_row,max(candidates,default=0))+1):
-   for c in range(12,ws.max_column+1):
+   for c in range(width+1,ws.max_column+1):
     if not _BLANK(ws.cell(rn,c).value):raise QueryMetricsIncompatibleReportSchema('Лишние бизнес-столбцы.')
   m=re.fullmatch(r'Период: (\d{2}\.\d{2}\.\d{4}) - (\d{2}\.\d{2}\.\d{4})',str(ws['A1'].value))
   try:
@@ -91,9 +101,10 @@ def parse_ozon_query_metrics_xlsx(path:Path)->ParsedQueryMetricsReport:
   except ValueError as e:raise QueryMetricsInvalidReportPeriod('Некорректный период отчёта.') from e
   rows=[];errors=[];dupes=0;seen={};rows_seen=0
   messages=(('INVALID_QUERY','Некорректный поисковый запрос.'),('INVALID_POPULARITY','Некорректная популярность запроса.'),('INVALID_DYNAMICS','Некорректная динамика.'),('INVALID_DYNAMICS','Некорректная динамика.'),('INVALID_CART_ADD_USERS','Некорректное число добавлений в корзину.'),('INVALID_MARKET_CONVERSION','Некорректная рыночная конверсия.'),('INVALID_UNIQUE_BUYERS','Некорректное число покупателей.'),('INVALID_MARKET_CONVERSION','Некорректная рыночная конверсия.'),('INVALID_REVENUE','Некорректная сумма заказов.'),('INVALID_NO_ACTION_QUERIES','Некорректное число запросов без действий.'),('INVALID_NO_ACTION_SHARE','Некорректная доля запросов без действий.'))
-  all_rows=sorted(candidates|{r for r in range(5,ws.max_row+1) if any(not _BLANK(ws.cell(r,c).value) for c in range(1,12))})
+  all_rows=sorted({r for r in candidates if r>=data_start}|{r for r in range(data_start,ws.max_row+1) if any(not _BLANK(ws.cell(r,c).value) for c in range(1,width+1))})
   for rn in all_rows:
-   cells=[ws.cell(rn,c) for c in range(1,12)]
+   source_columns=range(1,12) if v1 else (1,2,3,4,5,6,7,8,9,13,14)
+   cells=[ws.cell(rn,c) for c in source_columns]
    if all(_BLANK(c.value) for c in cells):continue
    rows_seen+=1;parsed=[];bad=None
    for i,c in enumerate(cells):

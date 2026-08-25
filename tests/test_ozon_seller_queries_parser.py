@@ -110,6 +110,15 @@ def test_metric_valid_boundaries(tmp_path, changes, expected):
     values = _parse(tmp_path, rows=(_row(**changes),)).rows[0].snapshot_values
     assert all(values[key] == value for key, value in expected.items())
 
+@pytest.mark.parametrize("source", ["4 869 ₽", "4\u202f869 ₽", "4869 ₽"])
+def test_revenue_accepts_only_verified_grouping_forms(tmp_path, source):
+    assert _parse(tmp_path, rows=(_row(**{H[10]:source}),)).rows[0].snapshot_values["ordered_revenue_rub"] == Decimal("4869")
+
+@pytest.mark.parametrize("source", ["4\u00a0869 ₽", "4\t869 ₽", "4  869 ₽", "4869,00 ₽"])
+def test_revenue_does_not_broaden_whitespace_or_decimal_grammar(tmp_path, source):
+    report=_parse(tmp_path, rows=(_row(**{H[10]:source}),))
+    assert report.rows == () and report.row_errors[0].code == "INVALID_REVENUE"
+
 
 @pytest.mark.parametrize("coordinate,value", [
     ("G9", "-1"), ("G9", "1,5"), ("G9", ""), ("H9", "-1%"), ("H9", "101%"),

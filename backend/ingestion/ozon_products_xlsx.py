@@ -62,6 +62,11 @@ def parse_ozon_products_xlsx(path: Path) -> ParsedOzonProductsReport:
     try:
         if len(workbook.worksheets) != 1: raise IncompatibleReportSchema()
         sheet = workbook.worksheets[0]
+        # Current Ozon packages may advertise only A1 although cells through AF
+        # are physically present.  Re-scan the stream; exact headers below remain
+        # the authoritative business-schema check.
+        sheet.reset_dimensions()
+        sheet.calculate_dimension(force=True)
         if sheet.max_column != 32: raise IncompatibleReportSchema()
         markers = tuple(sheet.cell(row=i,column=1).value for i in (1,2,3))
         expected = ("Дата формирования:","Период отчета:","Категория 3 уровня:")

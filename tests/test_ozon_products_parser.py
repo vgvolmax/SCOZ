@@ -113,6 +113,9 @@ def test_extra_column_and_merged_cells_rejected(tmp_path):
         output = BytesIO(); book.save(output); book.close()
         with pytest.raises(IncompatibleReportSchema): _parse_bytes(tmp_path, output.getvalue())
 
+def test_products_accepts_a1_stored_dimension_with_real_cells(tmp_path):
+    assert len(_parse_bytes(tmp_path, build_ozon_products_workbook(dimension_ref="A1")).rows) == 1
+
 
 def test_recoverable_identity_and_duplicate_rows(tmp_path):
     valid = _default_row("Синтетическая категория")

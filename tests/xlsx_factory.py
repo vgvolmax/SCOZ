@@ -7,6 +7,18 @@ from openpyxl import Workbook
 
 OZON_SELLER_QUERIES_HEADERS = ("SKU", "Артикул", "Название товара", "Запросы товара", "Человек\nискало", "Человек увидело", "Позиция товара", "Конверсия из\u00a0поиска в карточку", "Конверсия из\u00a0поиска в заказ", "Заказано товаров по\u00a0запросам", "Заказано\u00a0на сумму\nпо\u00a0запросам")
 OZON_QUERY_METRICS_HEADERS = ("Запрос", "Популярность запроса", "Динамика за 28 дней", "Динамика за 7 дней", "Добавлений в корзину", "Конверсия в корзину", "Уникальные покупатели с заказами", "Конверсия в заказ", "Заказано на сумму по запросам, ₽", "Запросы без действий", "Доля запросов без действий")
+OZON_QUERY_METRICS_V2_HEADERS = ("Запрос", "Популярность запроса", "Динамика за 28 дней", "Динамика за 7 дней", "Добавлений в корзину", "Конверсия в корзину", "Уникальные покупатели с заказами", "Конверсия в заказ", "Заказано на сумму по запросам, ₽", "Средняя цена", "Показано товаров", "Конкуренты", "Запросы без действий", "Доля запросов без действий", "Запросы с похожими результатами", "Доля запросов с похожими результатами", "Запросы без результатов", "Доля запросов без результатов")
+
+def _patch_dimension(data: bytes, ref: str | None) -> bytes:
+    if ref is None: return data
+    source, target = BytesIO(data), BytesIO()
+    with ZipFile(source) as zin, ZipFile(target, "w", ZIP_DEFLATED) as zout:
+        for info in zin.infolist():
+            body=zin.read(info.filename)
+            if info.filename=="xl/worksheets/sheet1.xml":
+                body=re.sub(rb'<dimension ref="[^"]+"', f'<dimension ref="{ref}"'.encode(), body, count=1)
+            zout.writestr(info,body)
+    return target.getvalue()
 
 def _save(workbook: Workbook) -> bytes:
     output = BytesIO(); workbook.save(output); workbook.close(); return output.getvalue()
@@ -70,6 +82,18 @@ def build_ozon_query_metrics_workbook(*, rows: Sequence[Mapping[str, object]] | 
                 data = data.replace(b'horizontal="left"', b'horizontal="Left"').replace(b'horizontal="right"', b'horizontal="Right"')
             zout.writestr(info, data)
     return target.getvalue()
+
+def build_ozon_query_metrics_v2_workbook(*, filter_text="герметик", headers=OZON_QUERY_METRICS_V2_HEADERS,
+        rows: Sequence[Mapping[str, object]] | None=None, dimension_ref: str|None=None) -> bytes:
+    wb=Workbook();ws=wb.active
+    ws['A1']='Период: 21.07.2026 - 17.08.2026';ws['A2']=f'Поисковый запрос: {filter_text}'
+    ws['A3']='Сортировка: По убыванию в Популярность запроса'
+    for col,header in enumerate(headers,1):ws.cell(4,col,header)
+    ws['A5']='—'
+    source=rows if rows is not None else ({headers[0]:'синтетический запрос',headers[1]:1000,headers[2]:.1,headers[3]:'-',headers[4]:100,headers[5]:.1,headers[6]:50,headers[7]:.05,headers[8]:1234.5,headers[9]:100,headers[10]:25,headers[11]:10,headers[12]:200,headers[13]:.2,headers[14]:30,headers[15]:.03,headers[16]:4,headers[17]:.004},)
+    for rn,row in enumerate(source,6):
+        for col,header in enumerate(headers,1):ws.cell(rn,col,row.get(header))
+    return _patch_dimension(_save(wb),dimension_ref)
 
 
 OZON_PRODUCTS_HEADERS = (
@@ -136,6 +160,7 @@ def build_ozon_search_visibility_workbook(
     row_6_values: Mapping[int, object] | None = None,
     row_8_values: Mapping[int, object] | None = None,
     row_9_values: Mapping[int, object] | None = None,
+    dimension_ref: str | None = None,
 ) -> bytes:
     workbook = Workbook()
     sheet = workbook.active
@@ -168,7 +193,7 @@ def build_ozon_search_visibility_workbook(
     output = BytesIO()
     workbook.save(output)
     workbook.close()
-    return output.getvalue()
+    return _patch_dimension(output.getvalue(), dimension_ref)
 
 
 def _default_row(category_level_3: str) -> dict[str, object]:
@@ -217,6 +242,7 @@ def build_ozon_products_workbook(
     marker_overrides: Mapping[str, object] | None = None,
     headers: Sequence[str] = OZON_PRODUCTS_HEADERS,
     extra_sheet: bool = False,
+    dimension_ref: str | None = None,
 ) -> bytes:
     workbook = Workbook()
     sheet = workbook.active
@@ -244,4 +270,4 @@ def build_ozon_products_workbook(
     output = BytesIO()
     workbook.save(output)
     workbook.close()
-    return output.getvalue()
+    return _patch_dimension(output.getvalue(), dimension_ref)
