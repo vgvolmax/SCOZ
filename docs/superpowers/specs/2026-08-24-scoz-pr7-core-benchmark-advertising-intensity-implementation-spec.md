@@ -501,7 +501,7 @@ HTTP 200, JSON keys exactly:
       "comparison_position": "BELOW_BENCHMARK",
       "confidence": "MEDIUM",
       "exclusion_summary": {
-        "NO_COMPATIBLE_OBSERVATION": 1,
+        "NO_COMPATIBLE_OBSERVATION": 3,
         "SOURCE_METRIC_UNAVAILABLE": 1,
         "DERIVED_VALUE_UNAVAILABLE": 0
       }
