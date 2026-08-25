@@ -321,7 +321,7 @@ Expected: FAIL because `CoreBenchmarkService` is absent.
 
 **Interfaces:**
 - Consumes:
-  - resolved `BenchmarkComposition.members`, own snapshot, and `Mapping[int, ProductSnapshot]` from Task 5.
+  - resolved `BenchmarkComposition.current_revision.members`, own snapshot, and `Mapping[int, ProductSnapshot]` from Task 5.
 - Produces:
   - `_build_metric_result(definition: _MetricDefinition, own_snapshot: ProductSnapshot, members: tuple[BenchmarkMember, ...], competitor_snapshots: Mapping[int, ProductSnapshot]) -> CoreBenchmarkMetric` (or an equivalent immutable member sequence from the current revision);
   - one ordered `sample_values` tuple per metric, carrying identity from `BenchmarkMember`, title from the exact-compatible persisted `ProductSnapshot`, and the extracted value;
