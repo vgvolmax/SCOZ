@@ -87,12 +87,28 @@ function Assert-Pr7CoreBenchmark {
 import hashlib,sys
 from datetime import date,datetime,timezone
 from decimal import Decimal
+from backend.domain.product_snapshot import PAYLOAD_FIELDS
 from backend.persistence.connection import connect
 from backend.persistence.repositories.benchmark_selection import BenchmarkSelectionRepository
 from backend.persistence.repositories.lineage import LineageRepository
 from backend.persistence.repositories.product_snapshots import ProductSnapshotRepository
 from backend.persistence.repositories.products import ProductRepository
-from tests.test_product_snapshot_repository import _values
+
+def snapshot_values(*,title: str,ordered_amount_rub: Decimal) -> dict[str,object]:
+    values={name: 0 for name in PAYLOAD_FIELDS}
+    values.update(
+        product_url='https://www.ozon.ru/product/portable-pr7',title=title,seller_name='Portable Seller',
+        brand='Portable Brand',category_level_1='Portable L1',category_level_3='Portable L3',
+        product_badges=None,ordered_amount_rub=ordered_amount_rub,turnover_change_pct=Decimal('0'),
+        ordered_units=4,average_price_rub=Decimal('100'),minimum_price_rub=Decimal('90'),
+        buyout_share_pct=Decimal('90'),missed_sales_source_value=Decimal('0'),out_of_stock_days=None,
+        out_of_stock_window_days=None,avg_daily_sales_rub=Decimal('0'),fulfillment_scheme='FBO',
+        volume_l=Decimal('1'),impression_to_order_pct=Decimal('0'),search_catalog_to_cart_pct=Decimal('0'),
+        card_to_cart_pct=Decimal('0'),promotion_discount_source_value=Decimal('0'),
+        promotion_order_amount_share_pct=Decimal('0'),total_drr_pct=Decimal('10'),
+        promotion_window_days=7,advertising_window_days=7,card_created_on=date(2026,1,1),
+    )
+    return values
 
 c=connect(sys.argv[1]); products=ProductRepository(c); lineage=LineageRepository(c)
 batch=lineage.create_import_batch(source='ozon',import_kind='portable_pr7')
@@ -103,7 +119,7 @@ for index,amount in enumerate(('100','200','300'),start=2):
     product=products.create_product(is_owned=False); products.add_external_identity(product.id,source='ozon',identity_type='ozon_product_id',identity_value=f'71000{index}'); members.append((product,amount))
 snapshots=ProductSnapshotRepository(c); generated=date(2026,8,23); imported=datetime(2026,8,24,tzinfo=timezone.utc)
 for product,amount in [(own,'400'),*members]:
-    values=_values(title=f'Portable PR7 {product.id}'); values.update(ordered_amount_rub=Decimal(amount),ordered_units=4,total_drr_pct=Decimal('10'),buyout_share_pct=Decimal('90'))
+    values=snapshot_values(title=f'Portable PR7 {product.id}',ordered_amount_rub=Decimal(amount))
     snapshots.resolve_revision(product_id=product.id,report_generated_on=generated,report_window_days=7,payload_sha256=hashlib.sha256(f'pr7-{product.id}'.encode()).hexdigest(),import_batch_id=batch.id,source_artifact_id=artifact.id,imported_at=imported,snapshot_values=values)
 revision=BenchmarkSelectionRepository(c).save_benchmark(own.id,frozenset(product.id for product,_ in members)).revision
 c.commit(); print(f'{own.id}|{revision.id}')
