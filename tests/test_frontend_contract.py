@@ -121,9 +121,25 @@ def test_ci_runs_both_js_checks_and_keystore_contract_without_npm():
         "node --check frontend/assets/js/app.js",
         "node --check frontend/assets/js/keystore.js",
         "node tests/keystore_contract.mjs",
+        "node --check frontend/assets/js/import_ui.js",
+        "node tests/import_ui_contract.mjs",
     ):
         assert command in workflow
     assert "npm " not in workflow
+
+
+def test_import_filename_guidance_and_single_lifecycle_contract():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    assert '/assets/js/import_ui.js' in html
+    for filename in ("analytics_report_*.xlsx", "explainer_report_*.xlsx",
+                     "seller-queries_*.xlsx", "queries_report*.xlsx"):
+        assert filename in html
+    for source in ("ozon-products", "search-visibility", "seller-queries", "query-metrics"):
+        assert f'id="{source}-file-guidance"' in html
+    assert "ScozImportUi" in js
+    assert "activeImport" in js
+    assert js.count("setInterval(") == 1
 
 
 def test_candidate_renderer_uses_frozen_transport_field_names():
