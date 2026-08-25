@@ -158,6 +158,7 @@ def test_initialize_database_creates_only_parent_and_migrated_database(tmp_path)
                     (3, "ozon_search_visibility_import"),
                     (4, "pr5_query_data"),
                     (5, "benchmark_selection"),
+                (6, "search_visibility_cpc_state"),
             ]
 
 
@@ -183,4 +184,5 @@ def test_initialize_database_is_idempotent_and_resolves_environment_late(
                 (3, "ozon_search_visibility_import"),
                 (4, "pr5_query_data"),
                 (5, "benchmark_selection"),
+                (6, "search_visibility_cpc_state"),
             ]

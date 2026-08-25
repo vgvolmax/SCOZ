@@ -5,7 +5,7 @@ from zipfile import ZipFile
 from openpyxl import load_workbook
 import pytest
 from backend.domain.query_metric import *
-from tests.xlsx_factory import build_ozon_query_metrics_workbook, OZON_QUERY_METRICS_HEADERS
+from tests.xlsx_factory import build_ozon_query_metrics_workbook, build_ozon_query_metrics_v2_workbook, OZON_QUERY_METRICS_HEADERS, OZON_QUERY_METRICS_V2_HEADERS
 
 H = OZON_QUERY_METRICS_HEADERS
 
@@ -87,6 +87,30 @@ def test_false_dimension_capitalized_quirk_and_small_report_are_valid(tmp_path):
     prepare_query_metrics_read_copy(source,copy)
     from backend.ingestion.ozon_query_metrics_xlsx import parse_ozon_query_metrics_xlsx
     assert len(parse_ozon_query_metrics_xlsx(copy).rows)==1
+
+def test_query_metrics_v2_exact_shape_mapping_and_a1_dimension(tmp_path):
+    from backend.ingestion.ozon_query_metrics_xlsx import parse_ozon_query_metrics_xlsx
+    path=tmp_path/'v2.xlsx';path.write_bytes(build_ozon_query_metrics_v2_workbook(dimension_ref='A1'))
+    report=parse_ozon_query_metrics_xlsx(path)
+    assert len(report.rows)==1
+    assert report.rows[0].snapshot_values['no_action_queries']==200
+    assert report.rows[0].snapshot_values['no_action_share_pct']==Decimal('20')
+
+def test_query_metrics_v2_filter_and_unpersisted_values_do_not_affect_payload(tmp_path):
+    from backend.ingestion.ozon_query_metrics_xlsx import parse_ozon_query_metrics_xlsx
+    hashes=[]
+    for i,filter_text in enumerate(('one','two')):
+        headers=OZON_QUERY_METRICS_V2_HEADERS
+        row=dict(zip(headers,('q',1,'-',0,1,.1,1,.1,1,100+i,20+i,30+i,2,.2,40+i,.4,50+i,.5),strict=True))
+        path=tmp_path/f'{i}.xlsx';path.write_bytes(build_ozon_query_metrics_v2_workbook(filter_text=filter_text,rows=(row,)))
+        hashes.append(parse_ozon_query_metrics_xlsx(path).rows[0].payload_sha256)
+    assert hashes[0]==hashes[1]
+
+def test_query_metrics_v2_wrong_header_is_rejected(tmp_path):
+    from backend.domain.query_metric import QueryMetricsIncompatibleReportSchema
+    from backend.ingestion.ozon_query_metrics_xlsx import parse_ozon_query_metrics_xlsx
+    headers=('wrong',*OZON_QUERY_METRICS_V2_HEADERS[1:]);path=tmp_path/'wrong.xlsx';path.write_bytes(build_ozon_query_metrics_v2_workbook(headers=headers))
+    with pytest.raises(QueryMetricsIncompatibleReportSchema):parse_ozon_query_metrics_xlsx(path)
 
 @pytest.mark.parametrize("factory", [
     pytest.param(lambda: __import__('tests.xlsx_factory',fromlist=['build_ozon_products_workbook']).build_ozon_products_workbook(),id='products'),

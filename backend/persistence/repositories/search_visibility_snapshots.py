@@ -7,7 +7,7 @@ from typing import Mapping
 from backend.domain.lineage import datetime_from_db, datetime_to_db
 from backend.domain.product_snapshot import SnapshotWriteKind, canonical_decimal_text
 from backend.domain.search_visibility import (
-    CpoState, SEARCH_VISIBILITY_PAYLOAD_FIELDS, SearchVisibilitySnapshot,
+    CpcState, CpoState, SEARCH_VISIBILITY_PAYLOAD_FIELDS, SearchVisibilitySnapshot,
     SearchVisibilityWriteResult,
 )
 
@@ -72,6 +72,8 @@ class SearchVisibilitySnapshotRepository:
     def _encode(name: str, value: object) -> object:
         if isinstance(value, Decimal):
             return canonical_decimal_text(value)
+        if name == "cpc_state" and isinstance(value, CpcState):
+            return value.value
         if name == "cpo_state" and isinstance(value, CpoState):
             return value.value
         if name == "ozon_promotion" and isinstance(value, bool):
@@ -85,6 +87,7 @@ class SearchVisibilitySnapshotRepository:
             if values[name] is not None:
                 values[name] = Decimal(values[name])
         values["cpo_state"] = CpoState(values["cpo_state"])
+        values["cpc_state"] = CpcState(values["cpc_state"])
         if values["ozon_promotion"] not in (0, 1):
             raise ValueError("stored boolean must be 0 or 1")
         values["ozon_promotion"] = bool(values["ozon_promotion"])

@@ -28,7 +28,7 @@ def test_migration_001_creates_exact_schema_once(tmp_path):
     with sqlite3.connect(db_path) as connection:
         assert connection.execute(
             "SELECT version, name FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(1, "core_foundation"), (2, "ozon_products_import"), (3, "ozon_search_visibility_import"), (4, "pr5_query_data"), (5, "benchmark_selection")]
+        ).fetchall() == [(1, "core_foundation"), (2, "ozon_products_import"), (3, "ozon_search_visibility_import"), (4, "pr5_query_data"), (5, "benchmark_selection"), (6, "search_visibility_cpc_state")]
         assert _application_tables(connection) == {
             "schema_migrations",
             "products",
@@ -239,13 +239,13 @@ def test_failed_migration_rolls_back_ddl_and_metadata_and_preserves_cause(monkey
     connection.close()
 
 
-def test_fresh_database_applies_migrations_one_through_five(tmp_path):
+def test_fresh_database_applies_all_migrations(tmp_path):
     db_path = tmp_path / "fresh.db"
     initialize_database(db_path)
     with sqlite3.connect(db_path) as connection:
         assert connection.execute(
             "SELECT version, name FROM schema_migrations ORDER BY version"
-        ).fetchall()[-1] == (5, "benchmark_selection")
+        ).fetchall()[-1] == (6, "search_visibility_cpc_state")
 
 
 def test_migration_005_upgrades_populated_v4_without_changing_rows(monkeypatch):
@@ -262,7 +262,7 @@ def test_migration_005_upgrades_populated_v4_without_changing_rows(monkeypatch):
     run_migrations(connection)
     assert tuple(connection.execute("SELECT * FROM products").fetchone()) == before
     assert tuple(connection.execute("SELECT * FROM search_queries").fetchone())[1] == "Exact  Query"
-    assert connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 5
+    assert connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 6
     connection.close()
 
 

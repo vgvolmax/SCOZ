@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 
 from backend.domain.product_snapshot import SnapshotWriteKind
-from backend.domain.search_visibility import CpoState, SEARCH_VISIBILITY_PAYLOAD_FIELDS
+from backend.domain.search_visibility import CpcState, CpoState, SEARCH_VISIBILITY_PAYLOAD_FIELDS
 from backend.persistence.connection import connect
 from backend.persistence.database import initialize_database
 from backend.persistence.repositories.lineage import LineageRepository
@@ -14,11 +14,13 @@ from backend.persistence.repositories.search_dimensions import SearchDimensionRe
 from backend.persistence.repositories.search_visibility_snapshots import SearchVisibilitySnapshotRepository
 
 
-def _values(*, cpo_state=CpoState.ACTIVE, reviews=True, promotion=True, position=1):
+def _values(*, cpc_state=CpcState.ACTIVE, cpo_state=CpoState.ACTIVE, reviews=True, promotion=True, position=1):
     return {
         "source_title": "Title", "seller_name": "Seller", "position": position,
         "overall_score": Decimal("1.2300"), "promotion_status": "Status",
-        "cpc_rub": Decimal("10.500"), "promotion_strategy": "Strategy",
+        "cpc_state": cpc_state,
+        "cpc_rub": Decimal("10.500") if cpc_state is CpcState.ACTIVE else None,
+        "promotion_strategy": "Strategy",
         "cpo_state": cpo_state,
         "cpo_pct": Decimal("5.00") if cpo_state is CpoState.ACTIVE else None,
         "relevance_score": Decimal("99.10"),
@@ -104,6 +106,11 @@ def test_payload_types_decimal_text_and_roundtrip(state, cpo_state, reviews, pro
         (snapshot.id,),
     ).fetchone()
     assert tuple(raw) == ("1.23", "10.5", "1999", int(promotion))
+
+def test_disabled_cpc_roundtrips_as_null_and_is_not_active_zero(state):
+    disabled=_write(state,values=_values(cpc_state=CpcState.DISABLED))
+    assert disabled.snapshot.cpc_state is CpcState.DISABLED and disabled.snapshot.cpc_rub is None
+    assert _values(cpc_state=CpcState.DISABLED) != _values(cpc_state=CpcState.ACTIVE)
 
 
 @pytest.mark.parametrize("digest", ["A" * 64, "a" * 63, "g" * 64])

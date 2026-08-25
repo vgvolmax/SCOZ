@@ -496,3 +496,7 @@ This contract is considered correctly implemented only when a future PR5 parser/
 11. seller-query data does not create market `QueryMetricSnapshot`;
 12. structural failures do not mutate observations and recoverable row failures remain bounded;
 13. real evidence bytes and own-product identifying rows never enter the public repository.
+
+## Verified compatibility amendment — 25.08.2026
+
+`ordered_revenue_rub` integer-money grouping may use either U+0020 SPACE or U+202F NARROW NO-BREAK SPACE. This is grouping normalization only: U+202F is not retained in the normalized `Decimal`, and no generic Unicode-whitespace normalization or locale parser is introduced.

@@ -11,6 +11,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from backend.domain.search_visibility import (
+    CpcState,
     CpoState,
     ParsedSearchVisibilityReport,
     ParsedSearchVisibilityRow,
@@ -159,11 +160,13 @@ def _parse_decimal_comma(value: object) -> Decimal:
     return _decimal_text(value)
 
 
-def _parse_cpc(value: object) -> Decimal:
+def _parse_cpc(value: object) -> tuple[CpcState, Decimal | None]:
+    if value == "Выключено":
+        return CpcState.DISABLED, None
     match = _MONEY_2_RE.fullmatch(value) if isinstance(value, str) else None
     if not match:
         raise _RowProblem("INVALID_METRIC_VALUE", "Некорректное значение показателя.")
-    return _decimal_text(match.group(1))
+    return CpcState.ACTIVE, _decimal_text(match.group(1))
 
 
 def _parse_cpo(value: object) -> tuple[CpoState, Decimal | None]:
@@ -209,6 +212,7 @@ def _parse_price_index(value: object) -> Decimal:
 
 def _parse_product_row(cells: list[object]) -> tuple[str, dict[str, object]]:
     product_id = _parse_product_id(cells[1])
+    cpc_state, cpc_rub = _parse_cpc(cells[6])
     cpo_state, cpo_pct = _parse_cpo(cells[8])
     rating, reviews_count = _parse_reviews(cells[10])
     delivery_label, delivery_min, delivery_max = _parse_delivery(cells[14])
@@ -224,7 +228,8 @@ def _parse_product_row(cells: list[object]) -> tuple[str, dict[str, object]]:
         "position": _parse_position(cells[0]),
         "overall_score": _parse_decimal_comma(cells[4]),
         "promotion_status": _required_text(cells[5]),
-        "cpc_rub": _parse_cpc(cells[6]),
+        "cpc_state": cpc_state,
+        "cpc_rub": cpc_rub,
         "promotion_strategy": _required_text(cells[7]),
         "cpo_state": cpo_state,
         "cpo_pct": cpo_pct,
@@ -272,6 +277,8 @@ def parse_ozon_search_visibility_xlsx(path: Path) -> ParsedSearchVisibilityRepor
         if len(workbook.worksheets) != 1:
             raise SearchVisibilityIncompatibleReportSchema()
         sheet = workbook.worksheets[0]
+        sheet.reset_dimensions()
+        sheet.calculate_dimension(force=True)
         structural = [sheet.cell(row=row, column=column) for row in range(1, 10) for column in range(1, 17)]
         if any(_formula_cell(cell) for cell in structural):
             raise SearchVisibilityIncompatibleReportSchema()

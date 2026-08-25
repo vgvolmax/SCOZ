@@ -18,8 +18,8 @@ def _pct(v):
  if d<0 or d>100:raise ValueError
  return d
 def _money(v):
- if not isinstance(v,str) or not re.fullmatch(r'\d+(?: \d+)* ₽',v):raise ValueError
- return Decimal(v[:-2].replace(' ',''))
+ if not isinstance(v,str) or not re.fullmatch(r'\d+(?:[ \u202f]\d+)* ₽',v):raise ValueError
+ return Decimal(v[:-2].replace(' ','').replace('\u202f',''))
 def _query(v):
  if not isinstance(v,str):raise ValueError
  v=v.strip(' \u00a0')
