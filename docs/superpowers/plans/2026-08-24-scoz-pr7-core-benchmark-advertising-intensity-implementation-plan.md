@@ -113,9 +113,9 @@ class MetricDirection(str, Enum):
 
 class ComparisonPosition(str, Enum):
     UNAVAILABLE = "UNAVAILABLE"
-    BELOW_BENCHMARK = "BELOW_BENCHMARK"
-    WITHIN_BENCHMARK = "WITHIN_BENCHMARK"
-    ABOVE_BENCHMARK = "ABOVE_BENCHMARK"
+    BELOW_MEDIAN = "BELOW_MEDIAN"
+    AT_MEDIAN = "AT_MEDIAN"
+    ABOVE_MEDIAN = "ABOVE_MEDIAN"
 
 @dataclass(frozen=True)
 class BenchmarkSampleValue:
@@ -190,7 +190,7 @@ def _type7_quantile(values: Sequence[Decimal], p: Decimal) -> Decimal:
     return ordered[j] if j == len(ordered) - 1 else ordered[j] + g * (ordered[j + 1] - ordered[j])
 ```
 
-- [ ] Implement thresholds: N 0–2 `INSUFFICIENT`, 3–4 `LOW`, 5–9 `MEDIUM`, 10+ `HIGH`; comparison/delta only when own exists and N >= 3. Position is a factual Decimal comparison and is never direction-inverted.
+- [ ] Implement thresholds: N 0–2 `INSUFFICIENT`, 3–4 `LOW`, 5–9 `MEDIUM`, 10+ `HIGH`; comparison/delta only when own exists and N >= 3. Assert the exact comparison mapping `<` → `BELOW_MEDIAN`, `==` → `AT_MEDIAN`, and `>` → `ABOVE_MEDIAN`; otherwise assert `UNAVAILABLE`. Position is a factual Decimal comparison and is never direction-inverted. P25/P75 are descriptive distribution context only and do not affect `ComparisonPosition`.
 - [ ] Run targeted tests; expect PASS. Run `python -m pytest tests/test_product_snapshot_repository.py -q`; expect PASS.
 - [ ] Commit: `git add backend/analytics backend/domain/core_benchmark.py tests/test_core_benchmark_analytics.py && git commit -m "feat(PR7): add decimal benchmark statistics"`.
 
@@ -383,7 +383,7 @@ python -m pytest tests/test_core_benchmark_analytics.py tests/test_core_benchmar
 
 Expected: FAIL on incomplete result/readiness integration.
 
-- [ ] Implement all 13 results in numeric catalog order. Median exists at N >= 1; P25/P75 at N >= 4; own/delta/position follow own availability and N >= 3. Top readiness is `NO_COMPATIBLE_SAMPLE` only when all 13 N values are zero, `INSUFFICIENT_SAMPLE` when at least one N is 1–2 but no metric is ready, and `READY` when any metric has own value plus N >= 3.
+- [ ] Implement all 13 results in numeric catalog order. Median exists at N >= 1; P25/P75 at N >= 4; own/delta/position follow own availability and N >= 3. Integrated-result assertions use the exact `BELOW_MEDIAN`, `AT_MEDIAN`, `ABOVE_MEDIAN`, and `UNAVAILABLE` values. Top readiness is `NO_COMPATIBLE_SAMPLE` only when all 13 N values are zero, `INSUFFICIENT_SAMPLE` when at least one N is 1–2 but no metric is ready, and `READY` when any metric has own value plus N >= 3.
 - [ ] Populate `ObservationContext` from the one own snapshot and `BenchmarkRevisionContext` from the current composition. Competitor member iteration uses persisted composition identities; statistical sorting uses only numeric Decimal values.
 - [ ] Enforce for every metric: `sample_size == len(sample_values)`; `sample_size + sum(exclusion_summary.values()) == benchmark_member_count`; and median/P25/P75 receive exactly `tuple(item.value for item in sample_values)`. The member-order regression starts with differing DB insertion order, relies on the PR6 repository to return canonical members, and verifies that PR7 preserves that relative order rather than sorting shuffled members inside analytics.
 - [ ] Run targeted tests; expect PASS. Run `python -m pytest tests/test_benchmark_selection_repository.py tests/test_observation_revision_convention.py tests/test_product_repository.py -q`; expect PASS.
@@ -416,7 +416,7 @@ python -m pytest tests/test_core_benchmark_api.py -q
 Expected: FAIL with HTTP 404 because the route is absent.
 
 - [ ] Add the thin route. Reuse `_json(...)` so enums, dates, datetimes, tuples, mappings, and Decimal values follow existing serialization, tightening only if the tests prove the helper does not meet canonical Decimal text.
-- [ ] Serialize `sample_values` exactly as `product_id`, `ozon_product_id`, nullable `title`, and canonical Decimal-string `value`, preserving tuple order and without adding per-member exclusion fields.
+- [ ] Serialize `sample_values` exactly as `product_id`, `ozon_product_id`, nullable `title`, and canonical Decimal-string `value`, preserving tuple order and without adding per-member exclusion fields. API assertions require the exact `comparison_position` strings `BELOW_MEDIAN`, `AT_MEDIAN`, `ABOVE_MEDIAN`, and `UNAVAILABLE`.
 
 ```python
 @app.get("/api/products/{product_id}/core-benchmark")
@@ -483,7 +483,7 @@ Expected: FAIL because PR7 frontend functions/markers are absent.
 
 - [ ] Add failing DOM/JS assertions for insertion after the saved benchmark summary, the five group headings in exact order, backend-label use, own/median/delta/N/confidence/position summary fields, estimate markers, neutral contextual classes, and absence of good/bad/win/problem/recommendation copy.
 - [ ] Run `python -m pytest tests/test_frontend_contract.py -q` from repository root; expect FAIL on absent summary markup/functions.
-- [ ] Add one `Benchmark details` button and one hidden card below `.benchmark-layout`, still inside `#competitors-workspace`; do not add navigation. Render five compact group sections (`Result`, `Traffic`, `Conversion`, `Offer`, `Advertising`) rather than one flat 13-row table. Each compact metric control exposes label, own, median, signed absolute delta, N, factual position, and confidence; detailed values stay collapsed.
+- [ ] Add one `Benchmark details` button and one hidden card below `.benchmark-layout`, still inside `#competitors-workspace`; do not add navigation. Render five compact group sections (`Result`, `Traffic`, `Conversion`, `Offer`, `Advertising`) rather than one flat 13-row table. Each compact metric control exposes label, own, median, signed absolute delta, N, factual position, and confidence; detailed values stay collapsed. Render `BELOW_MEDIAN` as `Ниже медианы`, `AT_MEDIAN` as `На уровне медианы`, `ABOVE_MEDIAN` as `Выше медианы`, and keep the existing unavailable presentation for `UNAVAILABLE`; do not use “ниже benchmark”, “внутри benchmark”, or “выше benchmark” for this enum.
 - [ ] Format canonical decimal strings only at display time with `Intl.NumberFormat("ru-RU", ...)`: whole RUB/count/unit, one decimal plus `%` for percentage points, `п.п.` for percentage deltas, and whole `₽/заказанную ед.` for support. Null is `—`, never zero. Use `coreBenchmarkObservationPhrase` to render exactly `7 дней · отчёт сформирован 23.08.2026`, never an inferred range.
 - [ ] Add CSS with existing variables (`--color-*`, radii, spacing patterns), accessible focus/expanded states, and a responsive stacked group layout; no traffic-light meaning for contextual advertising.
 - [ ] Run targeted frontend tests and `node --check frontend/assets/js/app.js`; expect PASS. Run `python -m pytest tests/test_frontend_contract.py tests/test_runtime_contract.py -q`; expect PASS.
@@ -506,7 +506,7 @@ Expected: FAIL because PR7 frontend functions/markers are absent.
   - `toggleCoreBenchmarkMetricDetail(button: HTMLButtonElement) -> void`;
   - `aria-expanded`/`aria-controls` disclosure linkage per metric.
 
-- [ ] Add failing assertions, including `test_benchmark_detail_renders_sample_values_without_transient_candidate_lookup`, that every compact summary metric is a disclosure control and expanded detail includes own, median, nullable P25/P75, delta, metric N, confidence, benchmark revision/member count, period/freshness, actual participating competitor values, and the three exact human aggregate-exclusion labels. Assert no per-member exclusion DTO/history or transient candidate lookup is used.
+- [ ] Add failing assertions, including `test_benchmark_detail_renders_sample_values_without_transient_candidate_lookup`, that every compact summary metric is a disclosure control and expanded detail includes own, median, nullable P25/P75, delta, metric N, confidence, benchmark revision/member count, period/freshness, actual participating competitor values, and the three exact human aggregate-exclusion labels. Assert the exact `BELOW_MEDIAN`/`AT_MEDIAN`/`ABOVE_MEDIAN` display labels and existing `UNAVAILABLE` presentation. Assert no per-member exclusion DTO/history or transient candidate lookup is used.
 - [ ] Run `python -m pytest tests/test_frontend_contract.py -q` from repository root; expect FAIL on absent detail behavior.
 - [ ] Render one hidden detail region per metric with escaped stable IDs based on `metric_id`. Show P25/P75/delta null as `—` plus “Недоступно для текущей выборки”, and show aggregate counts when N is below member count:
 
@@ -649,7 +649,7 @@ git diff --name-status HEAD~13..HEAD
 
 Expected: the dependency scan has no infrastructure/source hits in pure analytics; forbidden persistence scan has no PR7 additions; diff check is clean; status is clean; changed paths are confined to the approved implementation file map.
 
-- [ ] Review the approved spec section by section and record affirmative checks for: exact 13 metrics; one common anchor; newest-date/longest-window selection; current revisions; exact compatibility; Decimal median and Type-7 quartiles; N thresholds; delta/position/direction/confidence; advertising formulas and terminology; independent `sample_values`; `sample_size == len(sample_values)`; sample plus aggregate exclusions equals member count; statistics use exactly `sample_values`; Benchmark Detail sample values present; aggregate exclusions preserved; no per-member exclusion DTO/history; API shapes/errors/order; grouped compact summary; all readiness states; exact freshness phrase; no fake zero; source/identity separation; deterministic member order; immutability; no migration/dependency; no PR8 behavior.
+- [ ] Review the approved spec section by section and record affirmative checks for: exact 13 metrics; one common anchor; newest-date/longest-window selection; current revisions; exact compatibility; Decimal median and Type-7 quartiles; N thresholds; exact `BELOW_MEDIAN`/`AT_MEDIAN`/`ABOVE_MEDIAN`/`UNAVAILABLE` values; P25/P75 excluded from position semantics; delta/position/direction/confidence; advertising formulas and terminology; independent `sample_values`; `sample_size == len(sample_values)`; sample plus aggregate exclusions equals member count; statistics use exactly `sample_values`; Benchmark Detail sample values present; aggregate exclusions preserved; no per-member exclusion DTO/history; API shapes/errors/order; grouped compact summary; all readiness states; exact freshness phrase; no fake zero; source/identity separation; deterministic member order; immutability; no migration/dependency; no PR8 behavior.
 - [ ] Do not create a verification-only commit. If verification exposes a defect, return to the owning task, add a failing regression test, make the smallest correction, rerun that task and this full suite, and amend only that focused task commit before handoff.
 
 ## Implementation Commit Sequence
