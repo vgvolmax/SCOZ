@@ -4,7 +4,7 @@
 
 **Goal:** Implement PR7 Core Benchmark so an owned SKU can be compared transparently with its saved competitors across Result, Traffic, Conversion, Offer, and Advertising metrics.
 
-**Architecture:** Read the owned product, current PR6 benchmark composition, one deterministic current own `ProductSnapshot` anchor, and current competitor snapshots at that exact date/window inside one read transaction. `CoreBenchmarkService` passes only resolved current domain objects to a feature-specific pure Decimal analytics module. A thin same-origin FastAPI GET serializes the frozen DTO, and the existing competitor workspace renders a grouped scan-first summary with expandable aggregate Benchmark Detail. The calculation is derived on request and is never persisted.
+**Architecture:** Read the owned product, current PR6 benchmark composition, one deterministic current own `ProductSnapshot` anchor, and current competitor snapshots at that exact date/window inside one read transaction. `CoreBenchmarkService` passes only resolved current domain objects to a feature-specific pure Decimal analytics module. A thin same-origin FastAPI GET serializes the frozen DTO, and the existing competitor workspace renders a grouped scan-first summary with expandable Benchmark Detail containing aggregate statistics, actual participating competitor values, and aggregate exclusions. The calculation is derived on request and is never persisted.
 
 **Tech Stack:** Python 3.13, frozen dataclasses/enums, `Decimal`, SQLite repositories and transactions, FastAPI/Pydantic, committed framework-free HTML/CSS/JavaScript, pytest, Node syntax/contract checks, PowerShell portable smoke.
 
@@ -37,7 +37,7 @@ The following constraints are copied from the approved spec and control every ta
 The implementation must use these names consistently:
 
 ```text
-Domain: ObservationContext, BenchmarkRevisionContext, CoreBenchmarkMetric,
+Domain: ObservationContext, BenchmarkRevisionContext, BenchmarkSampleValue, CoreBenchmarkMetric,
         CoreBenchmarkResult, CoreBenchmarkMetricId, MetricUnit,
         MetricDirection, ComparisonPosition, BenchmarkConfidence,
         CoreBenchmarkReadiness, MetricReadiness, MetricExclusionReason
@@ -52,7 +52,7 @@ Frontend: resetCoreBenchmarkState, openCoreBenchmark, loadCoreBenchmark,
           coreBenchmarkObservationPhrase
 ```
 
-The approved API does **not** return per-member competitor values or per-member exclusions. “Benchmark Detail” in this plan means the approved metric disclosure: own, median, P25/P75, delta, N, confidence, and the aggregate three-reason exclusion summary. The existing selected-competitor list remains the member identity surface.
+The API returns participating competitor values through each metric's `sample_values`; it does **not** return per-member exclusion records or exclusion history. “Benchmark Detail” means the approved metric disclosure: own, median, P25/P75, delta, N, confidence, actual participating competitor values, period/freshness, and the aggregate three-reason exclusion summary. Collapsed metric summaries remain compact, and the existing selected-competitor list is not used to reconstruct metric values.
 
 ## Actual `main` File Map and Existing Coverage
 
@@ -79,6 +79,7 @@ The approved API does **not** return per-member competitor values or per-member 
   - `datetime.date`, `datetime.datetime`, `decimal.Decimal`, immutable tuples/mappings.
 - Produces:
   - the enums and frozen DTOs listed in “Frozen cross-task names” with the exact fields from spec section 21;
+  - frozen `BenchmarkSampleValue(product_id, ozon_product_id, title, value)` and `CoreBenchmarkMetric.sample_values: tuple[BenchmarkSampleValue, ...]`;
   - `CORE_BENCHMARK_METRIC_ORDER: tuple[CoreBenchmarkMetricId, ...]` containing exactly 13 IDs in catalog order.
 
 - [ ] Write the domain-contract section of `tests/test_core_benchmark_analytics.py` first. Include `test_metric_catalog_contains_exact_thirteen_ids_in_frozen_order`, `test_metric_unit_and_direction_members_are_exact`, `test_readiness_confidence_position_and_exclusion_members_are_exact`, and `test_core_benchmark_dtos_are_frozen`.
@@ -117,6 +118,13 @@ class ComparisonPosition(str, Enum):
     ABOVE_BENCHMARK = "ABOVE_BENCHMARK"
 
 @dataclass(frozen=True)
+class BenchmarkSampleValue:
+    product_id: int
+    ozon_product_id: str
+    title: str | None
+    value: Decimal
+
+@dataclass(frozen=True)
 class CoreBenchmarkMetric:
     metric_id: CoreBenchmarkMetricId
     label: str
@@ -130,6 +138,7 @@ class CoreBenchmarkMetric:
     p75: Decimal | None
     absolute_delta: Decimal | None
     sample_size: int
+    sample_values: tuple[BenchmarkSampleValue, ...]
     comparison_position: ComparisonPosition
     confidence: BenchmarkConfidence
     exclusion_summary: Mapping[MetricExclusionReason, int]
@@ -314,17 +323,19 @@ Expected: FAIL because `CoreBenchmarkService` is absent.
 - Consumes:
   - resolved `BenchmarkComposition.members`, own snapshot, and `Mapping[int, ProductSnapshot]` from Task 5.
 - Produces:
-  - `_build_metric_result(definition: _MetricDefinition, own_snapshot: ProductSnapshot, member_product_ids: tuple[int, ...], competitor_snapshots: Mapping[int, ProductSnapshot]) -> CoreBenchmarkMetric`;
+  - `_build_metric_result(definition: _MetricDefinition, own_snapshot: ProductSnapshot, members: tuple[BenchmarkMember, ...], competitor_snapshots: Mapping[int, ProductSnapshot]) -> CoreBenchmarkMetric` (or an equivalent immutable member sequence from the current revision);
+  - one ordered `sample_values` tuple per metric, carrying identity from `BenchmarkMember`, title from the exact-compatible persisted `ProductSnapshot`, and the extracted value;
   - exact three-key `exclusion_summary` for each metric.
 
-- [ ] Add failing tests: `test_missing_snapshot_counts_no_compatible_observation_for_every_metric`, `test_missing_buyout_only_reduces_buyout_sample`, `test_zero_units_only_reduces_support_sample`, `test_zero_source_value_enters_sample`, `test_member_count_can_exceed_independent_metric_sample_sizes`, `test_exclusion_summary_always_has_exact_three_keys`, and `test_sample_plus_exclusions_equals_member_count`.
+- [ ] Add failing tests: `test_sample_values_contains_exactly_metric_participants`, `test_sample_size_equals_number_of_sample_values`, `test_sample_plus_exclusions_equals_benchmark_member_count`, `test_missing_compatible_observation_excludes_member_from_sample_values`, `test_nullable_metric_excludes_member_only_from_that_metric_sample`, `test_zero_ordered_units_keeps_spend_but_excludes_support`, `test_zero_source_value_enters_sample`, and `test_exclusion_summary_always_has_exact_three_keys`.
 - [ ] Run `python -m pytest tests/test_core_benchmark_analytics.py -q` from repository root; expect FAIL on absent sample accounting.
 - [ ] Implement one extraction attempt per member per metric. Count no snapshot first, nullable source absence second, invalid derivative third; otherwise append one Decimal. Do not mutate composition or source objects.
 
 ```python
 summary = {reason: 0 for reason in MetricExclusionReason}
-for product_id in member_product_ids:
-    snapshot = competitor_snapshots.get(product_id)
+sample_values = []
+for member in members:
+    snapshot = competitor_snapshots.get(member.product_id)
     if snapshot is None:
         summary[MetricExclusionReason.NO_COMPATIBLE_OBSERVATION] += 1
         continue
@@ -332,8 +343,17 @@ for product_id in member_product_ids:
     if reason is not None:
         summary[reason] += 1
     else:
-        values.append(value)
+        sample_values.append(BenchmarkSampleValue(
+            product_id=member.product_id,
+            ozon_product_id=member.ozon_product_id,
+            title=snapshot.title,
+            value=value,
+        ))
+
+values = tuple(item.value for item in sample_values)
 ```
+
+The single pass above is the only participant filter. Do not build an independent hidden values sample. Preserve the incoming PR6 `BenchmarkSetRevision.members` relative order (numeric Ozon ID ascending, then product ID ascending); analytics must not sort by identity or metric value. Identity comes from the member read model, not SQL or a `ProductExternalIdentityRepository` dependency in analytics. A missing title remains `None`.
 
 - [ ] Run targeted tests; expect PASS. Run `python -m pytest tests/test_core_benchmark_service.py tests/test_product_snapshot_repository.py -q`; expect PASS.
 - [ ] Commit: `git add backend/analytics/core_benchmark.py tests/test_core_benchmark_analytics.py && git commit -m "feat(PR7): add metric-specific benchmark samples"`.
@@ -353,7 +373,7 @@ for product_id in member_product_ids:
 - Produces:
   - the stable public `calculate_core_benchmark(...) -> CoreBenchmarkResult` used by `CoreBenchmarkService`.
 
-- [ ] Add failing tests: `test_full_result_contains_all_thirteen_metrics_in_catalog_order`, `test_metric_readiness_and_top_level_readiness_follow_exact_matrix`, `test_own_unavailable_with_competitor_values_withholds_comparison`, `test_quartiles_appear_at_four_without_rounding`, `test_current_composition_revision_changes_next_result`, `test_superseded_snapshots_never_duplicate_sample_values`, `test_repeated_calculation_does_not_modify_snapshots_or_composition`, `test_presentation_metadata_change_does_not_change_member_identity_or_result_membership`, and `test_candidate_search_visibility_and_mpstats_types_are_absent_from_analytics_dependencies`.
+- [ ] Add failing tests: `test_full_result_contains_all_thirteen_metrics_in_catalog_order`, `test_metric_readiness_and_top_level_readiness_follow_exact_matrix`, `test_own_unavailable_with_competitor_values_withholds_comparison`, `test_quartiles_appear_at_four_without_rounding`, `test_statistics_use_exact_sample_values`, `test_sample_values_preserve_benchmark_member_order`, `test_current_composition_revision_changes_next_result`, `test_superseded_snapshots_never_duplicate_sample_values`, `test_repeated_calculation_does_not_modify_snapshots_or_composition`, `test_presentation_metadata_change_does_not_change_member_identity_or_result_membership`, and `test_candidate_search_visibility_and_mpstats_types_are_absent_from_analytics_dependencies`.
 
 Run from repository root:
 
@@ -365,6 +385,7 @@ Expected: FAIL on incomplete result/readiness integration.
 
 - [ ] Implement all 13 results in numeric catalog order. Median exists at N >= 1; P25/P75 at N >= 4; own/delta/position follow own availability and N >= 3. Top readiness is `NO_COMPATIBLE_SAMPLE` only when all 13 N values are zero, `INSUFFICIENT_SAMPLE` when at least one N is 1–2 but no metric is ready, and `READY` when any metric has own value plus N >= 3.
 - [ ] Populate `ObservationContext` from the one own snapshot and `BenchmarkRevisionContext` from the current composition. Competitor member iteration uses persisted composition identities; statistical sorting uses only numeric Decimal values.
+- [ ] Enforce for every metric: `sample_size == len(sample_values)`; `sample_size + sum(exclusion_summary.values()) == benchmark_member_count`; and median/P25/P75 receive exactly `tuple(item.value for item in sample_values)`. The member-order regression starts with differing DB insertion order, relies on the PR6 repository to return canonical members, and verifies that PR7 preserves that relative order rather than sorting shuffled members inside analytics.
 - [ ] Run targeted tests; expect PASS. Run `python -m pytest tests/test_benchmark_selection_repository.py tests/test_observation_revision_convention.py tests/test_product_repository.py -q`; expect PASS.
 - [ ] Commit: `git add backend/analytics/core_benchmark.py tests/test_core_benchmark_analytics.py tests/test_core_benchmark_service.py && git commit -m "feat(PR7): complete core benchmark calculation"`.
 
@@ -384,7 +405,7 @@ Expected: FAIL on incomplete result/readiness integration.
   - `get_core_benchmark(product_id: Annotated[int, Path(gt=0)])` at `GET /api/products/{product_id}/core-benchmark`;
   - exact JSON keys and canonical non-exponent Decimal strings.
 
-- [ ] Write API tests first: `test_core_benchmark_ready_response_has_exact_all_metric_shape_and_order`, `test_core_benchmark_serializes_decimal_strings_without_trailing_zeroes`, `test_core_benchmark_returns_each_normal_readiness_over_200`, `test_core_benchmark_partial_metrics_keep_nulls_and_exclusion_shape`, `test_core_benchmark_includes_current_benchmark_and_observation_revision_context`, `test_core_benchmark_missing_product_uses_exact_404_envelope`, `test_core_benchmark_non_owned_uses_exact_409_envelope`, `test_core_benchmark_invalid_id_uses_422`, and `test_repeated_get_creates_no_rows`.
+- [ ] Write API tests first: `test_core_benchmark_ready_response_has_exact_all_metric_shape_and_order`, `test_core_benchmark_serializes_decimal_strings_without_trailing_zeroes`, `test_api_serializes_sample_values_with_canonical_decimal_strings`, `test_core_benchmark_returns_each_normal_readiness_over_200`, `test_core_benchmark_partial_metrics_keep_nulls_and_exclusion_shape`, `test_core_benchmark_includes_current_benchmark_and_observation_revision_context`, `test_core_benchmark_missing_product_uses_exact_404_envelope`, `test_core_benchmark_non_owned_uses_exact_409_envelope`, `test_core_benchmark_invalid_id_uses_422`, and `test_repeated_get_creates_no_rows`.
 
 Run from repository root:
 
@@ -395,6 +416,7 @@ python -m pytest tests/test_core_benchmark_api.py -q
 Expected: FAIL with HTTP 404 because the route is absent.
 
 - [ ] Add the thin route. Reuse `_json(...)` so enums, dates, datetimes, tuples, mappings, and Decimal values follow existing serialization, tightening only if the tests prove the helper does not meet canonical Decimal text.
+- [ ] Serialize `sample_values` exactly as `product_id`, `ozon_product_id`, nullable `title`, and canonical Decimal-string `value`, preserving tuple order and without adding per-member exclusion fields.
 
 ```python
 @app.get("/api/products/{product_id}/core-benchmark")
@@ -469,7 +491,7 @@ Expected: FAIL because PR7 frontend functions/markers are absent.
 
 ---
 
-### Task 11: Add expandable aggregate Benchmark Detail
+### Task 11: Add expandable Benchmark Detail
 
 **Files:**
 - Modify: `frontend/assets/js/app.js: metric disclosure renderer and toggle handler`
@@ -478,13 +500,13 @@ Expected: FAIL because PR7 frontend functions/markers are absent.
 
 **Interfaces:**
 - Consumes:
-  - `CoreBenchmarkMetric`, top-level benchmark/observation context, and exact aggregate `exclusion_summary`.
+  - `CoreBenchmarkMetric`, its API-provided `sample_values`, top-level benchmark/observation context, and exact aggregate `exclusion_summary`.
 - Produces:
   - `renderCoreBenchmarkMetric(metric: object, benchmark: object) -> string`;
   - `toggleCoreBenchmarkMetricDetail(button: HTMLButtonElement) -> void`;
   - `aria-expanded`/`aria-controls` disclosure linkage per metric.
 
-- [ ] Add failing assertions that every summary metric is a disclosure control and expanded detail includes own, median, nullable P25/P75, delta, metric N, confidence, benchmark revision/member count, and the three exact human exclusion labels. Assert no per-member exclusion/value DTO or transient candidate lookup is used.
+- [ ] Add failing assertions, including `test_benchmark_detail_renders_sample_values_without_transient_candidate_lookup`, that every compact summary metric is a disclosure control and expanded detail includes own, median, nullable P25/P75, delta, metric N, confidence, benchmark revision/member count, period/freshness, actual participating competitor values, and the three exact human aggregate-exclusion labels. Assert no per-member exclusion DTO/history or transient candidate lookup is used.
 - [ ] Run `python -m pytest tests/test_frontend_contract.py -q` from repository root; expect FAIL on absent detail behavior.
 - [ ] Render one hidden detail region per metric with escaped stable IDs based on `metric_id`. Show P25/P75/delta null as `—` plus “Недоступно для текущей выборки”, and show aggregate counts when N is below member count:
 
@@ -494,7 +516,7 @@ SOURCE_METRIC_UNAVAILABLE → Нет исходного значения пок�
 DERIVED_VALUE_UNAVAILABLE → Нельзя вычислить производный показатель
 ```
 
-The saved `#benchmark-selected-list` remains the competitor identity list; the detail disclosure does not reconstruct values from candidate metadata.
+Render competitor sample values directly from `metric.sample_values`, preserving API order. Use a non-null `title` as the single display label; otherwise use `Ozon SKU <ozon_product_id>` without duplicating the SKU on a second line. The saved `#benchmark-selected-list` remains a composition surface; the detail disclosure does not reconstruct values or metadata from that list, candidate state, Search Visibility, MPStats, or any frontend lookup. Aggregate exclusions remain counts only, with no per-member exclusion reason.
 - [ ] Run targeted tests and `node --check frontend/assets/js/app.js`; expect PASS. Run `node tests/competitor_state_contract.mjs`; expect PASS.
 - [ ] Commit: `git add frontend/assets/js/app.js frontend/assets/css/app.css tests/test_frontend_contract.py && git commit -m "feat(PR7): add benchmark metric disclosures"`.
 
@@ -627,7 +649,7 @@ git diff --name-status HEAD~13..HEAD
 
 Expected: the dependency scan has no infrastructure/source hits in pure analytics; forbidden persistence scan has no PR7 additions; diff check is clean; status is clean; changed paths are confined to the approved implementation file map.
 
-- [ ] Review the approved spec section by section and record affirmative checks for: exact 13 metrics; one common anchor; newest-date/longest-window selection; current revisions; exact compatibility; Decimal median and Type-7 quartiles; N thresholds; delta/position/direction/confidence; advertising formulas and terminology; independent samples and three aggregate exclusions; API shapes/errors/order; grouped summary; aggregate Benchmark Detail; all readiness states; exact freshness phrase; no fake zero; source/identity separation; immutability; no migration/dependency; no PR8 behavior.
+- [ ] Review the approved spec section by section and record affirmative checks for: exact 13 metrics; one common anchor; newest-date/longest-window selection; current revisions; exact compatibility; Decimal median and Type-7 quartiles; N thresholds; delta/position/direction/confidence; advertising formulas and terminology; independent `sample_values`; `sample_size == len(sample_values)`; sample plus aggregate exclusions equals member count; statistics use exactly `sample_values`; Benchmark Detail sample values present; aggregate exclusions preserved; no per-member exclusion DTO/history; API shapes/errors/order; grouped compact summary; all readiness states; exact freshness phrase; no fake zero; source/identity separation; deterministic member order; immutability; no migration/dependency; no PR8 behavior.
 - [ ] Do not create a verification-only commit. If verification exposes a defect, return to the owning task, add a failing regression test, make the smallest correction, rerun that task and this full suite, and amend only that focused task commit before handoff.
 
 ## Implementation Commit Sequence
