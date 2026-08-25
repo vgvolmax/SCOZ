@@ -202,7 +202,7 @@ No percentage-point source value is converted on extraction: source `7.7` means 
 
 `LOWER_IS_BETTER` is deliberately not included because no PR7 metric has that unconditional meaning. Average price, DRR, estimated spend, and support per unit are contextual. In particular, lower advertising intensity must never map to good/win/green semantics.
 
-Direction is metadata semantically separate from factual relative position. The smallest PR7 DTO represents those two required concepts as `direction` plus `comparison_position`; it does not add a third performance-interpretation field or enum. The frontend may label “ниже/на уровне/выше медианы”; it must not label PR7 outputs “good”, “bad”, “win”, “loss”, “problem”, or “recommendation”.
+Direction is metadata semantically separate from factual relative position. The smallest PR7 DTO represents those two required concepts as `direction` plus `comparison_position`; it does not add a third performance-interpretation field or enum. The frontend labels `BELOW_MEDIAN` as “Ниже медианы”, `AT_MEDIAN` as “На уровне медианы”, and `ABOVE_MEDIAN` as “Выше медианы”; `UNAVAILABLE` retains the existing unavailable presentation. It must not use “ниже benchmark”, “внутри benchmark”, or “выше benchmark” for this enum, and it must not label PR7 outputs “good”, “bad”, “win”, “loss”, “problem”, or “recommendation”.
 
 The three contracts are frozen separately:
 
@@ -212,7 +212,7 @@ The three contracts are frozen separately:
 | metric direction | `MetricDirection` | stable semantic metadata for possible later interpretation |
 | performance interpretation | **not calculated and not present in PR7 DTO/API** | PR8+ may combine multiple facts into a verdict under a separately approved contract |
 
-Consequently `ABOVE_BENCHMARK` is not `GOOD`, `BELOW_BENCHMARK` is not `BAD`, and direction does not invert or decorate comparison position. A `CONTEXTUAL` metric can have an available comparison and delta but can never receive an automatic business/performance verdict. The latest plan's generic phrase “performance status” is satisfied by the factual `comparison_position`, while `direction` supplies the separately required metric direction; a third DTO field would add no PR7 information. Diagnostic judgment remains explicitly sequenced to PR8.
+Consequently `ABOVE_MEDIAN` is not `GOOD`, `BELOW_MEDIAN` is not `BAD`, and direction does not invert or decorate comparison position. A `CONTEXTUAL` metric can have an available comparison and delta but can never receive an automatic business/performance verdict. The latest plan's generic phrase “performance status” is satisfied by the factual `comparison_position`, while `direction` supplies the separately required metric direction; a third DTO field would add no PR7 information. Diagnostic judgment remains explicitly sequenced to PR8.
 
 ## 12. Statistical contract
 
@@ -278,15 +278,15 @@ No relative delta is calculated or returned for any metric. Therefore no relativ
 
 ## 17. Comparison position
 
-`ComparisonPosition` has exactly `BELOW_BENCHMARK`, `WITHIN_BENCHMARK`, `ABOVE_BENCHMARK`, and `UNAVAILABLE`. In PR7 the comparison reference is exactly the median, so these names communicate relative benchmark position without encoding the implementation statistic or a business verdict.
+`ComparisonPosition` has exactly `BELOW_MEDIAN`, `AT_MEDIAN`, `ABOVE_MEDIAN`, and `UNAVAILABLE`. These values state the factual position relative to the benchmark-sample median without encoding a business verdict.
 
 When own value exists and `sample_size >= 3`, compare exact, unrounded Decimal values:
 
-- own `< median` → `BELOW_BENCHMARK`;
-- own `== median` → `WITHIN_BENCHMARK`;
-- own `> median` → `ABOVE_BENCHMARK`.
+- own `< median` → `BELOW_MEDIAN`;
+- own `== median` → `AT_MEDIAN`;
+- own `> median` → `ABOVE_MEDIAN`.
 
-Otherwise it is `UNAVAILABLE`. Quartiles are descriptive distribution context and do not alter status. There are no tolerances, color-based success semantics, or thresholds hidden in UI. Direction remains a separate field, so `BELOW_BENCHMARK + CONTEXTUAL` is never interpreted as good.
+Otherwise it is `UNAVAILABLE`. P25/P75 are descriptive distribution context only and do not affect `ComparisonPosition`. There are no tolerances, color-based success semantics, or thresholds hidden in UI. Direction remains a separate field, so `BELOW_MEDIAN + CONTEXTUAL` is never interpreted as good.
 
 ## 18. Confidence algorithm
 
@@ -498,7 +498,7 @@ HTTP 200, JSON keys exactly:
         {"product_id": 91, "ozon_product_id": "523456789", "title": "Смеситель JKL", "value": "6.3"},
         {"product_id": 103, "ozon_product_id": "623456789", "title": "Смеситель MNO", "value": "7.0"}
       ],
-      "comparison_position": "BELOW_BENCHMARK",
+      "comparison_position": "BELOW_MEDIAN",
       "confidence": "MEDIUM",
       "exclusion_summary": {
         "NO_COMPATIBLE_OBSERVATION": 3,
@@ -695,11 +695,11 @@ Keep the existing PR1–PR6 CI coverage for general `Product` identity, canonica
 
 - N=0,1,2 → `INSUFFICIENT`; N=3,4 → `LOW`; N=5,9 → `MEDIUM`; N=10 → `HIGH`;
 - comparison boundary at N=2/3 and quartile boundary at N=3/4;
-- exact own below/equal/above median yields `BELOW_BENCHMARK`/`WITHIN_BENCHMARK`/`ABOVE_BENCHMARK`;
+- exact own below/equal/above median yields `BELOW_MEDIAN`/`AT_MEDIAN`/`ABOVE_MEDIAN`;
 - unavailable own or N<3 yields `UNAVAILABLE` position/null delta;
 - percentage-point absolute delta is p.p.; zero median works;
 - no relative-delta field and no direction-based status inversion.
-- `ABOVE_BENCHMARK` does not create positive performance interpretation;
+- `ABOVE_MEDIAN` does not create positive performance interpretation;
 - every `CONTEXTUAL` metric can return relative position but never automatic GOOD/BAD interpretation.
 
 ### Stable catalog and ordering
@@ -834,7 +834,7 @@ The plan author must treat these answers as closed:
 | Can a superseded revision at that exact-compatible context be used? | **No.** |
 | Does Core Benchmark analytics load or resolve superseded revision history? | **No.** Persistence resolves the current revision and analytics receives clean current inputs. |
 | Same generated date has 7- and 28-day own observations? | Choose the current 28-day observation under the same-date longest-window rule. |
-| Does `ABOVE_BENCHMARK` mean `GOOD`? | **No.** It states position only. |
+| Does `ABOVE_MEDIAN` mean `GOOD`? | **No.** It states position only. |
 | Can a contextual metric receive an automatic business verdict? | **No.** |
 | Are three fields for relative position, direction, and interpretation mandatory? | **No.** PR7 uses factual `comparison_position` plus `direction` and has no interpretation field. |
 | Is estimated ad spend observed spend? | **No.** It is the labeled estimate `ordered_amount_rub * total_drr_pct / 100`. |
