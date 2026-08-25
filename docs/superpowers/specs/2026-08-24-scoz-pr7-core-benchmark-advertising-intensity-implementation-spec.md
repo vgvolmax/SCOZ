@@ -67,7 +67,7 @@ The sole numerical source is the current revision of `ProductSnapshot`, imported
 
 All catalog metrics exist with the same ProductSnapshot semantics for own products and competitors because ownership is a relation on the same `Product` entity. `buyout_share_pct` alone is nullable under the approved missing sentinel. Numeric zero is an observed fact. Other catalog source metrics are required by the source contract, although a competitor may have no compatible snapshot at all.
 
-The benchmark dependency is the current `BenchmarkSetRevision` and its immutable ordered-by-product-id repository representation. The calculation must report its identity and member count. Relevant-query evidence and MPStats photos justify composition upstream but are not calculation inputs.
+The benchmark dependency is the current `BenchmarkSetRevision` and its immutable repository representation. The PR6 repository orders `BenchmarkSetRevision.members` by numeric `ozon_product_id` ascending, then `product_id` ascending. The calculation must report its identity and member count and preserve that order in every metric-specific `sample_values` subsequence. Relevant-query evidence and MPStats photos justify composition upstream but are not calculation inputs.
 
 ### 6.1 Hard boundary from PR6 candidate evidence
 
@@ -88,7 +88,7 @@ Presentation metadata is a separate concern. The canonical internal Product iden
 
 For a benchmark member, `BenchmarkMember.product_id -> Product.id` is its persisted internal identity. **`BenchmarkMember.ozon_product_id` in the current domain/read model is a projection resolved from the existing canonical `ProductExternalIdentity`; it is not a second persisted benchmark identity and not a second source of truth.** The existing repository join may expose both IDs in a read DTO for usability and deterministic display ordering, but `benchmark_members` continues to persist only `benchmark_set_revision_id` and `product_id`. Benchmark composition remains stable through `product_id`; whenever API/UI presentation or deterministic ordering needs the external Ozon ID, it is resolved through the existing Product identity model. PR7 must not add an `ozon_product_id` benchmark column, copy Ozon identity into composition, create `BenchmarkMemberExternalIdentity` or another identity table, or introduce a parallel identity-resolution mechanism.
 
-`ProductSnapshot.title`, `seller_name`, `brand`, `product_url`, price, photo, and category are persisted source-observation/presentation facts, **not identity**. If Benchmark Detail displays title, seller, brand, or product URL, it may read them from a real source observation solely for display; none identifies or merges a Product, replaces `Product.id` or canonical `ProductExternalIdentity`, changes `BenchmarkMember.product_id` or benchmark composition, or participates in benchmark mathematics. Equal titles never merge Products, and seller/brand changes in a new source revision never create a new Product. No fallback may match or merge by title, brand plus seller, similar URL text, or any other presentation field. When persisted presentation metadata is absent, the stable display fallback is canonical `ozon_product_id` and, if needed, internal `product_id`. The UI must not reconstruct title, price, seller, identity, or detail from transient PR6 candidate/frontend state. A manually saved member that has `Product`, `ProductExternalIdentity`, and `BenchmarkMember` but no `ProductSnapshot` remains in the revision, is excluded from ProductSnapshot-based metric samples, and may still be labeled by Ozon product ID; PR7 never deletes it automatically.
+`ProductSnapshot.title`, `seller_name`, `brand`, `product_url`, price, photo, and category are persisted source-observation/presentation facts, **not identity**. Benchmark Detail's participating sample-member DTO uses only `ProductSnapshot.title` from the exact-compatible observation; none of these presentation facts identifies or merges a Product, replaces `Product.id` or canonical `ProductExternalIdentity`, changes `BenchmarkMember.product_id` or benchmark composition, or participates in benchmark mathematics. Equal titles never merge Products, and seller/brand changes in a new source revision never create a new Product. No fallback may match or merge by title, brand plus seller, similar URL text, or any other presentation field. When that title is absent, the sample-value display fallback is exactly `Ozon SKU <ozon_product_id>`. The UI must not reconstruct title, price, seller, identity, or detail from transient PR6 candidate/frontend state. A manually saved member that has `Product`, `ProductExternalIdentity`, and `BenchmarkMember` but no `ProductSnapshot` remains in the revision, is excluded from ProductSnapshot-based metric samples, and may still be labeled by Ozon product ID in the composition UI; PR7 never deletes it automatically.
 
 Source lineage remains on each snapshot through `id`, `revision`, `source_artifact_id`, `import_batch_id`, and `imported_at`. `imported_at` remains valid provenance/application metadata and a technical import/update timestamp; it may be exposed separately where useful. It is not business freshness and must not participate in business observation-context or business-freshness selection. For Ozon Product XLSX, business freshness is `report_generated_on`, while `report_window_days` describes the source report window. PR7 exposes these distinct observation and import contexts without exposing local artifact paths or raw files.
 
@@ -103,7 +103,7 @@ owned Product
 + current competitor ProductSnapshot revisions at the anchor's exact context
 ```
 
-The benchmark member count is composition size. Every metric independently derives its `sample_size` after availability/derivation checks; no metric may reuse member count or another metric's sample size.
+The benchmark member count is composition size. Every metric independently derives its `sample_values` after availability/derivation checks, and `sample_size` is always exactly `len(sample_values)`; no metric may reuse member count or another metric's sample size. For every metric, `len(sample_values) + sum(exclusion_summary.values()) == benchmark_member_count`.
 
 The own anchor is selected before and independently of the benchmark composition. `BenchmarkSetRevision`, competitor observations, compatible-member count, metric availability, sample size, confidence, median/quantiles, or any attempt to maximize N **must not influence it**. **One Core Benchmark response MUST use exactly one common own `ProductSnapshot` observation context for all 13 PR7 product-level source and derived metrics.** PR7 v1 does not support metric-specific own observation contexts. Metric-specific availability may change only that metric's sample size, confidence, quantile availability, readiness, and statistics; it must never select another own date or window. The advertising derivatives use `ordered_amount_rub`, `ordered_units`, and `total_drr_pct` from this same selected own snapshot and receive no separate temporal context. Any future relaxation is a separately approved design change, not PR7 implementation discretion.
 
@@ -356,6 +356,12 @@ BenchmarkRevisionContext
   benchmark_revision_number: int
   benchmark_member_count: int
 
+BenchmarkSampleValue
+  product_id: int
+  ozon_product_id: str
+  title: str | None
+  value: Decimal
+
 CoreBenchmarkMetric
   metric_id: CoreBenchmarkMetricId
   label: str
@@ -369,6 +375,7 @@ CoreBenchmarkMetric
   p75: Decimal | None
   absolute_delta: Decimal | None
   sample_size: int
+  sample_values: tuple[BenchmarkSampleValue, ...]
   comparison_position: ComparisonPosition
   confidence: BenchmarkConfidence
   exclusion_summary: mapping[
@@ -388,7 +395,13 @@ CoreBenchmarkResult
 
 For `NO_BENCHMARK`, `benchmark`, `observation`, and `metrics` are respectively `null`, `null`, and `[]`. For `NO_OWN_SOURCE_DATA`, benchmark is present, observation is `null`, and metrics is `[]`. Once an own anchor exists, all 13 metrics are returned in catalog order even when unavailable.
 
-`exclusion_summary` is an aggregate analytical explanation, not per-member exclusion history. It always contains the three stable reason keys with non-negative integer counts, including zero counts. For every metric, `sample_size + sum(exclusion_summary.values()) == benchmark_member_count`. `NO_COMPATIBLE_OBSERVATION` means no snapshot at the exact anchor context; `SOURCE_METRIC_UNAVAILABLE` means that observation exists but its nullable source field is absent; `DERIVED_VALUE_UNAVAILABLE` means compatible source facts exist but the derived value is invalid (for example support per unit when `ordered_units == 0`). Exclusion never creates a zero, removes a member from the revision, creates a new revision, or changes a source snapshot. PR7 deliberately does not add per-member exclusion DTO/history: aggregate counts explain why composition N differs from metric N and the approved Benchmark Detail CJM does not require a second member-by-metric audit product.
+`sample_values` is the metric-specific competitor statistical sample itself, not a parallel presentation list. A member participates only when it belongs to the current revision, has an exact-compatible current `ProductSnapshot`, has the source metric, and, for a derived metric, has a computable derived value. Median and, at N >= 4, P25/P75 use exactly `tuple(item.value for item in sample_values)`; there is no separate hidden values collection. At N < 4 the quartiles may be unavailable, but `sample_values` still contains the actual sample. A competitor may participate in one metric and be excluded from another.
+
+Each `BenchmarkSampleValue` takes `product_id` and `ozon_product_id` from the full `BenchmarkMember` read model. Analytics performs no identity lookup and has no `ProductExternalIdentityRepository` dependency. `title` comes only from that member's exact-compatible persisted `ProductSnapshot.title`; it remains `None` when absent, with no candidate, Search Visibility, MPStats, frontend, or fake-title fallback. The UI displays a non-null title, otherwise `Ozon SKU <ozon_product_id>`, without repeating that SKU on a second line.
+
+`sample_values` is a stable subsequence of `BenchmarkSetRevision.members` after metric-specific exclusions. It is never sorted by metric value and never depends on dict/set iteration, SQL natural order, source insertion order, or any alternative analytics ordering. The PR6 repository's canonical member order is numeric `ozon_product_id` ascending, then `product_id` ascending; analytics preserves rather than reimplements that identity ordering policy.
+
+`exclusion_summary` is an aggregate analytical explanation, not per-member exclusion history. It always contains the three stable reason keys with non-negative integer counts, including zero counts. For every metric, `sample_size == len(sample_values)` and `len(sample_values) + sum(exclusion_summary.values()) == benchmark_member_count`. `NO_COMPATIBLE_OBSERVATION` means no snapshot at the exact anchor context; `SOURCE_METRIC_UNAVAILABLE` means that observation exists but its nullable source field is absent; `DERIVED_VALUE_UNAVAILABLE` means compatible source facts exist but the derived value is invalid (for example support per unit when `ordered_units == 0`). A member counted under any exclusion reason is absent from that metric's `sample_values`. Exclusion never creates a zero, removes a member from the revision, creates a new revision, or changes a source snapshot. PR7 deliberately does not add per-member exclusion DTO/history: aggregate counts explain why composition N differs from metric N, while `sample_values` transparently identifies who did participate.
 
 ## 22. Persistence read requirements
 
@@ -472,15 +485,23 @@ HTTP 200, JSON keys exactly:
       "is_estimate": false,
       "readiness": "READY",
       "own_value": "4.8",
-      "median": "6.2",
-      "p25": "5.1",
-      "p75": "7.4",
-      "absolute_delta": "-1.4",
-      "sample_size": 7,
+      "median": "6.55",
+      "p25": "5.625",
+      "p75": "6.95",
+      "absolute_delta": "-1.75",
+      "sample_size": 6,
+      "sample_values": [
+        {"product_id": 51, "ozon_product_id": "123456789", "title": "Смеситель ABC", "value": "5.4"},
+        {"product_id": 63, "ozon_product_id": "223456789", "title": null, "value": "7.1"},
+        {"product_id": 74, "ozon_product_id": "323456789", "title": "Смеситель DEF", "value": "6.8"},
+        {"product_id": 82, "ozon_product_id": "423456789", "title": "Смеситель GHI", "value": "4.9"},
+        {"product_id": 91, "ozon_product_id": "523456789", "title": "Смеситель JKL", "value": "6.3"},
+        {"product_id": 103, "ozon_product_id": "623456789", "title": "Смеситель MNO", "value": "7.0"}
+      ],
       "comparison_position": "BELOW_BENCHMARK",
       "confidence": "MEDIUM",
       "exclusion_summary": {
-        "NO_COMPATIBLE_OBSERVATION": 2,
+        "NO_COMPATIBLE_OBSERVATION": 3,
         "SOURCE_METRIC_UNAVAILABLE": 1,
         "DERIVED_VALUE_UNAVAILABLE": 0
       }
@@ -489,7 +510,7 @@ HTTP 200, JSON keys exactly:
 }
 ```
 
-The example abbreviates `metrics`; an actual anchored response contains all 13 metrics. It does not return per-member values or exclusions. Every Decimal, including integer-valued metric values and statistics, is a canonical JSON string. IDs, revisions, windows, sample sizes, member counts, and exclusion counts are JSON integers. Dates/datetimes are ISO 8601; datetimes retain timezone offset. Unavailable numeric fields are JSON `null`, never `""`, zero, `NaN`, or infinity.
+The example abbreviates `metrics`; an actual anchored response contains all 13 metrics. The API returns per-member values for benchmark members that participate in each metric-specific statistical sample through `sample_values`. It does not return per-member exclusion records. Excluded-member reasons remain aggregate through `exclusion_summary`. Every Decimal, including sample values, integer-valued metric values, and statistics, is a canonical JSON string. IDs, revisions, windows, sample sizes, member counts, and exclusion counts are JSON integers. Dates/datetimes are ISO 8601; datetimes retain timezone offset. Unavailable numeric fields are JSON `null`, never `""`, zero, `NaN`, or infinity.
 
 Readiness response shapes follow section 21 with the same top-level keys. HTTP 200 is used for all five analytical readiness values.
 
@@ -512,11 +533,13 @@ The future PR7 UI extends the existing competitor workspace, using the establish
 1. A `Benchmark details` control is visible near the current saved benchmark summary.
 2. Opening it starts a visible loading state and fetches the single endpoint.
 3. The panel shows the exact observation phrase and benchmark revision/member context.
-4. In catalog order, every anchored metric row shows label, own, median, P25/P75 when non-null, absolute delta, metric-specific `N`, comparison position, confidence, and unit-correct formatting.
-5. When `N` is smaller than benchmark member count, an accessible disclosure shows aggregate exclusion counts with human labels `Нет совместимого наблюдения`, `Нет исходного значения показателя`, and `Нельзя вычислить производный показатель`. It does not require a per-member exclusion list.
-6. Reload after composition save refetches; no stale result is retained against a new revision.
+4. In catalog order, every collapsed anchored metric row remains a compact summary; it does not repeat the competitor list.
+5. Expanding a metric shows own, median, nullable P25/P75, delta, metric-specific `N`, confidence, the actual participating competitor `sample_values`, aggregate exclusions, and period/freshness. The UI reads `sample_values` directly from the PR7 API and never reconstructs values or labels through candidate state, Search Visibility, MPStats, `#benchmark-selected-list`, or another frontend lookup.
+6. Each participating competitor uses its non-null sample title as the display label; when title is null it shows `Ozon SKU <ozon_product_id>` without duplicating the same SKU on another line.
+7. When `N` is smaller than benchmark member count, the disclosure shows aggregate exclusion counts with human labels `Нет совместимого наблюдения`, `Нет исходного значения показателя`, and `Нельзя вычислить производный показатель`. It does not include per-member exclusion reasons.
+8. Reload after composition save refetches; no stale result is retained against a new revision.
 
-The existing composition UI remains the member-identity surface. If this panel also displays competitor presentation metadata, it may use only persisted ProductSnapshot source-observation title/seller/brand/URL and must fall back to canonical Ozon product ID (then internal `product_id`) when absent. Those presentation values are not canonical identity, never enter matching, merging, membership, or metric calculation, and no transient candidate state is used to rebuild them.
+The existing composition UI remains a separate composition surface. Benchmark Detail uses only each API `sample_values` item's persisted exact-compatible snapshot title and canonical Ozon ID fallback as specified above. Those presentation values are not canonical identity, never enter matching, merging, membership, or metric calculation, and no transient candidate state is used to rebuild them.
 
 Required visible states:
 
@@ -647,6 +670,7 @@ Keep the existing PR1–PR6 CI coverage for general `Product` identity, canonica
 - support denominator is `ordered_units`, with no sold/bought-out-unit substitute or terminology;
 - zero units unavailable without exception/infinity/fake zero;
 - with `ordered_units == 0` and `total_drr_pct > 0`, estimated spend remains derivable while support per unit is unavailable and its exclusion reason is `DERIVED_VALUE_UNAVAILABLE`;
+- with that same competitor input, the member remains in `estimated_ad_spend_rub.sample_values`, is absent from `advertising_support_per_ordered_unit_rub.sample_values`, and increments only the support metric's `DERIVED_VALUE_UNAVAILABLE` count;
 - zero DRR with positive units yields exact zeros;
 - repeating Decimal division retains internal precision and canonical API text;
 - all advertising direction values are `CONTEXTUAL` and never produce GOOD/BAD/WIN labels.
@@ -664,6 +688,8 @@ Keep the existing PR1–PR6 CI coverage for general `Product` identity, canonica
 - Core Benchmark contains no matching fallback based on title, brand plus seller, URL similarity, or other presentation metadata;
 - runtime metric exclusion neither changes current `BenchmarkSetRevision` nor creates a new revision;
 - `benchmark_member_count` may exceed each independently calculated `sample_size`, and the three aggregate exclusion counts explain the difference without a per-member exclusion DTO.
+- `sample_values_contains_exactly_metric_participants`, `sample_size_equals_number_of_sample_values`, `sample_plus_exclusions_equals_benchmark_member_count`, and `statistics_use_exact_sample_values` freeze sample accounting and statistical identity;
+- `missing_compatible_observation_excludes_member_from_sample_values`, `nullable_metric_excludes_member_only_from_that_metric_sample`, and `zero_ordered_units_keeps_spend_but_excludes_support` freeze metric-specific participation;
 
 ### Confidence, position, delta, and boundaries
 
@@ -682,6 +708,7 @@ Keep the existing PR1–PR6 CI coverage for general `Product` identity, canonica
 - changing a Russian label cannot change metric identity or result lookup;
 - `metrics[]` order is independent of dict/set/SQLite order;
 - statistical median/quantiles use numeric Decimal sort, so identity ordering and equal-value ties cannot change results.
+- `sample_values_preserve_benchmark_member_order` uses differing DB insertion orders to prove the PR6 repository returns canonical `BenchmarkSetRevision.members` and PR7 preserves that relative order; analytics does not sort shuffled members or duplicate the identity policy.
 
 ### Repository and application service
 
@@ -697,6 +724,7 @@ Keep the existing PR1–PR6 CI coverage for general `Product` identity, canonica
 - exact all-13-metric success JSON, ordering, enum strings, labels, units, estimate flags, and canonical Decimal strings;
 - exact response for every readiness state and benchmark revision context fields;
 - exact three-key aggregate exclusion-summary shape and member-count accounting;
+- `api_serializes_sample_values_with_canonical_decimal_strings` covers exact participating-member identity/title/value serialization;
 - invalid path 422, missing 404 exact envelope, non-owned 409 exact envelope;
 - GET has no body/query mutation and repeated requests are stable.
 
@@ -704,6 +732,7 @@ Keep the existing PR1–PR6 CI coverage for general `Product` identity, canonica
 
 - detail control/panel and all seven visible states exist;
 - N, confidence, revision, period phrase, direction-neutral comparison, and aggregate exclusion disclosures render;
+- `benchmark_detail_renders_sample_values_without_transient_candidate_lookup` proves expanded detail renders API sample values while collapsed summaries remain compact;
 - unavailable quartiles/delta render no fake zero;
 - partial metrics render independently;
 - percentage points, RUB, counts, units, and RUB/unit format correctly;
