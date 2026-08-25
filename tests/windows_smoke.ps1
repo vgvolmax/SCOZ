@@ -52,7 +52,7 @@ function Assert-CoreMigration {
     Assert-True (Test-Path $db) 'data/scoz.db was not created'
     $code = "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(list(c.execute('SELECT version,name FROM schema_migrations ORDER BY version')))"
     $rows = Invoke-DbPython $code
-    Assert-True ($rows -eq "[(1, 'core_foundation'), (2, 'ozon_products_import'), (3, 'ozon_search_visibility_import'), (4, 'pr5_query_data'), (5, 'benchmark_selection')]") 'Migration metadata mismatch'
+    Assert-True ($rows -eq "[(1, 'core_foundation'), (2, 'ozon_products_import'), (3, 'ozon_search_visibility_import'), (4, 'pr5_query_data'), (5, 'benchmark_selection'), (6, 'search_visibility_cpc_state')]") 'Migration metadata mismatch'
     $schemaCode = @'
 import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); expected={'product_relevant_queries','benchmark_sets','benchmark_set_revisions','benchmark_members'}; actual={r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}; assert expected <= actual; print('PASS')
 '@
