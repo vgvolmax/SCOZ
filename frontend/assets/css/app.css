@@ -4,6 +4,9 @@
   --color-control-border: #64748B; --color-text: #0F172A; --color-text-secondary: #475569;
   --color-text-muted: #64748B; --color-primary: #2563EB; --color-primary-hover: #1D4ED8;
   --color-primary-soft: #EFF6FF; --color-primary-border: #BFDBFE;
+  --color-success: #166534; --color-success-soft: #F0FDF4; --color-success-border: #BBF7D0;
+  --color-warning: #92400E; --color-warning-soft: #FFFBEB; --color-warning-border: #FDE68A;
+  --color-error: #991B1B; --color-error-soft: #FEF2F2; --color-error-border: #FECACA;
   --radius-sm: 6px; --radius-control: 8px; --radius-card: 10px; --radius-large: 12px;
   --shadow-subtle: 0 1px 2px rgba(15, 23, 42, .04);
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
@@ -34,6 +37,12 @@ h1 { margin: 0 0 10px; font-size: 32px; line-height: 1.2; }
 .card,.product,.history-item { display: grid; gap: 10px; padding: 20px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-surface); }
 .card h2 { margin: 0; }.card button { width: max-content; padding: 10px 16px; color: white; border: 0; border-radius: var(--radius-control); background: var(--color-primary); }.card button:disabled { opacity: .55; }
 .status { padding: 12px; border-radius: var(--radius-control); background: var(--color-primary-soft); color: var(--color-text-secondary); }
+.status.is-working { border: 1px solid var(--color-primary-border); color: var(--color-primary); white-space: pre-line; }
+.status.is-success { border: 1px solid var(--color-success-border); background: var(--color-success-soft); color: var(--color-success); }
+.status.is-warning { border: 1px solid var(--color-warning-border); background: var(--color-warning-soft); color: var(--color-warning); }
+.status.is-error { border: 1px solid var(--color-error-border); background: var(--color-error-soft); color: var(--color-error); }
+.source-file-hint { font-size: 14px; }.source-file-hint code { padding: 2px 5px; border-radius: var(--radius-sm); background: var(--color-surface-muted); color: var(--color-text); font-size: 13px; }
+.file-guidance { min-height: 40px; color: var(--color-text-muted); font-size: 13px; line-height: 1.45; }.file-guidance.is-match { color: var(--color-success); }.file-guidance.is-warning { color: var(--color-warning); }
 #products-list,#import-history { display: grid; gap: 12px; }.product span,.history-item span { color: var(--color-text-secondary); }
 .import-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .card p { margin: 0; color: var(--color-text-secondary); line-height: 1.5; }

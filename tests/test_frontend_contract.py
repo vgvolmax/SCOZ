@@ -79,6 +79,23 @@ def test_pr4_search_visibility_import_and_history_contract():
         assert value in js
 
 
+def test_ozon_products_partial_success_refreshes_history_and_products():
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    function = js.split("async function submitOzonProductsImport(file){", 1)[1].split(
+        "async function submitSearchVisibilityImport(file){", 1
+    )[0]
+
+    partial_branch = 'if(result.status==="PARTIAL_SUCCESS")'
+    success_outcome = 'outcome={state:"success",message:`Импорт завершён'
+    refresh = "await Promise.all([loadImports(),loadProducts()]);"
+
+    assert 'if(!response.ok)' in function
+    assert '}else{if(result.status==="PARTIAL_SUCCESS")' in function
+    assert function.count(refresh) == 1
+    assert function.index(partial_branch) < function.index(success_outcome) < function.index(refresh)
+    assert function.index(refresh) < function.index("}catch{")
+
+
 def test_pr4_does_not_leak_future_analytics_ui():
     combined = "\n".join(
         path.read_text(encoding="utf-8") for path in (ROOT / "frontend").rglob("*.*")
@@ -121,9 +138,25 @@ def test_ci_runs_both_js_checks_and_keystore_contract_without_npm():
         "node --check frontend/assets/js/app.js",
         "node --check frontend/assets/js/keystore.js",
         "node tests/keystore_contract.mjs",
+        "node --check frontend/assets/js/import_ui.js",
+        "node tests/import_ui_contract.mjs",
     ):
         assert command in workflow
     assert "npm " not in workflow
+
+
+def test_import_filename_guidance_and_single_lifecycle_contract():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    assert '/assets/js/import_ui.js' in html
+    for filename in ("analytics_report_*.xlsx", "explainer_report_*.xlsx",
+                     "seller-queries_*.xlsx", "queries_report*.xlsx"):
+        assert filename in html
+    for source in ("ozon-products", "search-visibility", "seller-queries", "query-metrics"):
+        assert f'id="{source}-file-guidance"' in html
+    assert "ScozImportUi" in js
+    assert "activeImport" in js
+    assert js.count("setInterval(") == 1
 
 
 def test_candidate_renderer_uses_frozen_transport_field_names():

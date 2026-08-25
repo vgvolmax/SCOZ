@@ -21,7 +21,9 @@ jobs:
         run: |
           node --check frontend/assets/js/app.js
           node --check frontend/assets/js/keystore.js
+          node --check frontend/assets/js/import_ui.js
           node tests/keystore_contract.mjs
+          node tests/import_ui_contract.mjs
       - name: Run full Windows portable smoke
         shell: powershell
         run: powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File tests\windows_smoke.ps1 -Mode Full
