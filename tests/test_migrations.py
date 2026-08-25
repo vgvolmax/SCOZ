@@ -1,13 +1,24 @@
 import sqlite3
 import sys
+from datetime import datetime, timezone
+from decimal import Decimal
 from types import ModuleType
 
 import pytest
 
+from backend.domain.product_snapshot import SnapshotWriteKind
+from backend.domain.search_visibility import (
+    CpcState,
+    CpoState,
+    search_visibility_payload_sha256,
+)
 from backend.persistence.connection import connect
 from backend.persistence.database import initialize_database
 from backend.persistence.migrations import runner
 from backend.persistence.migrations.runner import DatabaseMigrationError, run_migrations
+from backend.persistence.repositories.search_visibility_snapshots import (
+    SearchVisibilitySnapshotRepository,
+)
 
 
 def _application_tables(connection):
@@ -263,6 +274,151 @@ def test_migration_005_upgrades_populated_v4_without_changing_rows(monkeypatch):
     assert tuple(connection.execute("SELECT * FROM products").fetchone()) == before
     assert tuple(connection.execute("SELECT * FROM search_queries").fetchone())[1] == "Exact  Query"
     assert connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 6
+    connection.close()
+
+
+def test_migration_006_upgrades_populated_v5_search_visibility_without_data_loss(monkeypatch):
+    connection = connect(":memory:")
+    monkeypatch.setattr(runner, "MIGRATIONS", runner.MIGRATIONS[:5])
+    run_migrations(connection)
+
+    created_at = "2026-08-17T03:50:00+00:00"
+    observed_at = "2026-08-17T03:55:00+00:00"
+    imported_at = "2026-08-17T04:00:00+00:00"
+    product_id = connection.execute(
+        "INSERT INTO products (is_owned, created_at, updated_at) VALUES (1, ?, ?)",
+        (created_at, created_at),
+    ).lastrowid
+    connection.execute(
+        """INSERT INTO product_external_identities
+           (product_id, source, identity_type, identity_value, source_account_scope, created_at)
+           VALUES (?, 'ozon', 'ozon_product_id', '700001', '', ?)""",
+        (product_id, created_at),
+    )
+    query_id = connection.execute(
+        "INSERT INTO search_queries (query_text, created_at) VALUES ('query', ?)",
+        (created_at,),
+    ).lastrowid
+    cluster_id = connection.execute(
+        "INSERT INTO clusters (name, created_at) VALUES ('cluster', ?)",
+        (created_at,),
+    ).lastrowid
+    batch_id = connection.execute(
+        """INSERT INTO import_batches (source, import_kind, status, started_at)
+           VALUES ('ozon', 'ozon_search_visibility_xlsx', 'SUCCESS', ?)""",
+        (created_at,),
+    ).lastrowid
+    artifact_id = connection.execute(
+        """INSERT INTO source_artifacts
+           (import_batch_id, artifact_kind, original_name, content_sha256, byte_size, created_at)
+           VALUES (?, 'ozon_search_visibility_xlsx', 'visibility.xlsx', ?, 1, ?)""",
+        (batch_id, "a" * 64, created_at),
+    ).lastrowid
+
+    payload = {
+        "source_title": "Source title",
+        "seller_name": "Seller",
+        "position": 3,
+        "overall_score": Decimal("98.50"),
+        "promotion_status": "Promoted",
+        "cpc_state": CpcState.ACTIVE,
+        "cpc_rub": Decimal("9"),
+        "promotion_strategy": "Automatic",
+        "cpo_state": CpoState.ACTIVE,
+        "cpo_pct": Decimal("7.25"),
+        "relevance_score": Decimal("96.40"),
+        "rating": Decimal("4.80"),
+        "reviews_count": 321,
+        "buyer_price_rub": Decimal("1499"),
+        "popularity_score": Decimal("72.10"),
+        "ozon_promotion": True,
+        "delivery_label": "Tomorrow",
+        "delivery_min_days": 1,
+        "delivery_max_days": 2,
+        "price_index_pct": Decimal("101.25"),
+    }
+    v5_payload_columns = tuple(name for name in payload if name != "cpc_state")
+    insert_columns = (
+        "product_id", "search_query_id", "cluster_id", "observed_at", "revision",
+        "supersedes_snapshot_id", "payload_sha256", "import_batch_id",
+        "source_artifact_id", "imported_at", *v5_payload_columns,
+    )
+
+    first_payload = {**payload, "source_title": "Earlier source title", "position": 4}
+
+    def insert_revision(revision, supersedes_snapshot_id, digest, revision_payload):
+        values = (
+            product_id, query_id, cluster_id, observed_at, revision,
+            supersedes_snapshot_id, digest, batch_id, artifact_id, imported_at,
+            *(revision_payload[name].value if isinstance(revision_payload[name], CpoState) else
+              int(revision_payload[name]) if name == "ozon_promotion" else
+              str(revision_payload[name]) if isinstance(revision_payload[name], Decimal)
+              else revision_payload[name]
+              for name in v5_payload_columns),
+        )
+        placeholders = ",".join("?" for _ in values)
+        return connection.execute(
+            f"INSERT INTO search_visibility_snapshots ({','.join(insert_columns)}) "
+            f"VALUES ({placeholders})",
+            values,
+        ).lastrowid
+
+    first_id = insert_revision(1, None, "b" * 64, first_payload)
+    second_id = insert_revision(2, first_id, "c" * 64, payload)
+    connection.commit()
+    before = [
+        dict(row)
+        for row in connection.execute(
+            "SELECT * FROM search_visibility_snapshots ORDER BY revision"
+        )
+    ]
+
+    monkeypatch.undo()
+    run_migrations(connection)
+
+    assert tuple(connection.execute(
+        "SELECT version, name FROM schema_migrations ORDER BY version"
+    ).fetchall()[-1]) == (6, "search_visibility_cpc_state")
+    after = [
+        dict(row)
+        for row in connection.execute(
+            "SELECT * FROM search_visibility_snapshots ORDER BY revision"
+        )
+    ]
+    assert len(after) == len(before) == 2
+    for old, migrated, expected_payload in zip(
+        before, after, (first_payload, payload), strict=True
+    ):
+        expected_unchanged = {key: value for key, value in old.items() if key != "payload_sha256"}
+        actual_unchanged = {
+            key: value for key, value in migrated.items()
+            if key not in {"payload_sha256", "cpc_state"}
+        }
+        assert actual_unchanged == expected_unchanged
+        assert migrated["cpc_state"] == "ACTIVE"
+        assert Decimal(migrated["cpc_rub"]) == Decimal("9")
+        assert migrated["payload_sha256"] == search_visibility_payload_sha256(
+            expected_payload
+        )
+    assert after[1]["supersedes_snapshot_id"] == first_id
+
+    result = SearchVisibilitySnapshotRepository(connection).resolve_revision(
+        product_id=product_id,
+        search_query_id=query_id,
+        cluster_id=cluster_id,
+        observed_at=datetime.fromisoformat(observed_at),
+        payload_sha256=search_visibility_payload_sha256(payload),
+        import_batch_id=batch_id,
+        source_artifact_id=artifact_id,
+        imported_at=datetime(2026, 8, 17, 4, 5, tzinfo=timezone.utc),
+        snapshot_values=payload,
+    )
+    assert result.kind is SnapshotWriteKind.DUPLICATE
+    assert result.snapshot.id == second_id
+    assert result.snapshot.revision == 2
+    assert connection.execute(
+        "SELECT COUNT(*) FROM search_visibility_snapshots"
+    ).fetchone()[0] == 2
     connection.close()
 
 
