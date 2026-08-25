@@ -252,3 +252,77 @@ def test_competitor_state_behavioral_contract():
     )
     assert result.returncode == 0, result.stderr
     assert "competitor state contract: PASS" in result.stdout
+
+
+def test_core_benchmark_fetch_is_race_safe_and_refetched_after_save():
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    competitor_helper = (ROOT / "frontend/assets/js/competitor_state.js").read_text(encoding="utf-8")
+
+    for value in (
+        "coreBenchmark: null", "coreBenchmarkRequestId: 0",
+        "resetCoreBenchmarkState()", "openCoreBenchmark()",
+        "loadCoreBenchmark(productId, requestId)",
+        "/core-benchmark", "competitorState.activeProduct?.id!==productId",
+        "requestId!==competitorState.coreBenchmarkRequestId",
+    ):
+        assert value in js
+    assert "resetCoreBenchmarkState();" in js
+    assert "await openCoreBenchmark()" in js
+    assert "coreBenchmark" not in competitor_helper
+
+
+def test_core_benchmark_grouped_summary_contract():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    css = (ROOT / "frontend/assets/css/app.css").read_text(encoding="utf-8")
+    for hook in ("core-benchmark-open", "core-benchmark-panel", "core-benchmark-status",
+                 "core-benchmark-context", "core-benchmark-groups"):
+        assert f'id="{hook}"' in html
+    assert html.index('id="core-benchmark-open"') > html.index('class="benchmark-layout"')
+    for value in ("renderCoreBenchmark(result)", "formatBenchmarkValue(value, unit",
+                  "coreBenchmarkObservationPhrase(observation)", 'Intl.NumberFormat("ru-RU"',
+                  "Ниже медианы", "На уровне медианы", "Выше медианы",
+                  "₽/заказанную ед.", "п.п.", "metric.label", "is_estimate"):
+        assert value in js
+    for heading in ("Result", "Traffic", "Conversion", "Offer", "Advertising"):
+        assert heading in js
+    assert ".core-benchmark-groups" in css and "--color-" in css
+    forbidden = ("ниже benchmark", "внутри benchmark", "выше benchmark", "GOOD", "BAD", "WIN")
+    assert not any(value in html + js for value in forbidden)
+
+
+def test_benchmark_detail_renders_sample_values_without_transient_candidate_lookup():
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    css = (ROOT / "frontend/assets/css/app.css").read_text(encoding="utf-8")
+    for value in (
+        "renderCoreBenchmarkMetric(metric, benchmark)",
+        "toggleCoreBenchmarkMetricDetail(button)",
+        'aria-expanded="false"', "aria-controls=", "metric.sample_values",
+        "Ozon SKU ${item.ozon_product_id}", "Недоступно для текущей выборки",
+        "Нет совместимого наблюдения", "Нет исходного значения показателя",
+        "Нельзя вычислить производный показатель", "benchmark_revision_number",
+        "benchmark_member_count", "metric.p25", "metric.p75",
+    ):
+        assert value in js
+    renderer = js[js.index("function renderCoreBenchmarkMetric"):js.index("function renderCoreBenchmark(")]
+    for forbidden in ("metadataByProductId", "candidatePage", "benchmark-selected-list", "MPStats"):
+        assert forbidden not in renderer
+    assert ".core-benchmark-detail" in css
+
+
+def test_core_benchmark_readiness_partial_and_failure_states():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    assert 'id="core-benchmark-retry"' in html
+    for value in (
+        "renderCoreBenchmarkState(state, result)", "LOADING", "NO_BENCHMARK",
+        "NO_OWN_SOURCE_DATA", "NO_COMPATIBLE_SAMPLE", "INSUFFICIENT_SAMPLE", "READY", "FAILED",
+        "Рассчитываем benchmark…", "Сначала сохраните benchmark-группу.",
+        "Нет товарных данных Ozon для собственного SKU. Импортируйте отчёт «Товары на Ozon».",
+        "У конкурентов нет данных за тот же контекст отчёта.",
+        "Совместимых конкурентов недостаточно для сравнения.",
+        "Часть показателей недоступна", "Не удалось загрузить benchmark. Повторите попытку.",
+        'document.querySelector("#core-benchmark-retry").addEventListener("click",openCoreBenchmark)',
+    ):
+        assert value in html + js
+    assert 'value===null||value===undefined' in js

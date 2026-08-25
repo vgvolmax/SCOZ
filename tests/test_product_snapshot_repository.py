@@ -84,6 +84,65 @@ def test_frozen_current_list_count_and_pagination_interface(state):
     with pytest.raises(ValueError): repo.list_latest_current_for_products(limit=1, offset=-1)
 
 
+def test_find_latest_current_prefers_newest_generated_date(state):
+    _, repo, product_id, batch_id, artifact_id = state
+    _write(repo, product_id, batch_id, artifact_id, generated=date(2026, 8, 20), window=28, digest="c" * 64)
+    newest = _write(repo, product_id, batch_id, artifact_id, generated=date(2026, 8, 21), window=7, digest="d" * 64)
+    assert repo.find_latest_current_for_product(product_id).id == newest.snapshot.id
+
+
+def test_find_latest_current_prefers_longest_window_on_same_date(state):
+    _, repo, product_id, batch_id, artifact_id = state
+    _write(repo, product_id, batch_id, artifact_id, window=7)
+    longest = _write(repo, product_id, batch_id, artifact_id, window=28, digest="c" * 64)
+    assert repo.find_latest_current_for_product(product_id).id == longest.snapshot.id
+
+
+def test_find_latest_current_returns_highest_revision_inside_selected_context(state):
+    _, repo, product_id, batch_id, artifact_id = state
+    _write(repo, product_id, batch_id, artifact_id)
+    correction = _write(repo, product_id, batch_id, artifact_id, digest="c" * 64)
+    assert repo.find_latest_current_for_product(product_id).id == correction.snapshot.id
+
+
+def test_anchor_is_independent_of_imported_at_id_and_insert_order(state):
+    _, repo, product_id, batch_id, artifact_id = state
+    newest = _write(repo, product_id, batch_id, artifact_id, generated=date(2026, 8, 20), digest="c" * 64)
+    _write(repo, product_id, batch_id, artifact_id, generated=date(2026, 8, 19), window=28, digest="d" * 64)
+    assert repo.find_latest_current_for_product(product_id).id == newest.snapshot.id
+
+
+def test_list_context_returns_current_exact_compatible_snapshots_only(state):
+    connection, repo, product_id, batch_id, artifact_id = state
+    first = _write(repo, product_id, batch_id, artifact_id)
+    current = _write(repo, product_id, batch_id, artifact_id, digest="c" * 64)
+    other = ProductRepository(connection).resolve_or_create_ozon_product("2")
+    other_current = _write(repo, other.id, batch_id, artifact_id, digest="d" * 64)
+    result = repo.list_current_for_products_at_context([product_id, other.id], date(2026, 8, 16), 7)
+    assert result == {product_id: current.snapshot, other.id: other_current.snapshot}
+    assert first.snapshot not in result.values()
+
+
+def test_context_read_uses_older_exact_match_instead_of_newer_incompatible_snapshot(state):
+    _, repo, product_id, batch_id, artifact_id = state
+    exact = _write(repo, product_id, batch_id, artifact_id)
+    _write(repo, product_id, batch_id, artifact_id, generated=date(2026, 8, 17), digest="c" * 64)
+    assert repo.list_current_for_products_at_context([product_id], date(2026, 8, 16), 7)[product_id] == exact.snapshot
+
+
+def test_context_read_deduplicates_requested_ids_and_excludes_unrequested_products(state):
+    connection, repo, product_id, batch_id, artifact_id = state
+    expected = _write(repo, product_id, batch_id, artifact_id)
+    other = ProductRepository(connection).resolve_or_create_ozon_product("2")
+    _write(repo, other.id, batch_id, artifact_id, digest="c" * 64)
+    assert repo.list_current_for_products_at_context([product_id, product_id], date(2026, 8, 16), 7) == {product_id: expected.snapshot}
+
+
+def test_context_read_handles_empty_product_ids(state):
+    _, repo, _, _, _ = state
+    assert repo.list_current_for_products_at_context([], date(2026, 8, 16), 7) == {}
+
+
 @pytest.mark.parametrize("digest", ["A" * 64, "a" * 63, "g" * 64])
 def test_invalid_hash_rejected(state, digest):
     _, repo, product_id, batch_id, artifact_id = state

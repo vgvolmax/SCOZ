@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from collections.abc import Mapping
 from dataclasses import asdict
 from datetime import date, datetime
 from decimal import Decimal
@@ -23,6 +24,7 @@ from backend.config import APP_NAME, DATA_DIR, FRONTEND_DIR, FRONTEND_INDEX, VER
 from backend.domain.product import ProductNotFound
 from backend.domain.benchmark_selection import *
 from backend.application.benchmark_selection import BenchmarkSelectionService
+from backend.application.core_benchmark import CoreBenchmarkService
 from backend.sources.mpstats import MPStatsClient
 from backend.domain.product_snapshot import *
 from backend.domain.search_visibility import (
@@ -48,10 +50,10 @@ from backend.persistence.repositories.products import ProductRepository
 def _json(value):
     if hasattr(value,"__dataclass_fields__"): return {key:_json(item) for key,item in asdict(value).items()}
     if isinstance(value,Enum): return value.value
-    if isinstance(value,Decimal): return format(value,"f")
+    if isinstance(value,Decimal): return canonical_decimal_text(value)
     if isinstance(value,(date,datetime)): return value.isoformat()
     if isinstance(value,(list,tuple)): return [_json(item) for item in value]
-    if isinstance(value,dict): return {key:_json(item) for key,item in value.items()}
+    if isinstance(value,Mapping): return {key:_json(item) for key,item in value.items()}
     return value
 
 @asynccontextmanager
@@ -241,6 +243,8 @@ def patch_product_ownership(product_id: int,request: OwnershipUpdate) -> dict[st
 
 def _local_service(): return BenchmarkSelectionService(db_path=resolve_db_path())
 
+def _core_benchmark_service(): return CoreBenchmarkService(db_path=resolve_db_path())
+
 @app.get("/api/products/{product_id}/relevant-queries")
 def get_relevant_queries(product_id: Annotated[int,Path(gt=0)]):
     try: return _json(_local_service().get_relevant_queries(product_id))
@@ -267,6 +271,11 @@ def post_manual_candidate(product_id: Annotated[int,Path(gt=0)],request:ManualCa
 def get_benchmark(product_id: Annotated[int,Path(gt=0)]):
     try: return _json(_local_service().get_benchmark(product_id))
     except PR6_ERROR_TYPES as error: return _pr6_error_response(error)
+
+@app.get("/api/products/{product_id}/core-benchmark")
+def get_core_benchmark(product_id: Annotated[int,Path(gt=0)]):
+    try: return _json(_core_benchmark_service().get_core_benchmark(product_id))
+    except (ProductNotFound, ProductNotOwnedError) as error: return _pr6_error_response(error)
 
 @app.post("/api/products/{product_id}/benchmark/revisions")
 def post_benchmark_revision(product_id: Annotated[int,Path(gt=0)],request:BenchmarkRevisionRequest):

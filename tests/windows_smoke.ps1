@@ -82,6 +82,43 @@ import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('PRAGMA foreign_ke
     $same = Invoke-RestMethod -Method Post -Headers $headers -Uri "http://127.0.0.1:17842/api/products/$own/benchmark/revisions" -Body (@{member_product_ids=@($comp)} | ConvertTo-Json)
     Assert-True ($same.result -eq 'NO_CHANGE' -and $same.revision.revision -eq 1) 'PR6 no-change semantics failed'
 }
+function Assert-Pr7CoreBenchmark {
+    $seed = @'
+import hashlib,sys
+from datetime import date,datetime,timezone
+from decimal import Decimal
+from backend.persistence.connection import connect
+from backend.persistence.repositories.benchmark_selection import BenchmarkSelectionRepository
+from backend.persistence.repositories.lineage import LineageRepository
+from backend.persistence.repositories.product_snapshots import ProductSnapshotRepository
+from backend.persistence.repositories.products import ProductRepository
+from tests.test_product_snapshot_repository import _values
+
+c=connect(sys.argv[1]); products=ProductRepository(c); lineage=LineageRepository(c)
+batch=lineage.create_import_batch(source='ozon',import_kind='portable_pr7')
+artifact=lineage.add_source_artifact(batch.id,artifact_kind='portable_pr7',original_name='portable-pr7.synthetic',content_sha256='7'*64,byte_size=1)
+own=products.create_product(is_owned=True); products.add_external_identity(own.id,source='ozon',identity_type='ozon_product_id',identity_value='710001')
+members=[]
+for index,amount in enumerate(('100','200','300'),start=2):
+    product=products.create_product(is_owned=False); products.add_external_identity(product.id,source='ozon',identity_type='ozon_product_id',identity_value=f'71000{index}'); members.append((product,amount))
+snapshots=ProductSnapshotRepository(c); generated=date(2026,8,23); imported=datetime(2026,8,24,tzinfo=timezone.utc)
+for product,amount in [(own,'400'),*members]:
+    values=_values(title=f'Portable PR7 {product.id}'); values.update(ordered_amount_rub=Decimal(amount),ordered_units=4,total_drr_pct=Decimal('10'),buyout_share_pct=Decimal('90'))
+    snapshots.resolve_revision(product_id=product.id,report_generated_on=generated,report_window_days=7,payload_sha256=hashlib.sha256(f'pr7-{product.id}'.encode()).hexdigest(),import_batch_id=batch.id,source_artifact_id=artifact.id,imported_at=imported,snapshot_values=values)
+revision=BenchmarkSelectionRepository(c).save_benchmark(own.id,frozenset(product.id for product,_ in members)).revision
+c.commit(); print(f'{own.id}|{revision.id}')
+'@
+    $ids = (Invoke-DbPython $seed).Split('|')
+    $own = $ids[0]; $revisionId = [int]$ids[1]
+    $result = Invoke-RestMethod -Uri "http://127.0.0.1:17842/api/products/$own/core-benchmark" -TimeoutSec 5
+    Assert-True ($result.readiness -eq 'READY') 'PR7 readiness mismatch'
+    Assert-True ($result.benchmark.benchmark_set_revision_id -eq $revisionId) 'PR7 current revision mismatch'
+    Assert-True ($result.metrics.Count -eq 13) 'PR7 metric catalog size mismatch'
+    $amount = $result.metrics | Where-Object { $_.metric_id -eq 'ordered_amount_rub' }
+    $spend = $result.metrics | Where-Object { $_.metric_id -eq 'estimated_ad_spend_rub' }
+    Assert-True ($amount.median -eq '200' -and $amount.sample_size -eq 3) 'PR7 ordered amount benchmark mismatch'
+    Assert-True ($spend.own_value -eq '40') 'PR7 advertising estimate mismatch'
+}
 function Add-ProductSentinel {
     $code = "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); x='2000-01-01T00:00:00+00:00'; q=c.execute('INSERT INTO products (is_owned,created_at,updated_at) VALUES (0,?,?)',(x,x)); c.commit(); print(q.lastrowid)"
     return [int](Invoke-DbPython $code)
@@ -116,6 +153,7 @@ try {
     Add-PortableImports
     Assert-PortableImports
     Assert-Pr6Workflow
+    Assert-Pr7CoreBenchmark
 
     Write-Host '2. SECOND RUN / REUSE'
     Stop-Scoz
