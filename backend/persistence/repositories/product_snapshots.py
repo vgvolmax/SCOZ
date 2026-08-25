@@ -2,7 +2,7 @@ import re
 import sqlite3
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Mapping
+from typing import Iterable, Mapping
 
 from backend.domain.lineage import datetime_from_db, datetime_to_db
 from backend.domain.product_snapshot import (
@@ -21,6 +21,42 @@ class ProductSnapshotRepository:
     def find_current(self, *, product_id: int, report_generated_on: date, report_window_days: int) -> ProductSnapshot | None:
         row = self._conn.execute("SELECT * FROM product_snapshots WHERE product_id=? AND report_generated_on=? AND report_window_days=? ORDER BY revision DESC LIMIT 1", (product_id, report_generated_on.isoformat(), report_window_days)).fetchone()
         return None if row is None else self._map(row)
+
+    def find_latest_current_for_product(self, product_id: int) -> ProductSnapshot | None:
+        context = self._conn.execute(
+            """SELECT report_generated_on, report_window_days
+FROM product_snapshots WHERE product_id=?
+GROUP BY report_generated_on, report_window_days
+ORDER BY report_generated_on DESC, report_window_days DESC LIMIT 1""",
+            (product_id,),
+        ).fetchone()
+        if context is None:
+            return None
+        return self.find_current(
+            product_id=product_id,
+            report_generated_on=date.fromisoformat(context["report_generated_on"]),
+            report_window_days=context["report_window_days"],
+        )
+
+    def list_current_for_products_at_context(
+        self, product_ids: Iterable[int], report_generated_on: date,
+        report_window_days: int,
+    ) -> dict[int, ProductSnapshot]:
+        requested = tuple(sorted(set(product_ids)))
+        if not requested:
+            return {}
+        placeholders = ",".join("?" for _ in requested)
+        rows = self._conn.execute(
+            f"""SELECT ps.* FROM product_snapshots ps
+WHERE ps.product_id IN ({placeholders})
+AND ps.report_generated_on=? AND ps.report_window_days=?
+AND ps.revision=(SELECT MAX(current.revision) FROM product_snapshots current
+    WHERE current.product_id=ps.product_id
+    AND current.report_generated_on=ps.report_generated_on
+    AND current.report_window_days=ps.report_window_days)""",
+            (*requested, report_generated_on.isoformat(), report_window_days),
+        ).fetchall()
+        return {row["product_id"]: self._map(row) for row in rows}
 
     def resolve_revision(self, *, product_id: int, report_generated_on: date, report_window_days: int, payload_sha256: str, import_batch_id: int, source_artifact_id: int, imported_at: datetime, snapshot_values: Mapping[str, object]) -> SnapshotWriteResult:
         if not re.fullmatch(r"[0-9a-f]{64}", payload_sha256): raise ValueError("invalid payload hash")

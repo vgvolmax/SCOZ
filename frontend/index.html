@@ -50,6 +50,14 @@
             <div id="benchmark-save-status" class="status" aria-live="polite"></div>
           </article>
         </div>
+        <button id="core-benchmark-open" type="button">Benchmark details</button>
+        <article id="core-benchmark-panel" class="card" hidden>
+          <h2>Core Benchmark</h2>
+          <div id="core-benchmark-status" class="status" aria-live="polite"></div>
+          <button id="core-benchmark-retry" type="button" hidden>Повторить</button>
+          <div id="core-benchmark-context"></div>
+          <div id="core-benchmark-groups" class="core-benchmark-groups"></div>
+        </article>
       </section>
       <section id="data-view" class="view" hidden>
         <div class="import-grid">
