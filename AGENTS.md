@@ -27,14 +27,18 @@ Read the relevant parts of these documents first:
 5. `docs/superpowers/specs/2026-08-13-scoz-ui-ux-design.md`
 6. `docs/superpowers/specs/2026-08-13-scoz-preflight-decisions.md`
 7. `docs/superpowers/specs/scoz-visual-design-system.md`
-8. `docs/superpowers/plans/2026-08-13-scoz-pr-development-plan.md`
-9. the approved PR-specific Implementation Spec for the PR being implemented.
+8. `DESIGN.md`
+9. `UX-CONTRACT.md`
+10. `docs/superpowers/plans/2026-08-13-scoz-pr-development-plan.md`
+11. the approved PR-specific Implementation Spec for the PR being implemented.
 
 If requirements conflict, stop and surface the conflict before implementation.
 
 For **PR sequencing, timing of entity/table introduction and exact PR scope**, the latest canonical PR Development Plan controls. Earlier documents describe the target model and analytical contracts, not a requirement to create future feature tables early.
 
 For **visual language, typography, spacing, colors, layout density and reusable UI primitives**, `docs/superpowers/specs/scoz-visual-design-system.md` controls. It does not create product features or business behavior.
+
+For **frontend/Product Workspace design context and cross-screen behavior**, read root `DESIGN.md` and `UX-CONTRACT.md`. They define durable taste, navigation/state patterns and migration targets, but do not override business/domain/API contracts, the canonical PR Development Plan or PR-specific Implementation Specs. Exact visual token values remain owned by `docs/superpowers/specs/scoz-visual-design-system.md`.
 
 ## YAGNI rule
 
@@ -184,5 +188,5 @@ Codex must not ask the user to run development or testing commands on the user's
 - Every analytics module needs happy-path, missing-data, insufficient-sample and incompatible-granularity tests where applicable.
 - Every user-facing vertical needs loading/refresh, empty, partial, error and insufficient/stale states where applicable.
 - Keep modules focused; do not build generic abstractions before a second real use case requires them.
-- Frontend PRs must use the canonical visual tokens and component hierarchy from `docs/superpowers/specs/scoz-visual-design-system.md`; do not invent new navigation, scores or visual semantics to fill layouts.
-- Before claiming completion, run the relevant verification suite and check the diff against Product, Architecture, UI/UX, Visual Design System, Preflight and the latest PR Plan invariants.
+- Frontend PRs must use the canonical visual tokens and component hierarchy from `docs/superpowers/specs/scoz-visual-design-system.md` and the cross-screen design/behavior context from root `DESIGN.md` + `UX-CONTRACT.md`; do not invent new navigation, scores or visual semantics to fill layouts.
+- Before claiming completion, run the relevant verification suite and check the diff against Product, Architecture, UI/UX, Visual Design System, `DESIGN.md`, `UX-CONTRACT.md`, Preflight and the latest PR Plan invariants.
