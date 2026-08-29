@@ -9,6 +9,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from openpyxl import load_workbook
+from openpyxl.cell.read_only import EmptyCell
 
 from backend.domain.search_visibility import (
     CpcState,
@@ -105,9 +106,9 @@ def _formula_cell(cell: object) -> bool:
     )
 
 
-def _looks_like_seller_queries(sheet: object) -> bool:
+def _looks_like_seller_queries(prefix: list[tuple[object, ...]]) -> bool:
     """Recognize the known seller-queries report without relying on its name."""
-    metadata = tuple(sheet.cell(row=row, column=1).value for row in range(1, 5))
+    metadata = tuple(prefix[row][0].value for row in range(4))
     return (
         isinstance(metadata[0], str)
         and _DATE_RE.fullmatch(metadata[0]) is not None
@@ -118,12 +119,10 @@ def _looks_like_seller_queries(sheet: object) -> bool:
         and isinstance(metadata[3], str)
         and _PERIOD_END_RE.fullmatch(metadata[3]) is not None
         and all(
-            _semantically_blank(sheet.cell(row=5, column=column).value)
-            for column in range(1, 17)
+            _semantically_blank(cell.value) for cell in prefix[4][:16]
         )
         and tuple(
-            sheet.cell(row=6, column=column).value
-            for column in range(1, len(_SELLER_QUERIES_HEADERS) + 1)
+            cell.value for cell in prefix[5][:len(_SELLER_QUERIES_HEADERS)]
         )
         == _SELLER_QUERIES_HEADERS
     )
@@ -279,29 +278,34 @@ def parse_ozon_search_visibility_xlsx(path: Path) -> ParsedSearchVisibilityRepor
         sheet = workbook.worksheets[0]
         sheet.reset_dimensions()
         sheet.calculate_dimension(force=True)
-        structural = [sheet.cell(row=row, column=column) for row in range(1, 10) for column in range(1, 17)]
+        iterator = sheet.iter_rows(
+            min_row=1, max_row=max(sheet.max_row, 9), max_col=max(sheet.max_column, 16)
+        )
+        prefix = []
+        for _ in range(9):
+            try:
+                prefix.append(next(iterator))
+            except StopIteration:
+                prefix.append(tuple(EmptyCell() for _ in range(max(sheet.max_column, 16))))
+        structural = [cell for row in prefix for cell in row[:16]]
         if any(_formula_cell(cell) for cell in structural):
             raise SearchVisibilityIncompatibleReportSchema()
 
-        metadata = tuple(sheet.cell(row=row, column=1).value for row in range(1, 6))
+        metadata = tuple(prefix[row][0].value for row in range(5))
         expected_prefixes = ("Дата: ", "Запрос: ", "Время: ", "Регион: ", "Сколько позиций в выдаче: ")
         markers = tuple(isinstance(value, str) and value.startswith(prefix) for value, prefix in zip(metadata, expected_prefixes, strict=True))
-        if _looks_like_seller_queries(sheet):
+        if _looks_like_seller_queries(prefix):
             raise SearchVisibilityWrongReportType()
         if not any(markers):
             raise SearchVisibilityWrongReportType()
         if not all(markers):
             raise SearchVisibilityIncompatibleReportSchema()
-        if any(not _semantically_blank(sheet.cell(row=row, column=column).value) for row in (6, 8) for column in range(1, 17)):
+        if any(not _semantically_blank(cell.value) for row in (prefix[5], prefix[7]) for cell in row[:16]):
             raise SearchVisibilityIncompatibleReportSchema()
-        if tuple(sheet.cell(row=7, column=column).value for column in range(1, 17)) != HEADERS:
+        if tuple(cell.value for cell in prefix[6][:16]) != HEADERS:
             raise SearchVisibilityIncompatibleReportSchema()
         # Physical formatting through Z is allowed; business values past P are not.
-        if any(
-            not _semantically_blank(sheet.cell(row=row, column=column).value)
-            for row in range(1, sheet.max_row + 1)
-            for column in range(17, sheet.max_column + 1)
-        ):
+        if any(not _semantically_blank(cell.value) for row in prefix for cell in row[16:]):
             raise SearchVisibilityIncompatibleReportSchema()
 
         observed_at = _parse_observed_at(metadata[0], metadata[2])
@@ -313,8 +317,10 @@ def parse_ozon_search_visibility_xlsx(path: Path) -> ParsedSearchVisibilityRepor
         declared_rows = int(declared_match.group(1))
 
         candidates: list[tuple[int, list[object], list[object]]] = []
-        for row_number in range(10, sheet.max_row + 1):
-            cell_objects = [sheet.cell(row=row_number, column=column) for column in range(1, 17)]
+        for row_number, row in enumerate(iterator, start=10):
+            if any(not _semantically_blank(cell.value) for cell in row[16:]):
+                raise SearchVisibilityIncompatibleReportSchema()
+            cell_objects = list(row[:16])
             values = [cell.value for cell in cell_objects]
             if all(_semantically_blank(value) for value in values):
                 continue

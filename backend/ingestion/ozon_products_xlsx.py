@@ -68,27 +68,34 @@ def parse_ozon_products_xlsx(path: Path) -> ParsedOzonProductsReport:
         sheet.reset_dimensions()
         sheet.calculate_dimension(force=True)
         if sheet.max_column != 32: raise IncompatibleReportSchema()
-        markers = tuple(sheet.cell(row=i,column=1).value for i in (1,2,3))
+        iterator = sheet.iter_rows(min_row=1, max_col=32)
+        prefix = []
+        for _ in range(6):
+            try:
+                prefix.append(next(iterator))
+            except StopIteration:
+                raise IncompatibleReportSchema()
+        markers = tuple(prefix[i][0].value for i in range(3))
         expected = ("Дата формирования:","Период отчета:","Категория 3 уровня:")
         if markers != expected:
             if markers[0] != expected[0]: raise WrongReportType()
             raise IncompatibleReportSchema()
-        structure = [sheet.cell(row=r,column=c).value for r in range(1,7) for c in range(1,33)]
+        structure = [cell.value for row in prefix for cell in row]
         if any(_formula(v) for v in structure): raise IncompatibleReportSchema()
-        if any(sheet.cell(row=4,column=c).value is not None for c in range(1,33)): raise IncompatibleReportSchema()
-        if tuple(sheet.cell(row=5,column=c).value for c in range(1,33)) != HEADERS or sheet.cell(row=6,column=1).value != "Среднее значение по товарам": raise IncompatibleReportSchema()
+        if any(cell.value is not None for cell in prefix[3]): raise IncompatibleReportSchema()
+        if tuple(cell.value for cell in prefix[4]) != HEADERS or prefix[5][0].value != "Среднее значение по товарам": raise IncompatibleReportSchema()
         try:
-            generated = datetime.strptime(sheet["B1"].value,"%m.%d.%y").date()
-            match = WINDOW_RE.fullmatch(sheet["B2"].value)
+            generated = datetime.strptime(prefix[0][1].value,"%m.%d.%y").date()
+            match = WINDOW_RE.fullmatch(prefix[1][1].value)
             if not match: raise ValueError
             window = int(match.group(1))
         except (TypeError,ValueError): raise InvalidReportPeriod()
-        report_category = sheet["B3"].value
+        report_category = prefix[2][1].value
         if not isinstance(report_category, str) or not report_category:
             raise IncompatibleReportSchema()
         rows=[]; errors=[]; seen=duplicates=warnings=0; unique={}
-        for row_number in range(7,sheet.max_row+1):
-            cells=[sheet.cell(row=row_number,column=c).value for c in range(1,33)]
+        for row_number, row in enumerate(iterator, start=7):
+            cells=[cell.value for cell in row]
             if all(value is None for value in cells): continue
             seen += 1
             try:

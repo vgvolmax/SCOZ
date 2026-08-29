@@ -2,9 +2,11 @@ from dataclasses import FrozenInstanceError, fields
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+from time import perf_counter
 
 import pytest
 from openpyxl import Workbook, load_workbook
+from openpyxl.worksheet._read_only import ReadOnlyWorksheet
 
 from backend.domain.search_visibility import (
     Cluster,
@@ -101,6 +103,26 @@ def test_unsupported_cpc_sentinel_is_rejected(tmp_path: Path, sentinel: str) -> 
 
 def test_search_visibility_accepts_a1_stored_dimension_with_real_cells(tmp_path: Path) -> None:
     assert len(_parse(tmp_path,dimension_ref='A1').rows)==1
+
+
+def test_search_visibility_parser_never_uses_random_read_only_cell_access(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(ReadOnlyWorksheet, "cell", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("random access")))
+    report = _parse(tmp_path, dimension_ref="A1", q_z_values={"Z150": ""})
+    assert len(report.rows) == 1
+
+
+def test_search_visibility_realistic_report_parses_within_bound(tmp_path: Path) -> None:
+    rows = []
+    for index in range(150):
+        rows.append(_row(**{"Позиция": str(index + 1), "ID товара": 4218542117 + index}))
+    path = tmp_path / "realistic.xlsx"
+    path.write_bytes(build_ozon_search_visibility_workbook(rows=rows, dimension_ref="A1", q_z_values={"Z159": ""}))
+    started = perf_counter()
+    report = parse_ozon_search_visibility_xlsx(path)
+    elapsed = perf_counter() - started
+    assert (report.declared_rows, report.rows_seen, len(report.rows)) == (150, 150, 150)
+    assert report.rows[-1].ozon_product_id == str(4218542117 + 149)
+    assert elapsed < 10
 
 
 def test_exact_reviews_missing_sentinel_is_valid(tmp_path: Path) -> None:
