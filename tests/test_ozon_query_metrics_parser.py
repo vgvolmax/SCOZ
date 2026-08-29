@@ -3,6 +3,7 @@ from decimal import Decimal
 from io import BytesIO
 from zipfile import ZipFile
 from openpyxl import load_workbook
+from openpyxl.worksheet.worksheet import Worksheet
 import pytest
 from backend.domain.query_metric import *
 from tests.xlsx_factory import build_ozon_query_metrics_workbook, build_ozon_query_metrics_v2_workbook, build_ozon_query_metrics_v2_unfiltered_workbook, OZON_QUERY_METRICS_HEADERS, OZON_QUERY_METRICS_V2_HEADERS
@@ -108,6 +109,35 @@ def test_query_metrics_unfiltered_18_column_export_parses(tmp_path):
     assert len(report.rows)==1
     assert report.rows[0].query_text=='синтетический запрос'
     assert report.rows[0].snapshot_values['ordered_revenue_rub']==Decimal('1234.5')
+
+def test_query_metrics_parser_caches_worksheet_bounds(tmp_path, monkeypatch):
+    original_max_column = Worksheet.max_column
+    calls = 0
+
+    def counted_max_column(self):
+        nonlocal calls
+        calls += 1
+        return original_max_column.fget(self)
+
+    path = tmp_path / 'many-rows.xlsx'
+    path.write_bytes(build_ozon_query_metrics_workbook(rows=tuple(_row(f'query-{i}') for i in range(200))))
+    monkeypatch.setattr(Worksheet, 'max_column', property(counted_max_column))
+
+    from backend.ingestion.ozon_query_metrics_xlsx import parse_ozon_query_metrics_xlsx
+    assert len(parse_ozon_query_metrics_xlsx(path).rows) == 200
+    assert calls <= 2
+
+def test_query_metrics_unfiltered_rejects_nonblank_column_19(tmp_path):
+    from backend.domain.query_metric import QueryMetricsIncompatibleReportSchema
+    from backend.ingestion.ozon_query_metrics_xlsx import parse_ozon_query_metrics_xlsx
+    path = tmp_path / 'extra-column.xlsx'
+    path.write_bytes(build_ozon_query_metrics_v2_unfiltered_workbook())
+    workbook = load_workbook(path)
+    workbook.active['S5'] = 'unexpected business value'
+    workbook.save(path)
+    workbook.close()
+    with pytest.raises(QueryMetricsIncompatibleReportSchema):
+        parse_ozon_query_metrics_xlsx(path)
 
 def test_query_metrics_unfiltered_18_column_maps_existing_metrics(tmp_path):
     from backend.ingestion.ozon_query_metrics_xlsx import parse_ozon_query_metrics_xlsx

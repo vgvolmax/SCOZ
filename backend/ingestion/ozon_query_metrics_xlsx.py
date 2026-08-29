@@ -92,8 +92,11 @@ def parse_ozon_query_metrics_xlsx(path:Path)->ParsedQueryMetricsReport:
   width=11 if v1 else 18; data_start=6 if v2 else 5
   metadata_rows=(1,2,3) if v2 else (1,2)
   if any(not _BLANK(ws.cell(r,c).value) for r in metadata_rows for c in range(2,width+1)):raise QueryMetricsIncompatibleReportSchema('Структура метаданных изменилась.')
-  for rn in range(1,max(ws.max_row,max(candidates,default=0))+1):
-   for c in range(width+1,ws.max_column+1):
+  worksheet_max_row=ws.max_row;worksheet_max_column=ws.max_column
+  candidate_max_row=max(candidates,default=0)
+  structural_max_row=max(worksheet_max_row,candidate_max_row)
+  for rn in range(1,structural_max_row+1):
+   for c in range(width+1,worksheet_max_column+1):
     if not _BLANK(ws.cell(rn,c).value):raise QueryMetricsIncompatibleReportSchema('Лишние бизнес-столбцы.')
   m=re.fullmatch(r'Период: (\d{2}\.\d{2}\.\d{4}) - (\d{2}\.\d{2}\.\d{4})',str(ws['A1'].value))
   try:
@@ -103,7 +106,7 @@ def parse_ozon_query_metrics_xlsx(path:Path)->ParsedQueryMetricsReport:
   except ValueError as e:raise QueryMetricsInvalidReportPeriod('Некорректный период отчёта.') from e
   rows=[];errors=[];dupes=0;seen={};rows_seen=0
   messages=(('INVALID_QUERY','Некорректный поисковый запрос.'),('INVALID_POPULARITY','Некорректная популярность запроса.'),('INVALID_DYNAMICS','Некорректная динамика.'),('INVALID_DYNAMICS','Некорректная динамика.'),('INVALID_CART_ADD_USERS','Некорректное число добавлений в корзину.'),('INVALID_MARKET_CONVERSION','Некорректная рыночная конверсия.'),('INVALID_UNIQUE_BUYERS','Некорректное число покупателей.'),('INVALID_MARKET_CONVERSION','Некорректная рыночная конверсия.'),('INVALID_REVENUE','Некорректная сумма заказов.'),('INVALID_NO_ACTION_QUERIES','Некорректное число запросов без действий.'),('INVALID_NO_ACTION_SHARE','Некорректная доля запросов без действий.'))
-  all_rows=sorted({r for r in candidates if r>=data_start}|{r for r in range(data_start,ws.max_row+1) if any(not _BLANK(ws.cell(r,c).value) for c in range(1,width+1))})
+  all_rows=sorted({r for r in candidates if r>=data_start}|{r for r in range(data_start,worksheet_max_row+1) if any(not _BLANK(ws.cell(r,c).value) for c in range(1,width+1))})
   for rn in all_rows:
    source_columns=range(1,12) if v1 else (1,2,3,4,5,6,7,8,9,13,14)
    cells=[ws.cell(rn,c) for c in source_columns]
