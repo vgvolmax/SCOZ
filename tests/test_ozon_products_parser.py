@@ -2,9 +2,11 @@ from dataclasses import fields
 from datetime import datetime
 from decimal import Decimal
 from io import BytesIO
+from time import perf_counter
 
 import pytest
 from openpyxl import load_workbook
+from openpyxl.worksheet._read_only import ReadOnlyWorksheet
 
 from backend.domain.product_snapshot import (
     ConflictingObservationRows, IncompatibleReportSchema, InvalidMetricValue, InvalidReportPeriod,
@@ -115,6 +117,27 @@ def test_extra_column_and_merged_cells_rejected(tmp_path):
 
 def test_products_accepts_a1_stored_dimension_with_real_cells(tmp_path):
     assert len(_parse_bytes(tmp_path, build_ozon_products_workbook(dimension_ref="A1")).rows) == 1
+
+
+def test_products_parser_never_uses_random_read_only_cell_access(tmp_path, monkeypatch):
+    monkeypatch.setattr(ReadOnlyWorksheet, "cell", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("random access")))
+    report = _parse_bytes(tmp_path, build_ozon_products_workbook(dimension_ref="A1"))
+    assert len(report.rows) == 1
+
+
+def test_products_realistic_report_parses_within_bound(tmp_path):
+    rows = []
+    for index in range(700):
+        row = _default_row("Синтетическая категория")
+        row[OZON_PRODUCTS_HEADERS[1]] = f"https://www.ozon.ru/product/{100000001 + index}/"
+        rows.append(row)
+    data = build_ozon_products_workbook(rows=rows, dimension_ref="A1")
+    started = perf_counter()
+    report = _parse_bytes(tmp_path, data)
+    elapsed = perf_counter() - started
+    assert (report.rows_seen, len(report.rows)) == (700, 700)
+    assert report.rows[-1].ozon_product_id == "100000700"
+    assert elapsed < 10
 
 
 def test_recoverable_identity_and_duplicate_rows(tmp_path):
