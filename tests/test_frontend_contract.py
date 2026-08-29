@@ -131,6 +131,17 @@ def test_pr5_query_imports_and_global_readiness_contract():
     assert "data.items.some" not in js
 
 
+def test_query_import_persisted_http_failure_refreshes_only_history():
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    function = js.split("async function submitQueryImport(file,sourceKey,endpoint,refreshProducts){", 1)[1].split(
+        "async function testMpstatsSource()", 1
+    )[0]
+    failure_branch = function.split("if(!response.ok){", 1)[1].split("}else{", 1)[0]
+
+    assert "if(body.result)await loadImports();" in failure_branch
+    assert "loadProducts()" not in failure_branch
+
+
 def test_ci_runs_both_js_checks_and_keystore_contract_without_npm():
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     for command in (
