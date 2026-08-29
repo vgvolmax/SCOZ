@@ -310,7 +310,7 @@ Credentials follow the approved browser-memory + encrypted-keystore model.
 
 ## Navigation and responsive behavior
 
-- **Document/page title policy:** visible page title names the current user task; active SKU title is part of Product Workspace context, not a generic `Dashboard` heading.
+- **Document/page title policy:** every navigable state owns a localized browser `document.title`, separately from the visible H1/page heading. Global sections use `Товары — SCOZ`, `Данные — SCOZ`, and `Настройки — SCOZ`. Product Workspace uses `{Название товара} · {Вкладка} — SCOZ` for implemented tabs such as `Диагностика`, `Поиск`, `Разгон`, or `Конкуренты`. Loading/error states use honest titles such as `Загрузка… — SCOZ` and `Товар не найден — SCOZ`. Never include secrets, tokens, passwords, local absolute paths, or other sensitive technical values in the browser title.
 - **Route error behavior:** unknown/invalid product route returns to a stable Products context with actionable error, not a blank workspace.
 - **Breadcrumb/tab/state policy:** keep global section and Product Workspace subnavigation distinct; browser Back/Forward restores prior context.
 - **Sidebar transformation:** desktop labels remain visible. Mobile-first/collapsible sidebar is not a v1 requirement; at narrow widths existing responsive fallback may stack global navigation while preserving all labels/actions.
@@ -367,6 +367,7 @@ This contract deliberately records the current frontend as a transitional implem
 8. Current full-catalog UI has no search/pagination controls even though the backend dataset is potentially large; add bounded navigation before treating catalog UX as complete.
 9. Global scrollbar styling/baseline is not yet established; add it when the shared app shell is next materially refactored.
 10. Secret inputs are masked but do not yet expose the Premium show/hide affordance; add it when Settings is next materially touched.
+11. Runtime currently keeps a static `<title>SCOZ</title>` across all sections and workspace states; update `document.title` from the same canonical navigation/workspace state when restorable routing is implemented, following the title policy above.
 
 Migration must be sliced by complete user workflows; do not rewrite unrelated working screens merely to normalize styling.
 
@@ -382,10 +383,11 @@ For any PR that changes these workflows, run the checks applicable to the touche
 - other existing committed JS contract checks affected by the change;
 - `git diff --check`.
 
-When Frontend Design Premium tooling is available in the development environment:
+Design-context verification:
 
-- `npx -p @google/design.md designmd lint DESIGN.md`
-- `python <frontend-design-premium-skill-dir>/scripts/audit_project.py <repo-root> --mode report --no-write`
+- `npx --yes -p @google/design.md@0.4.0 designmd lint DESIGN.md` is a reproducible CI gate and must finish with **0 errors** whenever `DESIGN.md` is changed or validated for merge.
+- `python <frontend-design-premium-skill-dir>/scripts/audit_project.py <repo-root> --mode report --no-write` is the committed supplementary Premium static scan for the current vanilla-JS application.
+- For a Premium release/merge review, also run the same auditor with `--mode strict --no-write` and record/triage every finding. Frontend Design Premium v1.4.0 static analysis cannot resolve event handlers attached externally with `addEventListener`, so valid SCOZ buttons can be reported as `affordance.actionless-button` even though their actions are bound in `frontend/assets/js/*.js`. These known tooling false positives must not be “fixed” by adding inline `onclick` handlers or otherwise weakening the existing event architecture. Until the auditor can resolve external bindings (or the project adds reliable machine-readable evidence for them), a non-zero strict result caused only by verified external-binding false positives is a documented tooling limitation, not permission to claim strict compliance. Any strict finding not proven to be such a false positive remains blocking.
 
 ### Browser/device matrix
 
