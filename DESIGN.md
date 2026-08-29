@@ -10,6 +10,7 @@ colors:
   border: "#E2E8F0"
   border-strong: "#CBD5E1"
   control-border: "#64748B"
+  control-border-hover: "#475569"
   text: "#0F172A"
   text-secondary: "#475569"
   text-muted: "#64748B"
