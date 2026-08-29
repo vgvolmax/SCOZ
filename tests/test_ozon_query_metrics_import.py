@@ -1,5 +1,6 @@
 from hashlib import sha256
 from io import BytesIO
+import json
 
 import pytest
 
@@ -49,6 +50,75 @@ def test_database_duplicate_is_counted_without_new_snapshot(tmp_path):
         upload=BytesIO(payload), original_name="metrics.xlsx", db_path=db, data_dir=data)
     assert (first.new_observations, second.duplicate_observations) == (1, 1)
     assert second.rows_accepted == 1
+
+
+def test_success_writes_compact_private_diagnostic_trace(tmp_path):
+    db = tmp_path / "scoz.db"
+    data = tmp_path / "data"
+    initialize_database(db)
+    sentinel = dict(zip(H, ("SECRET_QUERY_SENTINEL", 1, "-", 0, 1, 0, 1, 1, 1, 0, 0), strict=True))
+    payload = build_ozon_query_metrics_workbook(rows=(sentinel,))
+
+    result = import_ozon_query_metrics_xlsx(
+        upload=BytesIO(payload), original_name="metrics.xlsx", db_path=db, data_dir=data
+    )
+
+    path = data / "diagnostics/query_metrics/latest.json"
+    raw = path.read_text("utf-8")
+    diagnostic = json.loads(raw)
+    assert diagnostic["schema_version"] == 1
+    assert diagnostic["import_kind"] == "ozon_query_metrics_xlsx"
+    assert diagnostic["state"] == "SUCCESS"
+    assert diagnostic["current_stage"] == "complete"
+    assert diagnostic["batch_id"] == result.import_batch_id
+    assert diagnostic["source"]["content_sha256"] == sha256(payload).hexdigest()
+    assert diagnostic["parse"]["rows_seen"] == 1
+    assert diagnostic["persistence"]["rows_processed"] == result.rows_accepted
+    for stage in (
+        "stage_upload", "lineage_create", "compat_copy", "parse",
+        "archive_publish", "persistence_transaction_total",
+    ):
+        assert isinstance(diagnostic["stages_ms"][stage], (int, float))
+        assert diagnostic["stages_ms"][stage] >= 0
+    assert "SECRET_QUERY_SENTINEL" not in raw
+
+
+def test_duplicate_import_diagnostic_reports_persistence_counts(tmp_path):
+    db = tmp_path / "scoz.db"
+    data = tmp_path / "data"
+    initialize_database(db)
+    payload = build_ozon_query_metrics_workbook()
+    import_ozon_query_metrics_xlsx(
+        upload=BytesIO(payload), original_name="metrics.xlsx", db_path=db, data_dir=data
+    )
+    result = import_ozon_query_metrics_xlsx(
+        upload=BytesIO(payload), original_name="metrics.xlsx", db_path=db, data_dir=data
+    )
+    diagnostic = json.loads(
+        (data / "diagnostics/query_metrics/latest.json").read_text("utf-8")
+    )
+    assert diagnostic["persistence"]["duplicate_observations"] >= 1
+    assert diagnostic["persistence"]["new_observations"] == 0
+    assert diagnostic["persistence"]["rows_processed"] == result.rows_accepted
+
+
+def test_diagnostic_write_failure_does_not_break_import(monkeypatch, tmp_path):
+    db = tmp_path / "scoz.db"
+    initialize_database(db)
+
+    def fail_write(*args, **kwargs):
+        raise OSError("diagnostic-test-sentinel")
+
+    monkeypatch.setattr(
+        query_metrics_service.QueryMetricsImportDiagnostics, "_atomic_write", fail_write
+    )
+    result = import_ozon_query_metrics_xlsx(
+        upload=BytesIO(build_ozon_query_metrics_workbook()),
+        original_name="metrics.xlsx", db_path=db, data_dir=tmp_path / "data",
+    )
+    assert result.status is ImportStatus.SUCCESS
+    with connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM query_metric_snapshots").fetchone()[0] == 1
 
 
 def test_transport_rejection_precedes_durable_batch(tmp_path):
@@ -150,6 +220,64 @@ def test_unexpected_programming_error_is_compensated_and_preserved(monkeypatch, 
     assert not list(imports.glob(".upload-*"))
     assert not list(imports.glob(".readcopy-*"))
     assert not list(imports.glob("*.xlsx"))
+
+
+def test_unexpected_failure_trace_preserves_completed_row_progress(monkeypatch, tmp_path):
+    db = tmp_path / "scoz.db"
+    data = tmp_path / "data"
+    initialize_database(db)
+    base = dict(zip(H, ("first", 1, "-", 0, 1, 0, 1, 1, 1, 0, 0), strict=True))
+    payload = build_ozon_query_metrics_workbook(
+        rows=(base, {**base, H[0]: "second"})
+    )
+    original = SearchDimensionRepository.resolve_search_query
+    calls = 0
+
+    def fail_second(self, query_text):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("second-row-sentinel")
+        return original(self, query_text)
+
+    monkeypatch.setattr(SearchDimensionRepository, "resolve_search_query", fail_second)
+    with pytest.raises(RuntimeError, match="second-row-sentinel"):
+        import_ozon_query_metrics_xlsx(
+            upload=BytesIO(payload), original_name="metrics.xlsx",
+            db_path=db, data_dir=data,
+        )
+
+    diagnostic = json.loads(
+        (data / "diagnostics/query_metrics/latest.json").read_text("utf-8")
+    )
+    assert diagnostic["state"] == "FAILED"
+    assert diagnostic["current_stage"] == "persist_rows"
+    assert diagnostic["persistence"]["rows_processed"] == 1
+
+
+def test_persistence_checkpoints_every_500_rows_and_on_final_row(monkeypatch, tmp_path):
+    db = tmp_path / "scoz.db"
+    data = tmp_path / "data"
+    initialize_database(db)
+    base = dict(zip(H, ("query", 1, "-", 0, 1, 0, 1, 1, 1, 0, 0), strict=True))
+    rows = tuple({**base, H[0]: f"query-{index}"} for index in range(1001))
+    observed = []
+    original = query_metrics_service.QueryMetricsImportDiagnostics.checkpoint
+
+    def spy_checkpoint(self):
+        if (self.payload["current_stage"] == "persist_rows"
+                and self.payload["persistence"]["rows_processed"]):
+            observed.append(self.payload["persistence"]["rows_processed"])
+        return original(self)
+
+    monkeypatch.setattr(
+        query_metrics_service.QueryMetricsImportDiagnostics, "checkpoint", spy_checkpoint
+    )
+    import_ozon_query_metrics_xlsx(
+        upload=BytesIO(build_ozon_query_metrics_workbook(rows=rows)),
+        original_name="metrics.xlsx", db_path=db, data_dir=data,
+    )
+    assert observed == [500, 1000, 1001]
 
 
 def test_archive_failure_cleans_all_helper_owned_files(monkeypatch, tmp_path):
