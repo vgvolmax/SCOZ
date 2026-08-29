@@ -24,6 +24,9 @@ jobs:
           node --check frontend/assets/js/import_ui.js
           node tests/keystore_contract.mjs
           node tests/import_ui_contract.mjs
+      - name: Validate DESIGN.md
+        shell: powershell
+        run: npx --yes -p @google/design.md@0.4.0 designmd lint DESIGN.md
       - name: Run full Windows portable smoke
         shell: powershell
         run: powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File tests\windows_smoke.ps1 -Mode Full
