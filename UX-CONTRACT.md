@@ -362,7 +362,7 @@ This contract deliberately records the current frontend as a transitional implem
 3. `/api/products` currently requires ProductSnapshot evidence for catalog projection, so an owned seller-query-only Product can be invisible; future own-product entry must expose owned identity without fabricating ProductSnapshot data.
 4. Current PR6/PR7 screen keeps relevant queries, candidates, selected competitors and Core Benchmark in one expanded workflow; migrate to compact `Конкуренты` current-state + explicit edit flow and evidence drill-down.
 5. Current UI mixes Russian and English user-facing labels (`benchmark`, `Benchmark details`, `Core Benchmark`, group names); migrate to the vocabulary in `DESIGN.md`.
-6. Current `.view { max-width: 1000px; }` and oversized page padding constrain the analytical workspace relative to the fluid canonical visual system; migrate touched Product Workspace screens to the canonical desktop layout.
+6. Current `.view { max-width: 1000px; }`, `240px` sidebar, `32px` H1 and oversized page padding constrain the analytical workspace relative to the fluid canonical visual system; migrate touched Product Workspace shell/screens together to the canonical `224px` sidebar, `28/34` page-title scale, `24–32px` page padding and fluid analytical layout.
 7. Current frontend navigation/state is mainly transient JavaScript state; introduce restorable URL/hash state when the Products/Workspace corrective PR is implemented.
 8. Current full-catalog UI has no search/pagination controls even though the backend dataset is potentially large; add bounded navigation before treating catalog UX as complete.
 9. Global scrollbar styling/baseline is not yet established; add it when the shared app shell is next materially refactored.
