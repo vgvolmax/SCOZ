@@ -5,7 +5,7 @@ from zipfile import ZipFile
 from openpyxl import load_workbook
 import pytest
 from backend.domain.query_metric import *
-from tests.xlsx_factory import build_ozon_query_metrics_workbook, build_ozon_query_metrics_v2_workbook, OZON_QUERY_METRICS_HEADERS, OZON_QUERY_METRICS_V2_HEADERS
+from tests.xlsx_factory import build_ozon_query_metrics_workbook, build_ozon_query_metrics_v2_workbook, build_ozon_query_metrics_v2_unfiltered_workbook, OZON_QUERY_METRICS_HEADERS, OZON_QUERY_METRICS_V2_HEADERS
 
 H = OZON_QUERY_METRICS_HEADERS
 
@@ -95,6 +95,74 @@ def test_query_metrics_v2_exact_shape_mapping_and_a1_dimension(tmp_path):
     assert len(report.rows)==1
     assert report.rows[0].snapshot_values['no_action_queries']==200
     assert report.rows[0].snapshot_values['no_action_share_pct']==Decimal('20')
+
+def test_query_metrics_unfiltered_18_column_export_parses(tmp_path):
+    from backend.ingestion.ozon_query_metrics_xlsx import parse_ozon_query_metrics_xlsx
+    path=tmp_path/'v2-unfiltered.xlsx'
+    path.write_bytes(build_ozon_query_metrics_v2_unfiltered_workbook(dimension_ref='A1'))
+    report=parse_ozon_query_metrics_xlsx(path)
+    assert report.period_start.isoformat()=='2026-07-21'
+    assert report.period_end.isoformat()=='2026-08-17'
+    assert report.sort_context=='Сортировка: По убыванию в Популярность запроса'
+    assert report.rows_seen==1
+    assert len(report.rows)==1
+    assert report.rows[0].query_text=='синтетический запрос'
+    assert report.rows[0].snapshot_values['ordered_revenue_rub']==Decimal('1234.5')
+
+def test_query_metrics_unfiltered_18_column_maps_existing_metrics(tmp_path):
+    from backend.ingestion.ozon_query_metrics_xlsx import parse_ozon_query_metrics_xlsx
+    headers=OZON_QUERY_METRICS_V2_HEADERS
+    row=dict(zip(headers,('sentinels',101,Decimal('.125'),Decimal('.25'),104,Decimal('.5'),106,Decimal('.75'),Decimal('108.25'),
+                          Decimal('110.25'),111,112,113,Decimal('.875'),115,Decimal('.625'),117,Decimal('.375')),strict=True))
+    path=tmp_path/'mapping.xlsx'
+    path.write_bytes(build_ozon_query_metrics_v2_unfiltered_workbook(rows=(row,)))
+    values=parse_ozon_query_metrics_xlsx(path).rows[0].snapshot_values
+    assert values=={
+        'popularity_users':101,
+        'dynamics_28d_pct':Decimal('12.5'),
+        'dynamics_7d_pct':Decimal('25'),
+        'cart_add_users':104,
+        'market_cart_conversion_pct':Decimal('50'),
+        'unique_buyers_with_orders':106,
+        'market_order_conversion_pct':Decimal('75'),
+        'ordered_revenue_rub':Decimal('108.25'),
+        'no_action_queries':113,
+        'no_action_share_pct':Decimal('87.5'),
+    }
+
+def test_query_metrics_unfiltered_extra_columns_do_not_affect_payload(tmp_path):
+    from backend.ingestion.ozon_query_metrics_xlsx import parse_ozon_query_metrics_xlsx
+    headers=OZON_QUERY_METRICS_V2_HEADERS
+    hashes=[]
+    for i in (1,2):
+        row=dict(zip(headers,('same',10,.1,.2,3,.3,4,.4,5,
+                              100+i,200+i,300+i,6,.6,400+i,.7,500+i,.8),strict=True))
+        path=tmp_path/f'unfiltered-{i}.xlsx'
+        path.write_bytes(build_ozon_query_metrics_v2_unfiltered_workbook(rows=(row,)))
+        hashes.append(parse_ozon_query_metrics_xlsx(path).rows[0].payload_sha256)
+    assert hashes[0]==hashes[1]
+
+def test_query_metrics_filtered_and_unfiltered_observations_are_equivalent(tmp_path):
+    from backend.ingestion.ozon_query_metrics_xlsx import parse_ozon_query_metrics_xlsx
+    headers=OZON_QUERY_METRICS_V2_HEADERS
+    row=dict(zip(headers,('same',10,.1,.2,3,.3,4,.4,5,100,200,300,6,.6,400,.7,500,.8),strict=True))
+    filtered=tmp_path/'filtered.xlsx';unfiltered=tmp_path/'unfiltered.xlsx'
+    filtered.write_bytes(build_ozon_query_metrics_v2_workbook(rows=(row,)))
+    unfiltered.write_bytes(build_ozon_query_metrics_v2_unfiltered_workbook(rows=(row,)))
+    filtered_report=parse_ozon_query_metrics_xlsx(filtered)
+    unfiltered_report=parse_ozon_query_metrics_xlsx(unfiltered)
+    assert (filtered_report.period_start,filtered_report.period_end)==(unfiltered_report.period_start,unfiltered_report.period_end)
+    assert filtered_report.rows[0].query_text==unfiltered_report.rows[0].query_text
+    assert filtered_report.rows[0].snapshot_values==unfiltered_report.rows[0].snapshot_values
+    assert filtered_report.rows[0].payload_sha256==unfiltered_report.rows[0].payload_sha256
+
+def test_query_metrics_unfiltered_like_shape_with_wrong_metadata_is_rejected(tmp_path):
+    from backend.domain.query_metric import QueryMetricsIncompatibleReportSchema
+    from backend.ingestion.ozon_query_metrics_xlsx import parse_ozon_query_metrics_xlsx
+    path=tmp_path/'wrong-metadata.xlsx'
+    path.write_bytes(build_ozon_query_metrics_v2_unfiltered_workbook(sort_context='unexpected metadata'))
+    with pytest.raises(QueryMetricsIncompatibleReportSchema):
+        parse_ozon_query_metrics_xlsx(path)
 
 def test_query_metrics_v2_filter_and_unpersisted_values_do_not_affect_payload(tmp_path):
     from backend.ingestion.ozon_query_metrics_xlsx import parse_ozon_query_metrics_xlsx

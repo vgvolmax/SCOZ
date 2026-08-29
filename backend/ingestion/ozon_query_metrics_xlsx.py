@@ -86,9 +86,11 @@ def parse_ozon_query_metrics_xlsx(path:Path)->ParsedQueryMetricsReport:
   v2 = (isinstance(ws['A2'].value,str) and ws['A2'].value.startswith('Поисковый запрос: ')
         and ws['A3'].value==SORT
         and tuple(ws.cell(4,c).value for c in range(1,19))==HEADERS_V2)
-  if not (v1 or v2):raise QueryMetricsIncompatibleReportSchema('Структура отчёта изменилась.')
-  width=11 if v1 else 18; data_start=5 if v1 else 6
-  metadata_rows=(1,2) if v1 else (1,2,3)
+  v2_unfiltered = (ws['A2'].value==SORT
+                   and tuple(ws.cell(3,c).value for c in range(1,19))==HEADERS_V2)
+  if not (v1 or v2 or v2_unfiltered):raise QueryMetricsIncompatibleReportSchema('Структура отчёта изменилась.')
+  width=11 if v1 else 18; data_start=6 if v2 else 5
+  metadata_rows=(1,2,3) if v2 else (1,2)
   if any(not _BLANK(ws.cell(r,c).value) for r in metadata_rows for c in range(2,width+1)):raise QueryMetricsIncompatibleReportSchema('Структура метаданных изменилась.')
   for rn in range(1,max(ws.max_row,max(candidates,default=0))+1):
    for c in range(width+1,ws.max_column+1):

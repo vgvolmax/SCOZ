@@ -871,3 +871,22 @@ V1 and V2 are two supported exact shapes of the same source family; detection is
 V2 has exact A:R headers: `Запрос`; `Популярность запроса`; `Динамика за 28 дней`; `Динамика за 7 дней`; `Добавлений в корзину`; `Конверсия в корзину`; `Уникальные покупатели с заказами`; `Конверсия в заказ`; `Заказано на сумму по запросам, ₽`; `Средняя цена`; `Показано товаров`; `Конкуренты`; `Запросы без действий`; `Доля запросов без действий`; `Запросы с похожими результатами`; `Доля запросов с похожими результатами`; `Запросы без результатов`; `Доля запросов без результатов`.
 
 Only the existing PR5 payload is persisted. V2 maps A-I to the first nine existing fields and M/N to `no_action_queries`/`no_action_share_pct`. J/K/L and O/P/Q/R are verified source values but intentionally not persisted or hashed in this corrective PR. The row-2 filter is report context, not query identity or row payload. Unknown headers or positions remain incompatible; no guessing is performed. The original artifact retains all ignored source values for provenance.
+
+## Verified unfiltered 18-column export — 19.08.2026
+
+Three exact forms of this source family are supported. V1 legacy has 11 columns,
+with Period at row 1, Sort at row 2, headers at row 3, help at row 4, and data
+starting at row 5. V2 filtered has 18 columns, with Period at row 1, the
+`Поисковый запрос: <source filter text>` context at row 2, Sort at row 3, headers
+at row 4, help at row 5, and data starting at row 6. V2 unfiltered has 18
+columns, with Period at row 1, Sort at row 2, headers at row 3, help at row 4,
+and data starting at row 5. Detection remains exact; similar widths, metadata,
+or headers in other positions are not accepted.
+
+V2 filtered and V2 unfiltered use the same exact A:R headers and the same
+persisted mapping: A-I map to the first nine existing fields and M/N map to
+`no_action_queries` and `no_action_share_pct`. The absence of a filter row in
+the unfiltered form is not missing data. Filter context, including its absence,
+does not participate in the `SearchQuery × period_start × period_end`
+observation identity or payload. J/K/L and O/P/Q/R remain observed in the
+source artifact but are not persisted or hashed.

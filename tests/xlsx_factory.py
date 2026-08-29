@@ -95,6 +95,19 @@ def build_ozon_query_metrics_v2_workbook(*, filter_text="герметик", head
         for col,header in enumerate(headers,1):ws.cell(rn,col,row.get(header))
     return _patch_dimension(_save(wb),dimension_ref)
 
+def build_ozon_query_metrics_v2_unfiltered_workbook(*, headers=OZON_QUERY_METRICS_V2_HEADERS,
+        rows: Sequence[Mapping[str, object]] | None=None, dimension_ref: str|None=None,
+        sort_context: str='Сортировка: По убыванию в Популярность запроса') -> bytes:
+    wb=Workbook();ws=wb.active
+    ws['A1']='Период: 21.07.2026 - 17.08.2026'
+    ws['A2']=sort_context
+    for col,header in enumerate(headers,1):ws.cell(3,col,header)
+    ws['A4']='—'
+    source=rows if rows is not None else ({headers[0]:'синтетический запрос',headers[1]:1000,headers[2]:.1,headers[3]:'-',headers[4]:100,headers[5]:.1,headers[6]:50,headers[7]:.05,headers[8]:1234.5,headers[9]:100,headers[10]:25,headers[11]:10,headers[12]:200,headers[13]:.2,headers[14]:30,headers[15]:.03,headers[16]:4,headers[17]:.004},)
+    for rn,row in enumerate(source,5):
+        for col,header in enumerate(headers,1):ws.cell(rn,col,row.get(header))
+    return _patch_dimension(_save(wb),dimension_ref)
+
 
 OZON_PRODUCTS_HEADERS = (
     "Название товара",
