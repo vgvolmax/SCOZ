@@ -22,6 +22,7 @@ $cyrillicApp = -join @(
 $sandbox = Join-Path ([IO.Path]::GetTempPath()) ("SCOZ smoke $cyrillicTest with spaces " + [guid]::NewGuid())
 $app = Join-Path $sandbox "SCOZ $cyrillicApp"
 $env:SCOZ_NO_BROWSER = '1'
+Remove-Item Env:SCOZ_DB_PATH -ErrorAction SilentlyContinue
 
 function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
 function Invoke-Start([bool]$ExpectSuccess = $true) {
@@ -84,7 +85,7 @@ c.commit(); print(product_id)
     $productId = [int](Invoke-DbPython $seed)
 
     $owned = Invoke-RestMethod -Uri 'http://127.0.0.1:17842/api/products/owned' -TimeoutSec 3
-    $seeded = @($owned.items) | Where-Object { $_.product_id -eq $productId }
+    [object[]]$seeded = @(@($owned.items) | Where-Object { $_.product_id -eq $productId })
     Assert-True ($seeded.Count -eq 1 -and $seeded[0].product_data_status -eq 'MISSING') 'Owned identity-only Product projection mismatch'
 
     $context = Invoke-RestMethod -Uri "http://127.0.0.1:17842/api/products/$productId/workspace-context" -TimeoutSec 3
