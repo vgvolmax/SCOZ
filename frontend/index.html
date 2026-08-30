@@ -32,18 +32,18 @@
         <section class="products-section" aria-labelledby="catalog-heading">
           <h2 id="catalog-heading">Все товары Ozon</h2>
           <label for="catalog-search">Поиск по названию или Ozon ID</label>
-          <div class="search-control"><input id="catalog-search" type="search" maxlength="200" autocomplete="off"><button id="catalog-search-clear" type="button" aria-label="Очистить поиск" hidden>Очистить</button></div>
+          <div class="search-control"><input id="catalog-search" type="search" maxlength="200" autocomplete="off"><button id="catalog-search-clear" class="button button-ghost button-compact" type="button" aria-label="Очистить поиск" hidden>Очистить</button></div>
           <div id="catalog-status" class="status" aria-live="polite"></div>
           <div class="table-wrap catalog-table-wrap"><table id="catalog-table"><thead><tr><th>Товар</th><th>Ozon ID</th><th>Данные</th><th>Статус</th><th>Действие</th></tr></thead><tbody id="catalog-table-body"></tbody></table></div>
-          <div class="catalog-pagination" aria-label="Навигация по каталогу"><span id="catalog-range">0 из 0</span><button id="catalog-prev" type="button" disabled>Назад</button><button id="catalog-next" type="button" disabled>Далее</button></div>
+          <div class="catalog-pagination" aria-label="Навигация по каталогу"><span id="catalog-range">0 из 0</span><button id="catalog-prev" class="button button-secondary button-compact" type="button" disabled>Назад</button><button id="catalog-next" class="button button-secondary button-compact" type="button" disabled>Далее</button></div>
         </section>
       </section>
       <section id="product-workspace" class="view" hidden aria-busy="false">
         <div id="product-workspace-status" class="status" aria-live="polite"></div>
         <header id="product-context-header" class="product-context-header">
           <div><p class="eyebrow">Рабочее пространство товара</p><h1 id="workspace-title" tabindex="-1">Товар</h1><p id="workspace-product-id"></p><p id="workspace-product-meta"></p></div>
-          <div class="product-switcher"><button id="product-switcher-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="product-switcher-popover">Сменить товар</button>
-            <div id="product-switcher-popover" hidden><label for="product-switcher-search">Найти свой товар</label><input id="product-switcher-search" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="product-switcher-listbox" autocomplete="off"><div id="product-switcher-status" class="status" aria-live="polite"></div><div id="product-switcher-listbox" role="listbox"></div><button id="product-switcher-manage" type="button">Управление товарами</button></div>
+          <div class="product-switcher"><button id="product-switcher-trigger" class="button button-secondary" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="product-switcher-popover">Сменить товар</button>
+            <div id="product-switcher-popover" hidden><label for="product-switcher-search">Найти свой товар</label><input id="product-switcher-search" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="product-switcher-listbox" autocomplete="off"><div id="product-switcher-status" class="status" aria-live="polite"></div><div id="product-switcher-listbox" role="listbox"></div><button id="product-switcher-manage" class="button button-ghost" type="button">Управление товарами</button></div>
           </div>
         </header>
         <div id="workspace-evidence-rail" class="evidence-rail" aria-label="Готовность данных"><span id="workspace-evidence-product"></span><span id="workspace-evidence-search"></span><span id="workspace-evidence-benchmark"></span></div>
@@ -52,44 +52,44 @@
           <h2>Релевантные запросы</h2>
           <div id="relevant-queries-status" class="status" aria-live="polite">Загрузка…</div>
           <div id="relevant-queries-table" class="table-wrap"></div>
-          <button id="relevant-queries-save" type="button" disabled>Сохранить запросы</button>
+          <button id="relevant-queries-save" class="button button-primary" type="button" disabled>Сохранить запросы</button>
         </article>
         <div class="benchmark-layout">
           <article id="benchmark-candidates-panel" class="card">
             <h2>Кандидаты</h2>
             <div id="benchmark-candidates-status" class="status" aria-live="polite">Сначала сохраните релевантные запросы.</div>
-            <button id="benchmark-load-photos" type="button" disabled>Загрузить фото MPStats</button>
+            <button id="benchmark-load-photos" class="button button-secondary" type="button" disabled>Загрузить фото MPStats</button>
             <div id="benchmark-candidates-list" class="candidate-list"></div>
-            <div class="button-row"><button id="benchmark-candidates-prev" type="button" disabled>Назад</button><button id="benchmark-candidates-next" type="button" disabled>Далее</button></div>
+            <div class="button-row"><button id="benchmark-candidates-prev" class="button button-secondary button-compact" type="button" disabled>Назад</button><button id="benchmark-candidates-next" class="button button-secondary button-compact" type="button" disabled>Далее</button></div>
           </article>
           <article id="benchmark-selected-panel" class="card">
             <h2>Выбранные конкуренты</h2>
             <p id="benchmark-revision">Ещё не сохранено</p>
             <div id="benchmark-selected-list"></div>
-            <label for="manual-ozon-product-id">Добавить SKU Ozon вручную</label>
+            <label for="manual-ozon-product-id">Добавить артикул Ozon вручную</label>
             <input id="manual-ozon-product-id" inputmode="numeric" placeholder="123456789">
-            <button id="manual-candidate-add" type="button" disabled>Добавить</button>
-            <button id="benchmark-save" type="button" disabled>Сохранить группу</button>
+            <button id="manual-candidate-add" class="button button-secondary" type="button" disabled>Добавить</button>
+            <button id="benchmark-save" class="button button-primary" type="button" disabled>Сохранить группу</button>
             <div id="benchmark-save-status" class="status" aria-live="polite"></div>
           </article>
         </div>
-        <button id="core-benchmark-open" type="button">Сравнение с группой</button>
+        <button id="core-benchmark-open" class="button button-secondary" type="button">Сравнение с группой</button>
         <article id="core-benchmark-panel" class="card" hidden>
           <h2>Сравнение с группой</h2>
           <div id="core-benchmark-status" class="status" aria-live="polite"></div>
-          <button id="core-benchmark-retry" type="button" hidden>Повторить</button>
+          <button id="core-benchmark-retry" class="button button-secondary" type="button" hidden>Повторить</button>
           <div id="core-benchmark-context"></div>
           <div id="core-benchmark-groups" class="core-benchmark-groups"></div>
         </article>
         </section>
       </section>
-      <dialog id="unsaved-changes-dialog"><h2>Есть несохранённые изменения</h2><p>Выйти без сохранения?</p><div class="button-row"><button type="button" data-stay>Остаться</button><button type="button" data-leave>Выйти без сохранения</button></div></dialog>
+      <dialog id="unsaved-changes-dialog"><h2>Есть несохранённые изменения</h2><p>Выйти без сохранения?</p><div class="button-row"><button class="button button-secondary" type="button" data-stay>Остаться</button><button class="button button-danger" type="button" data-leave>Выйти без сохранения</button></div></dialog>
       <section id="data-view" class="view" hidden aria-busy="false">
         <div class="import-grid">
-          <article class="card import-card" data-import-source="ozon_products" aria-busy="false"><h2>Отчёт «Товары на Ozon»</h2><p>Данные по товарам, продажам, просмотрам, конверсиям и цене.</p><p class="source-file-hint"><strong>Файл Ozon:</strong> <code>analytics_report_*.xlsx</code></p><div id="ozon-products-file-guidance" class="file-guidance" aria-live="polite">Выберите выгрузку с указанным именем.</div><label for="ozon-products-file">XLSX-файл</label><input id="ozon-products-file" type="file" accept=".xlsx"><span id="selected-file-name">Файл не выбран</span><button id="import-submit" type="button" disabled>Импортировать</button><div id="import-status" class="status" aria-live="polite">Выберите XLSX-файл</div></article>
-          <article class="card import-card" data-import-source="search_visibility" aria-busy="false"><h2>Поисковая видимость Ozon</h2><p>Факторы поисковой выдачи и позиции товаров.</p><p class="source-file-hint"><strong>Файл Ozon:</strong> <code>explainer_report_*.xlsx</code></p><div id="search-visibility-file-guidance" class="file-guidance" aria-live="polite">Выберите выгрузку с указанным именем.</div><label for="ozon-search-visibility-file">XLSX-файл</label><input id="ozon-search-visibility-file" type="file" accept=".xlsx"><span id="search-visibility-file-name">Файл не выбран</span><button id="search-visibility-submit" type="button" disabled>Импортировать</button><div id="search-visibility-status" class="status" aria-live="polite">Выберите XLSX-файл</div></article>
-          <article class="card import-card" data-import-source="seller_queries" aria-busy="false"><h2>Запросы моего товара</h2><p>Поисковые запросы конкретного собственного товара.</p><p class="source-file-hint"><strong>Файл Ozon:</strong> <code>seller-queries_*.xlsx</code></p><div id="seller-queries-file-guidance" class="file-guidance" aria-live="polite">Выберите выгрузку с указанным именем.</div><div id="seller-queries-readiness" class="status">Источник не загружен</div><label for="ozon-seller-queries-file">XLSX-файл</label><input id="ozon-seller-queries-file" type="file" accept=".xlsx"><span id="seller-queries-file-name">Файл не выбран</span><button id="seller-queries-submit" type="button" disabled>Импортировать</button><div id="seller-queries-status" class="status" aria-live="polite">Выберите XLSX-файл</div></article>
-          <article class="card import-card" data-import-source="query_metrics" aria-busy="false"><h2>Метрики поисковых запросов</h2><p>Рыночные метрики поисковых запросов.</p><p class="source-file-hint"><strong>Файл Ozon:</strong> <code>queries_report*.xlsx</code></p><div id="query-metrics-file-guidance" class="file-guidance" aria-live="polite">Выберите выгрузку с указанным именем.</div><div id="query-metrics-readiness" class="status">Источник не загружен</div><label for="ozon-query-metrics-file">XLSX-файл</label><input id="ozon-query-metrics-file" type="file" accept=".xlsx"><span id="query-metrics-file-name">Файл не выбран</span><button id="query-metrics-submit" type="button" disabled>Импортировать</button><div id="query-metrics-status" class="status" aria-live="polite">Выберите XLSX-файл</div></article>
+          <article class="card import-card" data-import-source="ozon_products" aria-busy="false"><h2>Отчёт «Товары на Ozon»</h2><p>Данные по товарам, продажам, просмотрам, конверсиям и цене.</p><p class="source-file-hint"><strong>Файл Ozon:</strong> <code>analytics_report_*.xlsx</code></p><div id="ozon-products-file-guidance" class="file-guidance" aria-live="polite">Выберите выгрузку с указанным именем.</div><label for="ozon-products-file">XLSX-файл</label><input id="ozon-products-file" type="file" accept=".xlsx"><span id="selected-file-name">Файл не выбран</span><button id="import-submit" class="button button-primary" type="button" disabled>Импортировать</button><div id="import-status" class="status" aria-live="polite">Выберите XLSX-файл</div></article>
+          <article class="card import-card" data-import-source="search_visibility" aria-busy="false"><h2>Поисковая видимость Ozon</h2><p>Факторы поисковой выдачи и позиции товаров.</p><p class="source-file-hint"><strong>Файл Ozon:</strong> <code>explainer_report_*.xlsx</code></p><div id="search-visibility-file-guidance" class="file-guidance" aria-live="polite">Выберите выгрузку с указанным именем.</div><label for="ozon-search-visibility-file">XLSX-файл</label><input id="ozon-search-visibility-file" type="file" accept=".xlsx"><span id="search-visibility-file-name">Файл не выбран</span><button id="search-visibility-submit" class="button button-primary" type="button" disabled>Импортировать</button><div id="search-visibility-status" class="status" aria-live="polite">Выберите XLSX-файл</div></article>
+          <article class="card import-card" data-import-source="seller_queries" aria-busy="false"><h2>Запросы моего товара</h2><p>Поисковые запросы конкретного собственного товара.</p><p class="source-file-hint"><strong>Файл Ozon:</strong> <code>seller-queries_*.xlsx</code></p><div id="seller-queries-file-guidance" class="file-guidance" aria-live="polite">Выберите выгрузку с указанным именем.</div><div id="seller-queries-readiness" class="status">Источник не загружен</div><label for="ozon-seller-queries-file">XLSX-файл</label><input id="ozon-seller-queries-file" type="file" accept=".xlsx"><span id="seller-queries-file-name">Файл не выбран</span><button id="seller-queries-submit" class="button button-primary" type="button" disabled>Импортировать</button><div id="seller-queries-status" class="status" aria-live="polite">Выберите XLSX-файл</div></article>
+          <article class="card import-card" data-import-source="query_metrics" aria-busy="false"><h2>Метрики поисковых запросов</h2><p>Рыночные метрики поисковых запросов.</p><p class="source-file-hint"><strong>Файл Ozon:</strong> <code>queries_report*.xlsx</code></p><div id="query-metrics-file-guidance" class="file-guidance" aria-live="polite">Выберите выгрузку с указанным именем.</div><div id="query-metrics-readiness" class="status">Источник не загружен</div><label for="ozon-query-metrics-file">XLSX-файл</label><input id="ozon-query-metrics-file" type="file" accept=".xlsx"><span id="query-metrics-file-name">Файл не выбран</span><button id="query-metrics-submit" class="button button-primary" type="button" disabled>Импортировать</button><div id="query-metrics-status" class="status" aria-live="polite">Выберите XLSX-файл</div></article>
         </div>
         <article class="card"><h2>История импортов</h2><div id="import-history">История пуста</div></article>
       </section>
@@ -98,18 +98,18 @@
           <h2>Источник MPStats</h2>
           <p>Токен хранится только в памяти текущей вкладки.</p>
           <label for="mpstats-token">Токен MPStats</label><input id="mpstats-token" type="password" autocomplete="off">
-          <label for="mpstats-probe-sku">Проверочный SKU Ozon</label><input id="mpstats-probe-sku" inputmode="numeric" placeholder="123456789">
-          <button id="mpstats-test" type="button">Проверить подключение</button>
+          <label for="mpstats-probe-sku">Проверочный артикул Ozon</label><input id="mpstats-probe-sku" inputmode="numeric" placeholder="123456789">
+          <button id="mpstats-test" class="button button-primary" type="button">Проверить подключение</button>
           <div id="mpstats-status" class="status" aria-live="polite"></div>
           <h3>Сохранить зашифрованный файл</h3>
           <label for="mpstats-save-password">Пароль файла</label><input id="mpstats-save-password" type="password" autocomplete="new-password">
           <label for="mpstats-save-password-confirm">Повторите пароль</label><input id="mpstats-save-password-confirm" type="password" autocomplete="new-password">
-          <button id="mpstats-save-keystore" type="button">Сохранить зашифрованный файл</button>
+          <button id="mpstats-save-keystore" class="button button-secondary" type="button">Сохранить зашифрованный файл</button>
           <h3>Открыть зашифрованный файл</h3>
           <label for="mpstats-keystore-file">Файл ключей</label><input id="mpstats-keystore-file" type="file" accept=".json,.enc.json">
           <label for="mpstats-open-password">Пароль файла</label><input id="mpstats-open-password" type="password" autocomplete="current-password">
-          <button id="mpstats-open-keystore" type="button">Открыть</button>
-          <button id="mpstats-lock" type="button">Заблокировать ключи</button>
+          <button id="mpstats-open-keystore" class="button button-secondary" type="button">Открыть</button>
+          <button id="mpstats-lock" class="button button-ghost" type="button">Заблокировать ключи</button>
         </article>
       </section>
     </main>
