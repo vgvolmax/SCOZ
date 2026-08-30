@@ -104,6 +104,20 @@ def test_relevant_options_and_atomic_replace(tmp_path):
     assert cleared.selection.readiness is RelevantQueryReadiness.EMPTY_SELECTION
     conn.close()
 
+
+def test_relevant_query_summary_matches_detail_without_materializing(tmp_path, monkeypatch):
+    _, conn, repo, own, _, query = _repo_case(tmp_path)
+    summary = repo.get_relevant_query_summary(own.id)
+    detail = repo.list_relevant_query_options(own.id)
+    assert (summary.readiness, summary.latest_period, summary.selected_count) == (
+        detail.readiness, detail.latest_period, detail.selected_count)
+    repo.replace_relevant_queries(own.id, frozenset({query.id}))
+    monkeypatch.setattr(repo, "list_relevant_query_options", lambda *_: (_ for _ in ()).throw(AssertionError("detailed rows must not be loaded")))
+    summary = repo.get_relevant_query_summary(own.id)
+    assert summary.readiness is RelevantQueryReadiness.READY
+    assert summary.selected_count == 1
+    conn.close()
+
 def _visibility(conn, product_id, query_id, observed="2026-02-01T00:00:00+00:00", revision=1, position=5, title="Candidate"):
     conn.execute("""INSERT INTO clusters(name,created_at) VALUES ('cluster'||?,?) ON CONFLICT(name) DO NOTHING""",(query_id,observed))
     cluster=conn.execute("SELECT id FROM clusters WHERE name='cluster'||?",(query_id,)).fetchone()[0]

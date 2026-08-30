@@ -12,7 +12,7 @@ def test_committed_local_frontend_shell():
     assert "http://" not in html and "https://" not in html
     assert html.count('class="nav-item') == 3
     for label in ("Товары", "Данные", "Настройки"):
-        assert html.count(f">{label}</button>") == 1
+        assert html.count(f">{label}</a>") == 1
     assert 'aria-current="page"' in html
     assert 'data-section="products"' in html
     assert 'id="products-view"' in html and 'id="data-view"' in html
@@ -28,12 +28,98 @@ def test_visual_and_accessibility_contract():
     assert 'lang="ru"' in html and '<nav aria-label=' in html
 
 
+def test_product_surfaces_use_canonical_button_typography_and_feedback():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    css = (ROOT / "frontend/assets/css/app.css").read_text(encoding="utf-8")
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+
+    for variant in (".button-primary", ".button-secondary", ".button-ghost",
+                    ".button-danger", ".button-compact"):
+        assert variant in css
+    for rule in ("font-size: 14px", "line-height: 20px", "font-size: 18px",
+                 "line-height: 26px", "min-height: 36px"):
+        assert rule in css
+    assert ".card button" not in css
+    for hook in ("catalog-prev", "catalog-next", "product-switcher-trigger",
+                 "product-switcher-manage", "manual-candidate-add", "benchmark-save",
+                 "core-benchmark-open"):
+        fragment = html.split(f'id="{hook}"', 1)[1].split(">", 1)[0]
+        assert "button-" in fragment
+    assert 'class="button button-primary button-compact" data-open-product' in js
+    assert 'class="button button-secondary button-compact" data-remove-owned' in js
+    assert "Товар убран из «Моих товаров»." in js
+    assert "setStatusState(status,\"success\")" in js
+    for leaked_copy in ("Текущая revision", "· revision", "benchmark-группу", "Рассчитываем benchmark",
+                        "Не удалось загрузить benchmark", "NO_CANDIDATE_EVIDENCE:"):
+        assert leaked_copy not in html + js
+
+
+def test_owned_removal_preserves_actionable_empty_state_and_reduced_motion():
+    css = (ROOT / "frontend/assets/css/app.css").read_text(encoding="utf-8")
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    ownership = js.split("async function setOwnership", 1)[1].split(
+        "async function loadCatalog", 1
+    )[0]
+
+    assert "productUiState.ownedProducts.length===0" in ownership
+    assert (
+        "Товар убран из «Моих товаров». Добавьте свой товар из каталога Ozon."
+        in ownership
+    )
+    assert "@media (prefers-reduced-motion: reduce)" in css
+    reduced_motion = css.split("@media (prefers-reduced-motion: reduce)", 1)[1]
+    assert ".button" in reduced_motion and "transition: none" in reduced_motion
+
+
 def test_no_frontend_toolchain_or_future_ui():
     assert not (ROOT / "package.json").exists()
     assert not (ROOT / "frontend/src").exists()
     combined = "\n".join(p.read_text(encoding="utf-8") for p in (ROOT / "frontend").rglob("*.*"))
-    for forbidden in ("ReactDOM", "Диагностика", "Разгон", "Конкуренты", "API credentials"):
+    for forbidden in ("ReactDOM", "Диагностика", "Разгон", "API credentials"):
         assert forbidden not in combined
+
+
+def test_product_entry_uses_independent_owned_and_catalog_surfaces():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    for hook in ("owned-products-status", "owned-products-list", "catalog-search",
+                 "catalog-search-clear", "catalog-status", "catalog-table",
+                 "catalog-table-body", "catalog-range", "catalog-prev", "catalog-next",
+                 "product-workspace", "product-workspace-status"):
+        assert f'id="{hook}"' in html
+    assert "Мои товары" in html and "Все товары Ozon" in html
+    assert "Товар</th><th>Ozon ID</th><th>Данные</th><th>Статус</th><th>Действие" in html
+    assert '<article class="product">' not in js and "Свой товар" not in html + js
+    for name in ("productUiState", "CATALOG_PAGE_SIZE", "loadOwnedProducts",
+                 "renderOwnedProducts", "loadCatalog", "renderCatalog",
+                 "commitCatalogSearch", "setOwnership", "navigateTo", "renderCurrentRoute",
+                 "catalogRequestId", "workspaceRequestId"):
+        assert name in js
+    for marker in ("300", "compositionstart", "compositionend", "history.replaceState",
+                   "history.pushState", "popstate"):
+        assert marker in js
+
+
+def test_product_workspace_shell_switcher_and_evidence_contract():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    for hook in ("product-context-header", "workspace-title", "workspace-product-id",
+                 "workspace-product-meta", "product-switcher-trigger", "product-switcher-popover",
+                 "product-switcher-search", "product-switcher-listbox", "product-switcher-status",
+                 "product-switcher-manage", "workspace-evidence-rail", "workspace-evidence-product",
+                 "workspace-evidence-search", "workspace-evidence-benchmark", "competitors-section",
+                 "unsaved-changes-dialog"):
+        assert f'id="{hook}"' in html
+    assert 'id="competitors-workspace"' not in html
+    assert 'role="tablist"' not in html
+    for name in ("loadWorkspaceContext", "renderProductContextHeader", "renderEvidenceRail",
+                 "openProductSwitcher", "closeProductSwitcher", "filterOwnedProductsForSwitcher",
+                 "isCurrentWorkspaceRequest", "workspaceRequestId", 'normalize("NFKC")',
+                 'toLocaleLowerCase("ru-RU")'):
+        assert name in js
+    for marker in ('aria-expanded', 'aria-controls', 'aria-activedescendant',
+                   'role="combobox"', 'role="listbox"', 'role="option"', 'aria-selected'):
+        assert marker in html + js
 
 
 def test_pr3_frontend_state_contract():
@@ -41,16 +127,14 @@ def test_pr3_frontend_state_contract():
     js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
     assert "Данные загружены. Выберите свои товары." not in html
     for text in (
-        "Загрузка товаров…",
-        "Для анализа загрузите данные Ozon и выберите собственный товар.",
-        "Данные загружены. Выберите свои товары.",
-        "Товары готовы к анализу.",
+        "Загрузка каталога…",
+        "Каталог пуст. Импортируйте отчёт «Товары на Ozon» в разделе «Данные».",
         "PARTIAL_SUCCESS",
         "rows_accepted",
         "rows_skipped",
         "row_errors",
         "Не удалось изменить принадлежность товара.",
-        "box.checked=previous",
+        "button.disabled=true",
     ):
         assert text in html + js
     assert 'accept=".xlsx"' in html
@@ -176,23 +260,71 @@ def test_candidate_renderer_uses_frozen_transport_field_names():
         assert f"item.{field}" in js
 
 
-def test_only_owned_products_expose_competitor_entry():
+def test_workspace_entry_replaces_the_task_7_temporary_guard():
     js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
-    assert "Выбрать конкурентов" in js
-    assert "item.is_owned" in js
-    assert "openCompetitorWorkspace(product)" in js
+    assert "Выбрать конкурентов" not in js
+    assert "openProductWorkspace" in js
+    assert ">Открыть<" in js
 
 
 def test_competitor_workspace_has_active_context_and_relevance_states():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
-    for hook in ("competitors-workspace", "competitors-context", "relevant-queries-panel",
+    for hook in ("competitors-section", "relevant-queries-panel",
                  "relevant-queries-status", "relevant-queries-table", "relevant-queries-save"):
         assert f'id="{hook}"' in html
-    for value in ("loadRelevantQueries(productId)", "renderRelevantQueries(selection)",
+    assert 'id="competitors-context"' not in html
+    for value in ("loadRelevantQueries(productId,requestId", "renderRelevantQueries(selection)",
                   "saveRelevantQueries(productId)", "NO_OWN_QUERY_DATA", "Нет в свежем периоде",
                   "Искали", "Видели", "Средняя позиция", "Заказано", "Выручка"):
         assert value in html + js
+
+
+def test_corrective_workspace_transition_and_async_guards():
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    workspace = js.split("async function loadWorkspaceContext(productId)", 1)[1].split(
+        "function filterOwnedProductsForSwitcher", 1
+    )[0]
+    assert "previousContext" in workspace
+    assert "history.replaceState" in workspace
+    assert "Не удалось сменить товар" in workspace
+    assert 'document.title="Ошибка загрузки товара — SCOZ"' in workspace
+    for name, following in (
+        ("loadRelevantQueries", "renderRelevantQueries"),
+        ("loadBenchmark", "loadCandidates"),
+        ("loadCandidates", "candidatePhoto"),
+    ):
+        function = js.split(f"async function {name}", 1)[1].split(
+            f"function {following}", 1
+        )[0]
+        assert "catch(error){if(!isCurrentWorkspaceRequest(requestId,productId))return null;" in function
+
+
+def test_switcher_distinguishes_loading_error_empty_and_current_product():
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    for marker in (
+        'ownedProductsState="loading"', 'ownedProductsState="loaded"',
+        'ownedProductsState="error"', "renderSwitcherLoadError", "loadSwitcherProducts",
+        "data-switcher-retry", 'aria-current="${item.product_id===currentId}"',
+        'aria-selected="${item.product_id===currentId}"', "aria-activedescendant",
+        "is-keyboard-active", "Нет своих товаров", "Ничего не найдено",
+    ):
+        assert marker in js
+    css = (ROOT / "frontend/assets/css/app.css").read_text(encoding="utf-8")
+    assert '[role="option"].is-keyboard-active' in css
+    assert "outline:2px solid var(--color-primary)" in css
+
+
+def test_catalog_preserves_frozen_non_owned_status_copy():
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    assert 'item.is_owned?"Мой товар":"—"' in js
+    assert 'item.is_owned?"Мой товар":"Не мой товар"' not in js
+
+
+def test_popovers_and_dialogs_use_canonical_shadow_token():
+    css = (ROOT / "frontend/assets/css/app.css").read_text(encoding="utf-8")
+    assert "--shadow-popover: 0 8px 24px rgba(15, 23, 42, .10)" in css
+    assert css.count("box-shadow:var(--shadow-popover)") == 2
 
 
 def test_candidate_and_selected_panels_have_exact_controls():
@@ -203,7 +335,7 @@ def test_candidate_and_selected_panels_have_exact_controls():
                  "benchmark-selected-panel", "benchmark-selected-list", "manual-ozon-product-id",
                  "manual-candidate-add", "benchmark-save", "benchmark-save-status"):
         assert f'id="{hook}"' in html
-    for function in ("loadBenchmark(productId)", "loadCandidates(productId, offset)",
+    for function in ("loadBenchmark(productId,requestId", "loadCandidates(productId, offset,requestId",
                      "renderCandidates(page)", "addManualCandidate(productId)",
                      "renderSelectedBenchmark()", "saveBenchmark(productId)"):
         assert function in js
@@ -213,7 +345,7 @@ def test_candidate_and_selected_panels_have_exact_controls():
 def test_stale_no_evidence_error_and_revision_feedback_are_renderable():
     combined = "\n".join(p.read_text(encoding="utf-8") for p in (ROOT / "frontend").rglob("*.*"))
     for value in ("NO_CANDIDATE_EVIDENCE", "Нет в свежем периоде", "Ещё не сохранено",
-                  "Состав не изменился — revision", "Сохраняем…", "Фото недоступно"):
+                  "Состав не изменился — ревизия", "Сохраняем…", "Фото недоступно"):
         assert value in combined
 
 
@@ -328,7 +460,7 @@ def test_core_benchmark_grouped_summary_contract():
                   "Ниже медианы", "На уровне медианы", "Выше медианы",
                   "₽/заказанную ед.", "п.п.", "metric.label", "is_estimate"):
         assert value in js
-    for heading in ("Result", "Traffic", "Conversion", "Offer", "Advertising"):
+    for heading in ("Результат", "Трафик", "Конверсия", "Предложение", "Реклама"):
         assert heading in js
     assert ".core-benchmark-groups" in css and "--color-" in css
     forbidden = ("ниже benchmark", "внутри benchmark", "выше benchmark", "GOOD", "BAD", "WIN")
@@ -342,7 +474,7 @@ def test_benchmark_detail_renders_sample_values_without_transient_candidate_look
         "renderCoreBenchmarkMetric(metric, benchmark)",
         "toggleCoreBenchmarkMetricDetail(button)",
         'aria-expanded="false"', "aria-controls=", "metric.sample_values",
-        "Ozon SKU ${item.ozon_product_id}", "Недоступно для текущей выборки",
+        "Товар Ozon ${item.ozon_product_id}", "Недоступно для текущей выборки",
         "Нет совместимого наблюдения", "Нет исходного значения показателя",
         "Нельзя вычислить производный показатель", "benchmark_revision_number",
         "benchmark_member_count", "metric.p25", "metric.p75",
@@ -361,12 +493,62 @@ def test_core_benchmark_readiness_partial_and_failure_states():
     for value in (
         "renderCoreBenchmarkState(state, result)", "LOADING", "NO_BENCHMARK",
         "NO_OWN_SOURCE_DATA", "NO_COMPATIBLE_SAMPLE", "INSUFFICIENT_SAMPLE", "READY", "FAILED",
-        "Рассчитываем benchmark…", "Сначала сохраните benchmark-группу.",
-        "Нет товарных данных Ozon для собственного SKU. Импортируйте отчёт «Товары на Ozon».",
+        "Рассчитываем сравнение…", "Сначала сохраните группу сравнения.",
+        "Нет товарных данных Ozon для собственного товара. Импортируйте отчёт «Товары на Ozon».",
         "У конкурентов нет данных за тот же контекст отчёта.",
         "Совместимых конкурентов недостаточно для сравнения.",
-        "Часть показателей недоступна", "Не удалось загрузить benchmark. Повторите попытку.",
+        "Часть показателей недоступна", "Не удалось загрузить сравнение. Повторите попытку.",
         'document.querySelector("#core-benchmark-retry").addEventListener("click",openCoreBenchmark)',
     ):
         assert value in html + js
     assert 'value===null||value===undefined' in js
+
+
+def test_runtime_css_uses_canonical_tokens_and_shared_product_shell():
+    css = (ROOT / "frontend/assets/css/app.css").read_text(encoding="utf-8")
+    for declaration in (
+        "--color-control-border-hover: #475569",
+        "--color-text-disabled: #94A3B8",
+        "--color-primary-pressed: #1E40AF",
+        "--color-success: #16A34A",
+        "--color-success-text: #166534",
+        "--color-warning: #D97706",
+        "--color-warning-text: #92400E",
+        "--color-danger: #DC2626",
+        "--color-danger-text: #991B1B",
+        "--color-info: #0284C7",
+        "--color-info-text: #075985",
+        "--radius-pill: 999px",
+        "grid-template-columns: 224px 1fr",
+        "font-size: 28px",
+        "line-height: 34px",
+        "scrollbar-color:",
+        "scrollbar-width:",
+        "*::-webkit-scrollbar-thumb",
+    ):
+        assert declaration in css
+    assert "--color-error" not in css
+    view_rule = css[css.index(".view {"):css.index("}", css.index(".view {"))]
+    assert "max-width: 1000px" not in view_rule
+
+
+def test_ci_and_windows_smoke_cover_product_workspace_contracts():
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    for command in (
+        "node --check frontend/assets/js/product_navigation.js",
+        "node tests/product_navigation_contract.mjs",
+        "node tests/competitor_state_contract.mjs",
+    ):
+        assert command in workflow
+
+    smoke = (ROOT / "tests/windows_smoke.ps1").read_text(encoding="utf-8")
+    assert "function Assert-ProductWorkspaceShell" in smoke
+    for value in (
+        "/assets/js/product_navigation.js",
+        "/api/products/owned",
+        "/workspace-context",
+        "NO_OWN_QUERY_DATA",
+        "NOT_CONFIGURED",
+        "/api/products?limit=50&offset=0",
+    ):
+        assert value in smoke

@@ -250,7 +250,7 @@ def test_visibility_identity_does_not_pollute_product_api_then_is_reused_by_pr3(
         with transaction(tmp_path / "scoz.db") as conn:
             conn.execute("UPDATE products SET is_owned=1")
         hidden = client.get("/api/products").json()
-        assert hidden == {"items": [], "total": 0, "readiness": "SELECT_OWN_PRODUCTS"}
+        assert hidden == {"items": [], "total": 0, "limit": 50, "offset": 0}
         before = _counts(tmp_path / "scoz.db")
         product_row = _default_row("Синтетическая категория")
         assert client.post("/api/imports/ozon-products", files={"file": ("products.xlsx", build_ozon_products_workbook(rows=[product_row]), XLSX_MEDIA)}).status_code == 200
@@ -258,7 +258,7 @@ def test_visibility_identity_does_not_pollute_product_api_then_is_reused_by_pr3(
     after = _counts(tmp_path / "scoz.db")
     assert before["products"] == after["products"] == 1
     assert catalog["total"] == 1 and catalog["items"][0]["ozon_product_id"] == "100000001"
-    assert catalog["readiness"] == "READY"
+    assert set(catalog) == {"items", "total", "limit", "offset"}
 
 
 def test_testclient_lifespan_recovers_both_import_kinds_and_preserves_archives(monkeypatch, tmp_path):

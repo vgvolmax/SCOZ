@@ -22,6 +22,7 @@ $cyrillicApp = -join @(
 $sandbox = Join-Path ([IO.Path]::GetTempPath()) ("SCOZ smoke $cyrillicTest with spaces " + [guid]::NewGuid())
 $app = Join-Path $sandbox "SCOZ $cyrillicApp"
 $env:SCOZ_NO_BROWSER = '1'
+Remove-Item Env:SCOZ_DB_PATH -ErrorAction SilentlyContinue
 
 function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
 function Invoke-Start([bool]$ExpectSuccess = $true) {
@@ -62,11 +63,40 @@ function Assert-Pr6Assets {
     $keystore = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:17842/assets/js/keystore.js' -TimeoutSec 3
     $index = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:17842/' -TimeoutSec 3
     Assert-True ($keystore.StatusCode -eq 200 -and $keystore.Content.Contains('ScozKeystore')) 'Keystore asset unavailable'
-    Assert-True ($index.Content.Contains('competitors-workspace') -and $index.Content.Contains('mpstats-token')) 'PR6 UI markers unavailable'
+    Assert-True ($index.Content.Contains('product-workspace') -and $index.Content.Contains('competitors-section') -and $index.Content.Contains('mpstats-token')) 'Product Workspace / PR6 UI markers unavailable'
+    Assert-True ($index.Content.Contains('product_navigation.js') -and -not $index.Content.Contains('competitors-workspace')) 'Product Workspace navigation assets unavailable or legacy workspace restored'
     try { Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:17842/api/products/999999/relevant-queries' -TimeoutSec 3 | Out-Null; throw 'Missing-product relevance unexpectedly succeeded' }
     catch { Assert-True ($_.Exception.Response.StatusCode.value__ -eq 404) 'PR6 relevance error mapping mismatch' }
     try { Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:17842/api/products/999999/benchmark' -TimeoutSec 3 | Out-Null; throw 'Missing-product benchmark unexpectedly succeeded' }
     catch { Assert-True ($_.Exception.Response.StatusCode.value__ -eq 404) 'PR6 benchmark error mapping mismatch' }
+}
+function Assert-ProductWorkspaceShell {
+    $asset = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:17842/assets/js/product_navigation.js' -TimeoutSec 3
+    Assert-True ($asset.StatusCode -eq 200) 'Product navigation asset unavailable'
+
+    $seed = @'
+import sqlite3,sys
+c=sqlite3.connect(sys.argv[1]); c.execute('PRAGMA foreign_keys=ON')
+t='2026-08-30T00:00:00+00:00'
+product_id=c.execute('INSERT INTO products(is_owned,created_at,updated_at) VALUES(1,?,?)',(t,t)).lastrowid
+c.execute("INSERT INTO product_external_identities(product_id,source,identity_type,identity_value,source_account_scope,created_at) VALUES(?,?,?,?,?,?)",(product_id,'ozon','ozon_product_id','799991','',t))
+c.commit(); print(product_id)
+'@
+    $productId = [int](Invoke-DbPython $seed)
+
+    $owned = Invoke-RestMethod -Uri 'http://127.0.0.1:17842/api/products/owned' -TimeoutSec 3
+    [object[]]$seeded = @(@($owned.items) | Where-Object { $_.product_id -eq $productId })
+    Assert-True ($seeded.Count -eq 1 -and $seeded[0].product_data_status -eq 'MISSING') 'Owned identity-only Product projection mismatch'
+
+    $context = Invoke-RestMethod -Uri "http://127.0.0.1:17842/api/products/$productId/workspace-context" -TimeoutSec 3
+    Assert-True ($context.product.product_data_status -eq 'MISSING') 'Workspace Product readiness mismatch'
+    Assert-True ($context.queries.readiness -eq 'NO_OWN_QUERY_DATA' -and $context.queries.selected_count -eq 0) 'Workspace query readiness mismatch'
+    Assert-True ($context.benchmark.status -eq 'NOT_CONFIGURED' -and $context.benchmark.member_count -eq 0) 'Workspace benchmark readiness mismatch'
+
+    $catalog = Invoke-RestMethod -Uri 'http://127.0.0.1:17842/api/products?limit=50&offset=0' -TimeoutSec 3
+    $keys = @($catalog.PSObject.Properties.Name)
+    foreach ($key in @('items','total','limit','offset')) { Assert-True ($keys -contains $key) "Catalog response missing $key" }
+    Assert-True (-not ($keys -contains 'readiness')) 'Catalog response retained legacy readiness'
 }
 function Assert-Pr6Workflow {
     $seed = @'
@@ -165,6 +195,7 @@ try {
     Invoke-Start | Out-Null; Health; Assert-Pr6Assets
     Assert-True (Test-Path (Join-Path $app 'runtime/python.exe')) 'Runtime was not prepared'
     Assert-CoreMigration
+    Assert-ProductWorkspaceShell
     $productSentinelId = Add-ProductSentinel
     Add-PortableImports
     Assert-PortableImports

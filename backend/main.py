@@ -25,6 +25,7 @@ from backend.domain.product import ProductNotFound
 from backend.domain.benchmark_selection import *
 from backend.application.benchmark_selection import BenchmarkSelectionService
 from backend.application.core_benchmark import CoreBenchmarkService
+from backend.application.product_workspace import ProductWorkspaceService
 from backend.sources.mpstats import MPStatsClient
 from backend.domain.product_snapshot import *
 from backend.domain.search_visibility import (
@@ -148,9 +149,17 @@ def get_imports(limit: int=Query(50,ge=1,le=100),offset: int=Query(0,ge=0)) -> d
         repo=LineageRepository(conn); return {"items":_json(repo.list_import_history(limit=limit,offset=offset)),"total":repo.count_import_history(),"source_availability":repo.get_pr5_source_availability()}
 
 @app.get("/api/products")
-def get_products(limit: int=Query(100,ge=1,le=100),offset: int=Query(0,ge=0)) -> dict[str,object]:
-    with transaction() as conn:
-        repo=ProductRepository(conn); return {"items":_json(repo.list_ozon_products(limit=limit,offset=offset)),"total":repo.count_ozon_products(),"readiness":"READY" if repo.any_owned() else "SELECT_OWN_PRODUCTS"}
+def get_products(q: str | None=Query(None,max_length=200),limit: int=Query(50,ge=1,le=100),offset: int=Query(0,ge=0)):
+    return _json(ProductWorkspaceService(db_path=resolve_db_path()).list_catalog(query=q,limit=limit,offset=offset))
+
+@app.get("/api/products/owned")
+def get_owned_products():
+    return _json(ProductWorkspaceService(db_path=resolve_db_path()).list_owned())
+
+@app.get("/api/products/{product_id}/workspace-context")
+def get_product_workspace_context(product_id: Annotated[int,Path(gt=0)]):
+    try: return _json(ProductWorkspaceService(db_path=resolve_db_path()).get_context(product_id))
+    except (ProductNotFound,ProductNotOwnedError) as error: return _pr6_error_response(error)
 
 class OwnershipUpdate(BaseModel): is_owned: StrictBool
 

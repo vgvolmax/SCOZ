@@ -12,6 +12,7 @@ from backend.domain.benchmark_selection import (
     RelevantQuerySelectionEmptyError, RelevantQuerySelectionInvalidError,
     RelevantQueryWriteResult, SourcePeriod,
 )
+from backend.domain.product_workspace import ProductWorkspaceQueryContext
 
 
 class BenchmarkSelectionRepository:
@@ -23,6 +24,18 @@ class BenchmarkSelectionRepository:
             "SELECT search_query_id FROM product_relevant_queries WHERE product_id=?",
             (product_id,),
         ))
+
+    def get_relevant_query_summary(self, product_id: int) -> ProductWorkspaceQueryContext:
+        latest = self._conn.execute("""WITH current AS (
+          SELECT period_start,period_end FROM product_query_snapshots p WHERE product_id=?
+          AND revision=(SELECT MAX(revision) FROM product_query_snapshots x
+            WHERE x.product_id=p.product_id AND x.search_query_id=p.search_query_id
+            AND x.period_start=p.period_start AND x.period_end=p.period_end))
+          SELECT period_start,period_end FROM current ORDER BY period_end DESC,period_start DESC LIMIT 1""", (product_id,)).fetchone()
+        count = self._conn.execute("SELECT COUNT(*) FROM product_relevant_queries WHERE product_id=?", (product_id,)).fetchone()[0]
+        period = None if latest is None else SourcePeriod(date.fromisoformat(latest[0]), date.fromisoformat(latest[1]))
+        readiness = RelevantQueryReadiness.NO_OWN_QUERY_DATA if period is None else (RelevantQueryReadiness.READY if count else RelevantQueryReadiness.EMPTY_SELECTION)
+        return ProductWorkspaceQueryContext(readiness, period, count)
 
     def list_relevant_query_options(self, product_id: int) -> RelevantQuerySelection:
         rows = self._conn.execute("""

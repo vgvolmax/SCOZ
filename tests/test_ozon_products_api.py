@@ -44,14 +44,38 @@ def test_products_ownership_and_history_are_functional(monkeypatch, tmp_path):
         products = client.get("/api/products").json()
         assert products["total"] == 1 and products["items"][0]["ozon_product_id"] == "100000001"
         assert type(products["items"][0]["is_owned"]) is bool
-        product_id = products["items"][0]["id"]
+        assert set(products) == {"items", "total", "limit", "offset"}
+        assert products["limit"] == 50 and products["offset"] == 0
+        product_id = products["items"][0]["product_id"]
         patched = client.patch(f"/api/products/{product_id}/ownership", json={"is_owned": True})
         assert patched.status_code == 200 and type(patched.json()["is_owned"]) is bool
-        assert client.get("/api/products").json()["readiness"] == "READY"
+        assert client.get("/api/products/owned").json()["total"] == 1
         history = client.get("/api/imports").json()
         assert history["total"] == 1 and history["items"][0]["rows_accepted"] == 1
         assert client.patch(f"/api/products/{product_id}/ownership", json={"is_owned": "true"}).status_code == 422
         assert client.patch("/api/products/999999/ownership", json={"is_owned": True}).status_code == 404
+
+
+def test_product_catalog_search_and_pagination_validation_matrix(monkeypatch, tmp_path):
+    first = _default_row("Синтетическая категория")
+    first[OZON_PRODUCTS_HEADERS[0]] = "Смеситель кухонный"
+    second = dict(first)
+    second[OZON_PRODUCTS_HEADERS[0]] = "Другая модель"
+    second[OZON_PRODUCTS_HEADERS[1]] = "https://www.ozon.ru/product/100000002/"
+    third = dict(first)
+    third[OZON_PRODUCTS_HEADERS[0]] = "Третий товар"
+    third[OZON_PRODUCTS_HEADERS[1]] = "https://www.ozon.ru/product/200000001/"
+    with _client(monkeypatch, tmp_path) as client:
+        _post(client, build_ozon_products_workbook(rows=[first, second, third]))
+        russian = client.get("/api/products", params={"q": "смЕСИТЕЛЬ"})
+        numeric = client.get("/api/products", params={"q": "1000"})
+        assert russian.status_code == 200
+        assert russian.json()["total"] == 1
+        assert russian.json()["items"][0]["ozon_product_id"] == "100000001"
+        assert numeric.status_code == 200
+        assert numeric.json()["total"] == len(numeric.json()["items"]) == 2
+        for params in ({"limit": 0}, {"limit": 101}, {"offset": -1}, {"q": "x" * 201}):
+            assert client.get("/api/products", params=params).status_code == 422
 
 
 def _post(client, data, *, filename="report.xlsx"):
@@ -147,12 +171,10 @@ def test_latest_product_observation_orders_date_window_revision(monkeypatch, tmp
         product = client.get("/api/products").json()["items"][0]
         assert product["report_generated_on"] == "2026-08-16"
         assert product["report_window_days"] == 28
-        assert product["revision"] == 1
         _post(client, build_ozon_products_workbook(rows=[row], generated_on="08.17.26"))
         product = client.get("/api/products").json()["items"][0]
         assert product["report_generated_on"] == "2026-08-17"
         assert product["report_window_days"] == 7
-        assert product["revision"] == 1
 
 
 def test_ownership_matrix_multiple_owned_and_owned_first(monkeypatch, tmp_path):
@@ -163,14 +185,13 @@ def test_ownership_matrix_multiple_owned_and_owned_first(monkeypatch, tmp_path):
     with _client(monkeypatch, tmp_path) as client:
         _post(client, build_ozon_products_workbook(rows=[first, second]))
         items = client.get("/api/products").json()["items"]
-        assert client.patch(f"/api/products/{items[0]['id']}/ownership", json={"is_owned": True}).status_code == 200
-        assert client.patch(f"/api/products/{items[1]['id']}/ownership", json={"is_owned": True}).status_code == 200
-        assert client.get("/api/products").json()["readiness"] == "READY"
-        assert client.patch(f"/api/products/{items[0]['id']}/ownership", json={"is_owned": False}).status_code == 200
-        reordered = client.get("/api/products").json()["items"]
-        assert reordered[0]["is_owned"] is True
-        assert client.patch(f"/api/products/{items[0]['id']}/ownership").status_code == 422
-        assert client.patch(f"/api/products/{items[0]['id']}/ownership", json={"is_owned": 1}).status_code == 422
+        assert client.patch(f"/api/products/{items[0]['product_id']}/ownership", json={"is_owned": True}).status_code == 200
+        assert client.patch(f"/api/products/{items[1]['product_id']}/ownership", json={"is_owned": True}).status_code == 200
+        assert client.get("/api/products/owned").json()["total"] == 2
+        assert client.patch(f"/api/products/{items[0]['product_id']}/ownership", json={"is_owned": False}).status_code == 200
+        assert client.get("/api/products/owned").json()["total"] == 1
+        assert client.patch(f"/api/products/{items[0]['product_id']}/ownership").status_code == 422
+        assert client.patch(f"/api/products/{items[0]['product_id']}/ownership", json={"is_owned": 1}).status_code == 422
 
 
 def test_testclient_lifespan_recovers_before_serving_static_and_api(monkeypatch, tmp_path):
