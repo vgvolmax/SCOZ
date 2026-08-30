@@ -68,6 +68,34 @@ function Assert-Pr6Assets {
     try { Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:17842/api/products/999999/benchmark' -TimeoutSec 3 | Out-Null; throw 'Missing-product benchmark unexpectedly succeeded' }
     catch { Assert-True ($_.Exception.Response.StatusCode.value__ -eq 404) 'PR6 benchmark error mapping mismatch' }
 }
+function Assert-ProductWorkspaceShell {
+    $asset = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:17842/assets/js/product_navigation.js' -TimeoutSec 3
+    Assert-True ($asset.StatusCode -eq 200) 'Product navigation asset unavailable'
+
+    $seed = @'
+import sqlite3,sys
+c=sqlite3.connect(sys.argv[1]); c.execute('PRAGMA foreign_keys=ON')
+t='2026-08-30T00:00:00+00:00'
+product_id=c.execute('INSERT INTO products(is_owned,created_at,updated_at) VALUES(1,?,?)',(t,t)).lastrowid
+c.execute("INSERT INTO product_external_identities(product_id,source,identity_type,identity_value,source_account_scope,created_at) VALUES(?,?,?,?,?,?)",(product_id,'ozon','ozon_product_id','799991','',t))
+c.commit(); print(product_id)
+'@
+    $productId = [int](Invoke-DbPython $seed)
+
+    $owned = Invoke-RestMethod -Uri 'http://127.0.0.1:17842/api/products/owned' -TimeoutSec 3
+    $seeded = @($owned.items) | Where-Object { $_.product_id -eq $productId }
+    Assert-True ($seeded.Count -eq 1 -and $seeded[0].product_data_status -eq 'MISSING') 'Owned identity-only Product projection mismatch'
+
+    $context = Invoke-RestMethod -Uri "http://127.0.0.1:17842/api/products/$productId/workspace-context" -TimeoutSec 3
+    Assert-True ($context.product.product_data_status -eq 'MISSING') 'Workspace Product readiness mismatch'
+    Assert-True ($context.queries.readiness -eq 'NO_OWN_QUERY_DATA' -and $context.queries.selected_count -eq 0) 'Workspace query readiness mismatch'
+    Assert-True ($context.benchmark.status -eq 'NOT_CONFIGURED' -and $context.benchmark.member_count -eq 0) 'Workspace benchmark readiness mismatch'
+
+    $catalog = Invoke-RestMethod -Uri 'http://127.0.0.1:17842/api/products?limit=50&offset=0' -TimeoutSec 3
+    $keys = @($catalog.PSObject.Properties.Name)
+    foreach ($key in @('items','total','limit','offset')) { Assert-True ($keys -contains $key) "Catalog response missing $key" }
+    Assert-True (-not ($keys -contains 'readiness')) 'Catalog response retained legacy readiness'
+}
 function Assert-Pr6Workflow {
     $seed = @'
 import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('PRAGMA foreign_keys=ON'); t='2026-01-01T00:00:00+00:00'; own=c.execute('INSERT INTO products(is_owned,created_at,updated_at) VALUES(1,?,?)',(t,t)).lastrowid; comp=c.execute('INSERT INTO products(is_owned,created_at,updated_at) VALUES(0,?,?)',(t,t)).lastrowid; c.execute("INSERT INTO product_external_identities(product_id,source,identity_type,identity_value,source_account_scope,created_at) VALUES(?,?,?,?,?,?)",(own,'ozon','ozon_product_id','700001','',t)); c.execute("INSERT INTO product_external_identities(product_id,source,identity_type,identity_value,source_account_scope,created_at) VALUES(?,?,?,?,?,?)",(comp,'ozon','ozon_product_id','700002','',t)); q=c.execute('INSERT INTO search_queries(query_text,created_at) VALUES(?,?)',('portable query',t)).lastrowid; b=c.execute("INSERT INTO import_batches(source,import_kind,status,started_at) VALUES('ozon','portable','SUCCESS',?)",(t,)).lastrowid; a=c.execute("INSERT INTO source_artifacts(import_batch_id,artifact_kind,content_sha256,byte_size,created_at) VALUES(?,?,?,?,?)",(b,'portable','a'*64,1,t)).lastrowid; c.execute("INSERT INTO product_query_snapshots(product_id,search_query_id,period_start,period_end,revision,supersedes_snapshot_id,payload_sha256,import_batch_id,source_artifact_id,imported_at,searched_users,seen_users,position_state,average_position,search_to_card_conversion_pct,search_to_order_conversion_pct,ordered_units,ordered_revenue_rub) VALUES(?,?,?,?,1,NULL,?,?,?,?,1,1,'KNOWN',1,'1','1',1,'1')",(own,q,'2026-01-01','2026-01-31','b'*64,b,a,t)); c.commit(); print(f'{own}|{comp}|{q}')
@@ -165,6 +193,7 @@ try {
     Invoke-Start | Out-Null; Health; Assert-Pr6Assets
     Assert-True (Test-Path (Join-Path $app 'runtime/python.exe')) 'Runtime was not prepared'
     Assert-CoreMigration
+    Assert-ProductWorkspaceShell
     $productSentinelId = Add-ProductSentinel
     Add-PortableImports
     Assert-PortableImports

@@ -11,6 +11,7 @@ from backend.domain.product import (
     ProductNotFound,
 )
 from backend.domain.lineage import datetime_from_db, datetime_to_db, utc_now
+from backend.domain.product_workspace import ProductDataStatus
 from backend.persistence.connection import connect
 from backend.persistence.database import initialize_database
 from backend.persistence.repositories.products import ProductRepository
@@ -69,14 +70,16 @@ def test_set_owned_updates_timestamp_and_missing_product_raises(repository):
         repo.set_owned(999_999, True)
 
 
-def test_visibility_only_product_stays_out_of_catalog_even_when_owned(repository):
+def test_identity_only_owned_product_is_my_product_but_not_full_catalog(repository):
     repo, _ = repository
     product = repo.resolve_or_create_ozon_product("12345")
     repo.set_owned(product.id, True)
 
-    assert repo.list_ozon_products(limit=10, offset=0) == []
+    assert repo.list_ozon_products(limit=10, offset=0) == ()
     assert repo.count_ozon_products() == 0
     assert repo.any_owned() is False
+    assert repo.list_owned_ozon_products()[0].product_data_status is ProductDataStatus.MISSING
+    assert repo.get_ozon_product_entry(product.id) == repo.list_owned_ozon_products()[0]
     assert repo.find_by_external_identity(
         source="ozon", identity_type="ozon_product_id", identity_value="12345"
     ).is_owned is True
@@ -99,7 +102,7 @@ def test_resolver_reuses_existing_canonical_identity(repository):
 def test_identity_only_product_is_not_in_catalog_projection(repository):
     repo, _ = repository
     repo.resolve_or_create_ozon_product("456")
-    assert repo.list_ozon_products(limit=10, offset=0) == []
+    assert repo.list_ozon_products(limit=10, offset=0) == ()
     assert repo.count_ozon_products() == 0
 
 
@@ -220,9 +223,17 @@ def test_domain_and_repository_boundary_is_narrow(repository):
         "create_product", "get_product", "set_owned", "add_external_identity",
         "find_by_external_identity", "resolve_or_create_ozon_product",
         "count_ozon_products", "any_owned", "list_ozon_products",
+        "list_owned_ozon_products", "get_ozon_product_entry",
     }
 
     connection.execute("BEGIN")
     repo.create_product(is_owned=False)
     assert connection.in_transaction
     connection.rollback()
+
+
+@pytest.mark.parametrize("query", ["", "   ", " x", "x ", "x" * 201])
+def test_catalog_query_requires_normalized_nonempty_text(repository, query):
+    repo, _ = repository
+    with pytest.raises(ValueError, match="invalid product query"):
+        repo.count_ozon_products(query=query)

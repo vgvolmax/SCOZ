@@ -355,19 +355,19 @@ Clipboard actions, if introduced for SKU/technical IDs, copy exact visible/appro
 
 ## Migration status
 
-This contract deliberately records the current frontend as a transitional implementation. The following current patterns are **legacy/drift**, not canonical precedents for future screens:
+This contract records the migration status of the transitional frontend. Resolved items are retained as a ledger rather than as legacy precedents:
 
-1. `#products-list` renders each catalog Product as a large card; migrate to `Мои товары` + paginated catalog table.
-2. Product Workspace is currently entered through `Выбрать конкурентов` and implemented as `#competitors-workspace`; migrate to own-SKU workspace as the parent context.
-3. `/api/products` currently requires ProductSnapshot evidence for catalog projection, so an owned seller-query-only Product can be invisible; future own-product entry must expose owned identity without fabricating ProductSnapshot data.
+1. **Resolved:** the catalog card wall is replaced by `Мои товары` plus a paginated semantic catalog table.
+2. **Resolved:** Product Workspace is the parent context for the existing competitor flow.
+3. **Resolved:** owned canonical Ozon identities are visible independently of ProductSnapshot evidence without fabricated data.
 4. Current PR6/PR7 screen keeps relevant queries, candidates, selected competitors and Core Benchmark in one expanded workflow; migrate to compact `Конкуренты` current-state + explicit edit flow and evidence drill-down.
-5. Current UI mixes Russian and English user-facing labels (`benchmark`, `Benchmark details`, `Core Benchmark`, group names); migrate to the vocabulary in `DESIGN.md`.
-6. Current `.view { max-width: 1000px; }`, `240px` sidebar, `32px` H1 and oversized page padding constrain the analytical workspace relative to the fluid canonical visual system; migrate touched Product Workspace shell/screens together to the canonical `224px` sidebar, `28/34` page-title scale, `24–32px` page padding and fluid analytical layout.
-7. Current frontend navigation/state is mainly transient JavaScript state; introduce restorable URL/hash state when the Products/Workspace corrective PR is implemented.
-8. Current full-catalog UI has no search/pagination controls even though the backend dataset is potentially large; add bounded navigation before treating catalog UX as complete.
-9. Global scrollbar styling/baseline is not yet established; add it when the shared app shell is next materially refactored.
+5. **Resolved for touched comparison UI:** user-facing group comparison and metric-group vocabulary is Russian.
+6. **Resolved:** the shared Product shell uses the canonical `224px` sidebar, `28/34` page title, `24–32px` padding and fluid `.view` layout.
+7. **Resolved:** canonical hash routes and indexed history own Products and Product Workspace navigation state.
+8. **Resolved:** the full catalog has server-backed search and bounded pagination.
+9. **Resolved:** the shared shell provides a visible cross-engine scrollbar baseline and yields in forced-colors mode.
 10. Secret inputs are masked but do not yet expose the Premium show/hide affordance; add it when Settings is next materially touched.
-11. Runtime currently keeps a static `<title>SCOZ</title>` across all sections and workspace states; update `document.title` from the same canonical navigation/workspace state when restorable routing is implemented, following the title policy above.
+11. **Resolved:** canonical navigation and Product Workspace state update localized `document.title` values.
 
 Migration must be sliced by complete user workflows; do not rewrite unrelated working screens merely to normalize styling.
 

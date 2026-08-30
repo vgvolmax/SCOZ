@@ -93,16 +93,9 @@ SCOZ должен ощущаться как **Analytical Control Desk**: про�
 - **Anti-references:** card-wall dashboards, Bootstrap/admin templates, CRM-like catalogs, glassmorphism, gradients, decorative 3D charts, oversized KPI walls, mobile-style pill-heavy desktop UI.
 - **Token ownership/runtime mapping:** канонический источник визуальных token values — `docs/superpowers/specs/scoz-visual-design-system.md`; runtime mapping — `frontend/assets/css/app.css`. Этот `DESIGN.md` фиксирует durable taste/context и утверждённые workspace-паттерны, но не создаёт второй независимый token source. Любое изменение системного token value должно обновлять visual design system, `DESIGN.md` и runtime CSS в одном changeset.
 
-### Current runtime token drift
+### Runtime token mapping
 
-На момент review 2026-08-29 `frontend/assets/css/app.css` ещё не полностью отображает канонический token contract. Это **migration debt**, а не новый источник истины и не причина менять CSS в документационном PR:
-
-- runtime использует legacy `--color-error*`, тогда как canonical contract использует `danger` / `danger-text` / `danger-soft` / `danger-border`;
-- runtime `--color-success` и `--color-warning` сейчас содержат readable text shades, тогда как canonical contract разделяет accent (`success` / `warning`) и readable text (`success-text` / `warning-text`);
-- runtime пока не объявляет часть утверждённых tokens, включая `--color-primary-pressed`, `--color-text-disabled`, `--color-info*` и `--radius-pill`;
-- новые frontend PR не должны копировать legacy runtime names как новый канон; при следующем материальном рефакторинге shared app shell/tokens drift устраняется отдельной complete migration slice с обновлением CSS и regression checks.
-
-До этой migration существующий CSS остаётся рабочим runtime, а точные целевые token values определяет `docs/superpowers/specs/scoz-visual-design-system.md`.
+С 2026-08-30 `frontend/assets/css/app.css` отображает канонические accent/text пары `success`, `warning`, `danger` и `info`, а также `primary-pressed`, `text-disabled`, `control-border-hover` и `radius-pill`. Legacy `--color-error*` больше не является runtime contract. Точные token values по-прежнему определяет `docs/superpowers/specs/scoz-visual-design-system.md`.
 
 ### Product hierarchy
 
