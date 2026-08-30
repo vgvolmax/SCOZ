@@ -28,6 +28,32 @@ def test_visual_and_accessibility_contract():
     assert 'lang="ru"' in html and '<nav aria-label=' in html
 
 
+def test_product_surfaces_use_canonical_button_typography_and_feedback():
+    html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+    css = (ROOT / "frontend/assets/css/app.css").read_text(encoding="utf-8")
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+
+    for variant in (".button-primary", ".button-secondary", ".button-ghost",
+                    ".button-danger", ".button-compact"):
+        assert variant in css
+    for rule in ("font-size: 14px", "line-height: 20px", "font-size: 18px",
+                 "line-height: 26px", "min-height: 36px"):
+        assert rule in css
+    assert ".card button" not in css
+    for hook in ("catalog-prev", "catalog-next", "product-switcher-trigger",
+                 "product-switcher-manage", "manual-candidate-add", "benchmark-save",
+                 "core-benchmark-open"):
+        fragment = html.split(f'id="{hook}"', 1)[1].split(">", 1)[0]
+        assert "button-" in fragment
+    assert 'class="button button-primary button-compact" data-open-product' in js
+    assert 'class="button button-secondary button-compact" data-remove-owned' in js
+    assert "Товар убран из «Моих товаров»." in js
+    assert "setStatusState(status,\"success\")" in js
+    for leaked_copy in ("Текущая revision", "· revision", "benchmark-группу", "Рассчитываем benchmark",
+                        "Не удалось загрузить benchmark", "NO_CANDIDATE_EVIDENCE:"):
+        assert leaked_copy not in html + js
+
+
 def test_no_frontend_toolchain_or_future_ui():
     assert not (ROOT / "package.json").exists()
     assert not (ROOT / "frontend/src").exists()
@@ -302,7 +328,7 @@ def test_candidate_and_selected_panels_have_exact_controls():
 def test_stale_no_evidence_error_and_revision_feedback_are_renderable():
     combined = "\n".join(p.read_text(encoding="utf-8") for p in (ROOT / "frontend").rglob("*.*"))
     for value in ("NO_CANDIDATE_EVIDENCE", "Нет в свежем периоде", "Ещё не сохранено",
-                  "Состав не изменился — revision", "Сохраняем…", "Фото недоступно"):
+                  "Состав не изменился — ревизия", "Сохраняем…", "Фото недоступно"):
         assert value in combined
 
 
@@ -431,7 +457,7 @@ def test_benchmark_detail_renders_sample_values_without_transient_candidate_look
         "renderCoreBenchmarkMetric(metric, benchmark)",
         "toggleCoreBenchmarkMetricDetail(button)",
         'aria-expanded="false"', "aria-controls=", "metric.sample_values",
-        "Ozon SKU ${item.ozon_product_id}", "Недоступно для текущей выборки",
+        "Товар Ozon ${item.ozon_product_id}", "Недоступно для текущей выборки",
         "Нет совместимого наблюдения", "Нет исходного значения показателя",
         "Нельзя вычислить производный показатель", "benchmark_revision_number",
         "benchmark_member_count", "metric.p25", "metric.p75",
@@ -450,11 +476,11 @@ def test_core_benchmark_readiness_partial_and_failure_states():
     for value in (
         "renderCoreBenchmarkState(state, result)", "LOADING", "NO_BENCHMARK",
         "NO_OWN_SOURCE_DATA", "NO_COMPATIBLE_SAMPLE", "INSUFFICIENT_SAMPLE", "READY", "FAILED",
-        "Рассчитываем benchmark…", "Сначала сохраните benchmark-группу.",
-        "Нет товарных данных Ozon для собственного SKU. Импортируйте отчёт «Товары на Ozon».",
+        "Рассчитываем сравнение…", "Сначала сохраните группу сравнения.",
+        "Нет товарных данных Ozon для собственного товара. Импортируйте отчёт «Товары на Ozon».",
         "У конкурентов нет данных за тот же контекст отчёта.",
         "Совместимых конкурентов недостаточно для сравнения.",
-        "Часть показателей недоступна", "Не удалось загрузить benchmark. Повторите попытку.",
+        "Часть показателей недоступна", "Не удалось загрузить сравнение. Повторите попытку.",
         'document.querySelector("#core-benchmark-retry").addEventListener("click",openCoreBenchmark)',
     ):
         assert value in html + js
