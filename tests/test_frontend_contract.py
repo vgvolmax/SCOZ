@@ -227,13 +227,52 @@ def test_workspace_entry_replaces_the_task_7_temporary_guard():
 def test_competitor_workspace_has_active_context_and_relevance_states():
     html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
     js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
-    for hook in ("competitors-section", "competitors-context", "relevant-queries-panel",
+    for hook in ("competitors-section", "relevant-queries-panel",
                  "relevant-queries-status", "relevant-queries-table", "relevant-queries-save"):
         assert f'id="{hook}"' in html
+    assert 'id="competitors-context"' not in html
     for value in ("loadRelevantQueries(productId,requestId", "renderRelevantQueries(selection)",
                   "saveRelevantQueries(productId)", "NO_OWN_QUERY_DATA", "Нет в свежем периоде",
                   "Искали", "Видели", "Средняя позиция", "Заказано", "Выручка"):
         assert value in html + js
+
+
+def test_corrective_workspace_transition_and_async_guards():
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    workspace = js.split("async function loadWorkspaceContext(productId)", 1)[1].split(
+        "function filterOwnedProductsForSwitcher", 1
+    )[0]
+    assert "previousContext" in workspace
+    assert "history.replaceState" in workspace
+    assert "Не удалось сменить товар" in workspace
+    assert 'document.title="Ошибка загрузки товара — SCOZ"' in workspace
+    for name, following in (
+        ("loadRelevantQueries", "renderRelevantQueries"),
+        ("loadBenchmark", "loadCandidates"),
+        ("loadCandidates", "candidatePhoto"),
+    ):
+        function = js.split(f"async function {name}", 1)[1].split(
+            f"function {following}", 1
+        )[0]
+        assert "catch(error){if(!isCurrentWorkspaceRequest(requestId,productId))return null;" in function
+
+
+def test_switcher_distinguishes_loading_error_empty_and_current_product():
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    for marker in (
+        'ownedProductsState="loading"', 'ownedProductsState="loaded"',
+        'ownedProductsState="error"', "renderSwitcherLoadError", "loadSwitcherProducts",
+        "data-switcher-retry", 'aria-current="${item.product_id===currentId}"',
+        'aria-selected="${item.product_id===currentId}"', "aria-activedescendant",
+        "is-keyboard-active", "Нет своих товаров", "Ничего не найдено",
+    ):
+        assert marker in js
+
+
+def test_popovers_and_dialogs_use_canonical_shadow_token():
+    css = (ROOT / "frontend/assets/css/app.css").read_text(encoding="utf-8")
+    assert "--shadow-popover: 0 8px 24px rgba(15, 23, 42, .10)" in css
+    assert css.count("box-shadow:var(--shadow-popover)") == 2
 
 
 def test_candidate_and_selected_panels_have_exact_controls():

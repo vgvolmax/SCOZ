@@ -62,7 +62,8 @@ function Assert-Pr6Assets {
     $keystore = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:17842/assets/js/keystore.js' -TimeoutSec 3
     $index = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:17842/' -TimeoutSec 3
     Assert-True ($keystore.StatusCode -eq 200 -and $keystore.Content.Contains('ScozKeystore')) 'Keystore asset unavailable'
-    Assert-True ($index.Content.Contains('competitors-workspace') -and $index.Content.Contains('mpstats-token')) 'PR6 UI markers unavailable'
+    Assert-True ($index.Content.Contains('product-workspace') -and $index.Content.Contains('competitors-section') -and $index.Content.Contains('mpstats-token')) 'Product Workspace / PR6 UI markers unavailable'
+    Assert-True ($index.Content.Contains('product_navigation.js') -and -not $index.Content.Contains('competitors-workspace')) 'Product Workspace navigation assets unavailable or legacy workspace restored'
     try { Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:17842/api/products/999999/relevant-queries' -TimeoutSec 3 | Out-Null; throw 'Missing-product relevance unexpectedly succeeded' }
     catch { Assert-True ($_.Exception.Response.StatusCode.value__ -eq 404) 'PR6 relevance error mapping mismatch' }
     try { Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:17842/api/products/999999/benchmark' -TimeoutSec 3 | Out-Null; throw 'Missing-product benchmark unexpectedly succeeded' }
