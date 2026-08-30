@@ -56,6 +56,28 @@ def test_products_ownership_and_history_are_functional(monkeypatch, tmp_path):
         assert client.patch("/api/products/999999/ownership", json={"is_owned": True}).status_code == 404
 
 
+def test_product_catalog_search_and_pagination_validation_matrix(monkeypatch, tmp_path):
+    first = _default_row("Синтетическая категория")
+    first[OZON_PRODUCTS_HEADERS[0]] = "Смеситель кухонный"
+    second = dict(first)
+    second[OZON_PRODUCTS_HEADERS[0]] = "Другая модель"
+    second[OZON_PRODUCTS_HEADERS[1]] = "https://www.ozon.ru/product/100000002/"
+    third = dict(first)
+    third[OZON_PRODUCTS_HEADERS[0]] = "Третий товар"
+    third[OZON_PRODUCTS_HEADERS[1]] = "https://www.ozon.ru/product/200000001/"
+    with _client(monkeypatch, tmp_path) as client:
+        _post(client, build_ozon_products_workbook(rows=[first, second, third]))
+        russian = client.get("/api/products", params={"q": "смЕСИТЕЛЬ"})
+        numeric = client.get("/api/products", params={"q": "1000"})
+        assert russian.status_code == 200
+        assert russian.json()["total"] == 1
+        assert russian.json()["items"][0]["ozon_product_id"] == "100000001"
+        assert numeric.status_code == 200
+        assert numeric.json()["total"] == len(numeric.json()["items"]) == 2
+        for params in ({"limit": 0}, {"limit": 101}, {"offset": -1}, {"q": "x" * 201}):
+            assert client.get("/api/products", params=params).status_code == 422
+
+
 def _post(client, data, *, filename="report.xlsx"):
     return client.post(
         "/api/imports/ozon-products",

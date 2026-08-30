@@ -267,6 +267,15 @@ def test_switcher_distinguishes_loading_error_empty_and_current_product():
         "is-keyboard-active", "Нет своих товаров", "Ничего не найдено",
     ):
         assert marker in js
+    css = (ROOT / "frontend/assets/css/app.css").read_text(encoding="utf-8")
+    assert '[role="option"].is-keyboard-active' in css
+    assert "outline:2px solid var(--color-primary)" in css
+
+
+def test_catalog_preserves_frozen_non_owned_status_copy():
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    assert 'item.is_owned?"Мой товар":"—"' in js
+    assert 'item.is_owned?"Мой товар":"Не мой товар"' not in js
 
 
 def test_popovers_and_dialogs_use_canonical_shadow_token():
