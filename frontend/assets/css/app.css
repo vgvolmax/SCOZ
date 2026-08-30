@@ -94,3 +94,7 @@ dialog { max-width:min(480px,calc(100vw - 40px)); border:1px solid var(--color-b
 .ownership-feedback { grid-column:1 / -1; color:var(--color-success-text); font-size:12px; line-height:16px; }
 .owned-product .button-row { min-width:300px; justify-content:flex-end; }
 .owned-product .button-row .button { flex:0 0 146px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .button { transition: none; }
+}

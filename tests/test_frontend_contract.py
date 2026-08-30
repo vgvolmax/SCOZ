@@ -54,6 +54,23 @@ def test_product_surfaces_use_canonical_button_typography_and_feedback():
         assert leaked_copy not in html + js
 
 
+def test_owned_removal_preserves_actionable_empty_state_and_reduced_motion():
+    css = (ROOT / "frontend/assets/css/app.css").read_text(encoding="utf-8")
+    js = (ROOT / "frontend/assets/js/app.js").read_text(encoding="utf-8")
+    ownership = js.split("async function setOwnership", 1)[1].split(
+        "async function loadCatalog", 1
+    )[0]
+
+    assert "productUiState.ownedProducts.length===0" in ownership
+    assert (
+        "Товар убран из «Моих товаров». Добавьте свой товар из каталога Ozon."
+        in ownership
+    )
+    assert "@media (prefers-reduced-motion: reduce)" in css
+    reduced_motion = css.split("@media (prefers-reduced-motion: reduce)", 1)[1]
+    assert ".button" in reduced_motion and "transition: none" in reduced_motion
+
+
 def test_no_frontend_toolchain_or_future_ui():
     assert not (ROOT / "package.json").exists()
     assert not (ROOT / "frontend/src").exists()
